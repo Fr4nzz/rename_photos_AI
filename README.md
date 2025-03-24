@@ -24,16 +24,16 @@ No installation required - just download, unzip, and run!
 
 The app streamlines the process of identifying and renaming butterfly wing photos:
 
-1. It focuses on the part of each image containing the handwritten CAM ID label
-2. Multiple images are processed together for efficiency
-3. Gemini AI reads the handwritten IDs and detects special cases (crossed-out IDs, etc.)
-4. You can review all results before applying changes
-5. Files are renamed following a consistent pattern for easier organization
+1. The program crops the top left portion of each image where the CAM ID is written
+2. These cropped images are merged into a grid and sent to Gemini AI
+3. The AI identifies CAM IDs, notes any crossed-out IDs, and flags images to skip
+4. Results can be reviewed and corrected in the Check Output tab
+5. Final filenames follow the pattern: CAMID + suffix (d/v for dorsal/ventral)
 
 ## Notes
 
 - Currently optimized for butterfly wing photo collections with specific layout and labeling
-- Designed to work with both JPG and CR2 files stored in the same folder
-- Includes API keys with usage limits
-- Saves progress automatically, so you can pause and continue later
+- Expects JPG and CR2 files to be in the same folder
+- Default API keys included may have usage limitations
+- Partial processing results are saved, allowing you to continue later
 - Future versions may include more customization options for different workflows
