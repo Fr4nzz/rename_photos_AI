@@ -13,10 +13,60 @@ from PyQt5 import QtGui, QtCore
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFileDialog, QTabWidget, QCheckBox, QComboBox,
-    QScrollArea, QLineEdit, QGridLayout, QMessageBox, QProgressBar
+    QScrollArea, QLineEdit, QGridLayout, QMessageBox, QProgressBar, QGroupBox,
+    QTextEdit
 )
 import google.generativeai as genai
 from googleapiclient.errors import HttpError
+import numpy as np
+
+# Configuration
+SAMPLE_JSON = """{
+  "1": {"CAM": "CAM074806", "co": "", "n": "", "skip": ""},
+  "2": {"CAM": "CAM074806", "co": "", "n": "", "skip": ""},
+  "3": {"CAM": "Empty", "co": "", "n": "CAM missing", "skip": "x"},
+  "4": {"CAM": "CAM070555", "co": "CAM072554", "n": "", "skip": ""}
+}"""
+
+DEFAULT_PROMPT = """Extract CAM (CAM07xxxx) and notes (n) from the image.
+- 2 wing photos (dorsal and ventral) per individual (CAM) are arranged in a grid left to right, top to bottom.
+- If no CAMID is visible or image should be skipped, set skip: 'x', else skip: ''
+- If CAMID is crossed out, set 'co' to the crossed out CAMID and put the new CAMID in 'CAM'
+- CAMIDs have no spaces, remember CAM format (CAM07xxxx)
+- Use notes (n) to indicate anything unusual (e.g., repeated, rotated 90°, etc).
+- Put skipped reason in notes 'n'
+- Double-check numbers are correctly OCRed; consecutive photos might not have consecutive CAMs
+- Return JSON as shown in example; always give all keys even if empty. Example:
+{sample_json_output}
+"""
+
+CONFIG = {
+    'api_keys': [],  # Will be loaded from file
+    'directory_path': '',
+    'compressed_exts': [".jpg", ".jpeg", ".png"],
+    'raw_exts': [".cr2", ".orf"],
+    'batch_size': 9,
+    'merged_img_height': 1080,
+    'main_column': 'CAM',
+    'prompt_text_base': DEFAULT_PROMPT.format(sample_json_output=SAMPLE_JSON),
+    'temp_output_prefix': 'temp_output',
+    'output_prefix': 'output',
+}
+
+def load_api_keys():
+    try:
+        with open('API_keys.txt', 'r') as f:
+            keys = [line.strip() for line in f if line.strip()]
+            CONFIG['api_keys'] = keys
+            return keys
+    except FileNotFoundError:
+        return []
+
+def save_api_keys(keys_text):
+    with open('API_keys.txt', 'w') as f:
+        f.write(keys_text)
+    # Update config with new keys
+    CONFIG['api_keys'] = [k.strip() for k in keys_text.splitlines() if k.strip()]
 
 class GeminiWorker(QtCore.QObject):
     finished = QtCore.pyqtSignal()
@@ -51,33 +101,42 @@ class GeminiWorker(QtCore.QObject):
                 
                 images = [ImageProcessor.preprocess_image(row['from'], row['photo_ID']) 
                          for _, row in batch_df.iterrows()]
-                merged = ImageProcessor.merge_images(images, res_fact=8)
+                merged = ImageProcessor.merge_images(images, merged_img_height=self.config['merged_img_height'])
                 
                 if merged and not self.should_stop:
                     temp_file = f"temp_merged_b{bnum}of{self.total_batches}.jpg"
                     temp_path = os.path.join(self.rename_files_dir, temp_file)
                     merged.save(temp_path)
                     
+                    # Add batch range information to the prompt
+                    batch_range_info = f"\nSending images labeled from {start_idx + 1} to {end_idx}"
+                    self.config['prompt_text_base'] += batch_range_info
+                    
                     response, _ = gemini_handler.send_request(temp_path)
+                    # Remove the batch range info from prompt to keep it clean for next batch
+                    self.config['prompt_text_base'] = self.config['prompt_text_base'].replace(batch_range_info, '')
+                    
                     resp_text = getattr(response, 'text', str(response))
                     
                     match = re.search(r'```json\s*\n([\s\S]*?)\n```', resp_text)
                     if match and not self.should_stop:
                         jdata = json.loads(match.group(1))
                         
-                        for idx in batch_df.index:
-                            photo_id = str(batch_df.at[idx, 'photo_ID'])
-                            if photo_id in jdata:
-                                self.df.at[idx, 'CAM'] = jdata[photo_id].get('CAM', 'MISSING_CAM')
-                                self.df.at[idx, 'note'] = jdata[photo_id].get('n', '')
-                                self.df.at[idx, 'skip'] = jdata[photo_id].get('skip', '')
-                                self.df.at[idx, 'co'] = jdata[photo_id].get('co', '')
-                            else:
-                                self.df.at[idx, 'CAM'] = "MISSING_CAM"
-                                self.df.at[idx, 'note'] = "(No JSON key found)"
-                                self.df.at[idx, 'skip'] = ''
-                                self.df.at[idx, 'co'] = ''
-                                
+                        # Add new columns to the dataframe if they don't exist
+                        for item_data in jdata.values():
+                            for key in item_data.keys():
+                                if key not in self.df.columns:
+                                    self.df[key] = None
+                                    
+                        # Map the JSON data to the dataframe rows
+                        for row_num, item_data in jdata.items():
+                            # Find the row where photo_ID matches the Gemini response key
+                            matching_rows = self.df[self.df['photo_ID'] == int(row_num)]
+                            if not matching_rows.empty:
+                                idx = matching_rows.index[0]
+                                for key, value in item_data.items():
+                                    self.df.at[idx, key] = value
+                                    
                         partial_csv = f"{self.config['temp_output_prefix']}_b{bnum}of{self.total_batches}.csv"
                         self.df.to_csv(os.path.join(self.rename_files_dir, partial_csv), index=False)
                         
@@ -90,6 +149,7 @@ class GeminiWorker(QtCore.QObject):
                 self.finished.emit()
                 
         except Exception as e:
+            print(f"\nProcessing error: {str(e)}")  # Added console logging
             self.error.emit(str(e))
 
 class ImageLoadWorker(QtCore.QObject):
@@ -97,9 +157,10 @@ class ImageLoadWorker(QtCore.QObject):
     image_loaded = QtCore.pyqtSignal(str, QtGui.QImage)
     error = QtCore.pyqtSignal(str, str)
 
-    def __init__(self, image_paths):
+    def __init__(self, image_paths, crop_settings=None):
         super().__init__()
         self.image_paths = image_paths
+        self.crop_settings = crop_settings
         self.should_stop = False
 
     def stop(self):
@@ -112,7 +173,15 @@ class ImageLoadWorker(QtCore.QObject):
                 
             try:
                 pil_img = Image.open(path)
-                pil_img = ImageProcessor.crop_image(pil_img)
+                
+                # Apply EXIF rotation first if it's a JPEG (PNG doesn't have EXIF)
+                if not path.lower().endswith('.png'):
+                    pil_img = ImageProcessor.fix_orientation(pil_img)
+                
+                # Apply crop if settings exist
+                if self.crop_settings:
+                    pil_img = ImageProcessor.crop_image(pil_img, self.crop_settings)
+                
                 pil_img = pil_img.convert('RGB')
                 
                 w, h = pil_img.size
@@ -130,50 +199,41 @@ class ImageLoadWorker(QtCore.QObject):
                 
         self.finished.emit()
 
-# Configuration
-CONFIG = {
-    'api_keys': [
-        "AIzaSyCOxnlCgNWi0nnqXHvJqMdogtvy87EVXfw",
-        "AIzaSyDY9C_bLMeicBNDPAMFt2BKMYliUigw-KQ",
-        "AIzaSyCiINFgVZvx969F2Y6GjlkmazM6_Sqru_M",
-        "AIzaSyAjxH4ISWKsYoEjKlJDke_KDnc6x5PZZ2w"
-    ],
-    'directory_path': '',
-    'file_ext': [".JPG", ".CR2"],
-    'batch_size': 9,
-    'prompt_text_base': """Extract CAM (CAM07xxxx) and notes (n) from the image.
-- 2 wing photos (dorsal and ventral) per individual (CAM) are arranged in a grid left to right, top to bottom.
-- If no CAMID is visible or image should be skipped, set skip: 'x', else skip: ''
-- If CAMID is crossed out, set 'co' to the crossed out CAMID and put the new CAMID in 'CAM'
-- CAMIDs have no spaces, remember CAM format (CAM07xxxx)
-- Use notes (n) to indicate anything unusual (e.g., repeated, rotated 90°, etc).
-- Put skipped reason in notes 'n'
-- Double-check numbers are correctly OCRed; consecutive photos might not have consecutive CAMs
-- Return JSON as shown in example; always give all keys even if empty. Example:
-{sample_json_output}
-""",
-    'temp_output_prefix': 'temp_output',
-    'output_prefix': 'output',
-}
+    def on_image_loaded(self, image_path, qimage):
+        if image_path in self.image_labels and image_path in self.pending_image_loads:
+            label = self.image_labels[image_path]
+            label.setPixmap(QtGui.QPixmap.fromImage(qimage))
+            del self.pending_image_loads[image_path]
 
-SAMPLE_JSON = """{
-  "1": {"CAM": "CAM074806", "co": "", "n": "", "skip": ""},
-  "2": {"CAM": "CAM074806", "co": "", "n": "", "skip": ""},
-  "3": {"CAM": "Empty", "co": "", "n": "CAM missing", "skip": "x"},
-  "4": {"CAM": "CAM070555", "co": "CAM072554", "n": "", "skip": ""},
-  "5": {"CAM": "CAM070545", "co": "CAM072554", "n": "", "skip": ""},
-  "6": {"CAM": "CAM072190", "co": "", "n": "", "skip": ""},
-  "7": {"CAM": "CAM072190", "co": "", "n": "", "skip": ""},
-  "8": {"CAM": "CAM074749", "co": "", "n": "", "skip": ""},
-  "9": {"CAM": "CAM074749", "co": "", "n": "", "skip": ""},
-  "10": {"CAM": "CAM074749", "co": "", "n": "repeated", "skip": ""},
-  "11": {"CAM": "CAM074541", "co": "", "n": "", "skip": ""},
-  "12": {"CAM": "CAM074541", "co": "", "n": "", "skip": ""}
-}"""
-
-CONFIG['prompt_text_base'] = CONFIG['prompt_text_base'].format(sample_json_output=SAMPLE_JSON)
+class ImageExtensionHandler:
+    COMPRESSED_EXTENSIONS = {'.jpg', '.jpeg', '.png'}
+    RAW_EXTENSIONS = {'.cr2', '.orf'}
+    
+    @staticmethod
+    def is_compressed_image(ext):
+        return ext.lower() in ImageExtensionHandler.COMPRESSED_EXTENSIONS
+        
+    @staticmethod
+    def is_raw_image(ext):
+        return ext.lower() in ImageExtensionHandler.RAW_EXTENSIONS
 
 class ImageProcessor:
+    @staticmethod
+    def get_system_font():
+        """Get first available system font"""
+        system_fonts = {
+            'darwin': "Helvetica.ttc",
+            'linux': "DejaVuSans.ttf",
+            'windows': "arial.ttf"
+        }
+        
+        for font_name in system_fonts.values():
+            try:
+                return ImageFont.truetype(font_name, 50)
+            except:
+                continue
+        return ImageFont.load_default()
+
     @staticmethod
     def fix_orientation(img):
         """Apply correct orientation based on EXIF data"""
@@ -195,56 +255,129 @@ class ImageProcessor:
             return img
 
     @staticmethod
-    def crop_image(img):
-        img = ImageProcessor.fix_orientation(img)
+    def crop_image(img, crop_settings=None):
+        if crop_settings is None:
+            crop_settings = {
+                'top': 0.1,
+                'bottom': 0.5,
+                'left': 0.0,
+                'right': 0.5,
+                'zoom': True
+            }
+            
+        # If zoom is disabled, return the original image
+        if 'zoom' in crop_settings and not crop_settings['zoom']:
+            return img
+            
         w, h = img.size
-        crop_upper = int(h * 0.1)
-        crop_lower = int(h * 0.5)
-        return img.crop((0, crop_upper, w//2, crop_lower))
+            
+        crop_upper = int(h * crop_settings['top'])
+        crop_lower = int(h * crop_settings['bottom'])
+        crop_left = int(w * crop_settings['left'])
+        crop_right = int(w * crop_settings['right'])
+        
+        return img.crop((crop_left, crop_upper, crop_right, crop_lower))
 
     @staticmethod
-    def preprocess_image(image_path, label):
+    def preprocess_image(image_path, label, crop_settings=None):
+        # Open the image
         img = Image.open(image_path)
-        img = ImageProcessor.crop_image(img)
-        img = ImageOps.grayscale(img)
+        
+        # Apply EXIF rotation first if it's a JPEG (PNG doesn't have EXIF)
+        if not image_path.lower().endswith('.png'):
+            img = ImageProcessor.fix_orientation(img)
+            
+        # Only apply crop if zoom is enabled
+        if crop_settings and crop_settings.get('zoom', False):
+            img = ImageProcessor.crop_image(img, crop_settings)
+            
+        # Only apply grayscale if enabled
+        if crop_settings and crop_settings.get('grayscale', True):
+            img = ImageOps.grayscale(img)
+            
         img = ImageOps.expand(img, border=10, fill='black')
         
+        # Convert to RGBA to support transparency
+        img = img.convert('RGBA')
         draw = ImageDraw.Draw(img)
-        font_size = int(0.12 * img.height)
-        try:
-            font = ImageFont.truetype("arial.ttf", font_size)
-        except:
-            font = ImageFont.load_default()
+        font = ImageProcessor.get_system_font()  # This already returns a font with size 50
             
-        text = str(label)
+        text = str(label)  # label is now the row number from DataFrame
         bbox = draw.textbbox((0, 0), text, font=font)
-        x = (img.width - (bbox[2] - bbox[0])) // 2
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        
+        # Calculate position for text and background
+        x = (img.width - text_width) // 2
         y = 10
         
+        # Draw semi-transparent white background
+        padding = 10  # Padding around text
+        background_bbox = [
+            x - padding,
+            y - padding,
+            x + text_width + padding,
+            y + text_height + padding
+        ]
+        draw.rectangle(background_bbox, fill=(255, 255, 255, 128))  # White with 50% opacity
+        
+        # Draw text
         draw.text((x, y), text, fill='black', font=font)
-        return img
+        
+        # Convert back to RGB for final output
+        return img.convert('RGB')
 
     @staticmethod
-    def merge_images(images, res_fact=8):
+    def merge_images(images, merged_img_height=1080):
         if not images:
             return None
             
         n = len(images)
-        cols = math.ceil(math.sqrt(n))
-        rows = math.ceil(n/cols)
-        w, h = images[0].size
+        rows = math.ceil(math.sqrt(n))  # Start with square-ish layout
+        cols = math.ceil(n/rows)
         
-        blank = Image.new('RGB', (w, h), 'white')
-        needed = rows * cols - n
-        images_padded = images + [blank] * needed
-        grid = Image.new('RGB', (cols * w, rows * h), 'white')
+        # Calculate the height for each row
+        row_height = merged_img_height // rows
         
-        for idx, img in enumerate(images_padded):
+        # Calculate the width for each column based on the widest image
+        # We'll use the first image as reference and scale it to row_height
+        ref_img = images[0]
+        ref_width, ref_height = ref_img.size
+        scale_ratio = row_height / ref_height
+        col_width = int(ref_width * scale_ratio)
+        
+        # Calculate total grid dimensions
+        grid_height = merged_img_height
+        grid_width = cols * col_width
+        
+        # Create the grid
+        grid = Image.new('RGB', (grid_width, grid_height), 'white')
+        
+        # Process each image
+        for idx, img in enumerate(images):
+            if idx >= n:  # Skip if we've processed all images
+                break
+                
+            # Calculate position in grid
             r, c = divmod(idx, cols)
-            grid.paste(img, (c * w, r * h))
             
-        new_size = (grid.width // res_fact, grid.height // res_fact)
-        return grid.resize(new_size, Image.LANCZOS)
+            # Calculate scaling to fit in cell while preserving aspect ratio
+            img_width, img_height = img.size
+            scale_ratio = min(col_width/img_width, row_height/img_height)
+            new_width = int(img_width * scale_ratio)
+            new_height = int(img_height * scale_ratio)
+            
+            # Resize image
+            resized_img = img.resize((new_width, new_height), Image.LANCZOS)
+            
+            # Calculate position to center image in cell
+            x = c * col_width + (col_width - new_width) // 2
+            y = r * row_height + (row_height - new_height) // 2
+            
+            # Paste image into grid
+            grid.paste(resized_img, (x, y))
+            
+        return grid
 
 class GeminiHandler:
     def __init__(self, config):
@@ -280,8 +413,9 @@ class GeminiHandler:
                 last_error = e
                 if e.resp.status in [429, 500, 503]:
                     if self.retry_count < self.max_retries:
+                        print(f"\nUpload error: {str(e)}")
+                        print(f"Switching to API key {self.current_api_key_index + 2} and retrying...")
                         self._switch_api_key()
-                        time.sleep(min(2 ** attempt + random.random(), 10))  # Cap at 10 seconds
                         continue
                 raise
         raise last_error if last_error else RuntimeError(f"Failed to upload {file_path}")
@@ -308,8 +442,8 @@ class GeminiHandler:
                     print(f"\nError from Gemini: {str(e)}")
                     if "quota" in str(e).lower() or "429" in str(e):
                         if self.retry_count < self.max_retries:
+                            print(f"Switching to API key {self.current_api_key_index + 2} and retrying...")
                             self._switch_api_key()
-                            time.sleep(min(2 ** attempt + random.random(), 10))
                             continue
                     raise
 
@@ -318,8 +452,8 @@ class GeminiHandler:
                 print(f"\nHTTP Error: {str(e)}")
                 if e.resp.status in [429, 500, 503] or "quota" in str(e).lower():
                     if self.retry_count < self.max_retries:
+                        print(f"Switching to API key {self.current_api_key_index + 2} and retrying...")
                         self._switch_api_key()
-                        time.sleep(min(2 ** attempt + random.random(), 10))
                         continue
                 raise
 
@@ -327,8 +461,8 @@ class GeminiHandler:
                 last_error = e
                 print(f"\nUnexpected error: {str(e)}")
                 if self.retry_count < self.max_retries:
+                    print(f"Switching to API key {self.current_api_key_index + 2} and retrying...")
                     self._switch_api_key()
-                    time.sleep(min(2 ** attempt + random.random(), 10))
                     continue
                 raise
 
@@ -362,12 +496,39 @@ class FileManager:
 
     @staticmethod
     def get_all_files(directory, valid_exts):
-        return [os.path.join(directory, f) for f in os.listdir(directory)
-                if any(f.upper().endswith(ext.upper()) for ext in valid_exts)]
+        """Get all files with valid extensions. For Gemini processing, only return standard image files."""
+        files = []
+        for f in os.listdir(directory):
+            ext = os.path.splitext(f)[1]
+            if any(ext.upper().endswith(valid_ext.upper()) for valid_ext in valid_exts):
+                # For Gemini processing, only include standard image files
+                if ImageExtensionHandler.is_compressed_image(ext):
+                    files.append(os.path.join(directory, f))
+                else:
+                    print(f"Skipping raw file for processing: {f}")
+        return files
+
+    @staticmethod
+    def get_image_pairs(directory):
+        """Get pairs of compressed and raw images"""
+        files = os.listdir(directory)
+        pairs = []
+        
+        for f in files:
+            base, ext = os.path.splitext(f)
+            if ImageExtensionHandler.is_compressed_image(ext):
+                # Look for matching raw file
+                for raw_ext in CONFIG['raw_exts']:
+                    raw_file = base + raw_ext
+                    if raw_file in files:
+                        pairs.append((os.path.join(directory, f), os.path.join(directory, raw_file)))
+                        break
+                        
+        return pairs
 
 class NameCalculator:
     @staticmethod
-    def calculate_suffixes_for_cam(cam_df, suffix_mode):
+    def calculate_suffixes_for_cam(cam_df, suffix_mode, main_column='CAM'):
         non_skipped = cam_df[cam_df['skip'] != 'x'].copy()
         
         if suffix_mode == 'clips':
@@ -390,7 +551,7 @@ class NameCalculator:
         return cam_df['suffix']
 
     @staticmethod
-    def recalc_final_names(df, suffix_mode, ext_list):
+    def recalc_final_names(df, suffix_mode, main_column='CAM'):
         if df.empty:
             return df
             
@@ -398,37 +559,33 @@ class NameCalculator:
         df['suffix'] = ''
         non_skipped_mask = df['skip'] != 'x'
         
-        for cam_name, group in df[non_skipped_mask].groupby('CAM', group_keys=False):
+        for cam_name, group in df[non_skipped_mask].groupby(main_column, group_keys=False):
             if not cam_name:
                 continue
-            suffixes = NameCalculator.calculate_suffixes_for_cam(group, suffix_mode)
+            suffixes = NameCalculator.calculate_suffixes_for_cam(group, suffix_mode, main_column)
             for idx, suffix in zip(group.index, suffixes):
                 df.at[idx, 'suffix'] = suffix
         
-        main_ext = ext_list[0] if ext_list else ".JPG"
-        df.loc[non_skipped_mask, 'to'] = (
-            df.loc[non_skipped_mask, 'CAM'].astype(str) + 
-            df.loc[non_skipped_mask, 'suffix'].astype(str)
-        )
-        df.loc[~non_skipped_mask, 'to'] = ''
+        # Get the source file extension for each row
+        df['to'] = ''
+        for idx, row in df.iterrows():
+            if not row['skip']:
+                src_file = row['from']
+                # Get the original extension with its case
+                src_ext = os.path.splitext(src_file)[1]
+                base_name = str(row[main_column]) + str(row['suffix'])
+                df.at[idx, 'to'] = base_name + src_ext
         
-        counts = {}
-        new_names = []
-        for val in df['to']:
-            if not val:
-                new_names.append('')
-                continue
-            counts[val] = counts.get(val, 0) + 1
-            new_names.append(val + (f"_{counts[val]}" if counts[val] > 1 else ""))
-        
-        df['to'] = [nm + main_ext if nm else '' for nm in new_names]
         return df
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Wing Photos - CAM ID Processor")
+        self.setWindowTitle("AI Photo Processor")
         self.resize(1400, 800)
+        
+        # Load API keys at startup
+        load_api_keys()
         
         self.input_directory, self.parent_directory = FileManager.load_last_dir()
         self.rename_files_dir = ""
@@ -438,6 +595,23 @@ class MainWindow(QMainWindow):
         self.current_df = pd.DataFrame()
         self.suffix_mode = 'wings'
         self.ext_list = [".JPG", ".CR2"]
+        
+        # Preview update control
+        self.combined_preview_updating = False
+        self.active_tab = 0  # Track the active tab to prevent updates when not on Process Images tab
+        
+        # Load crop settings
+        self.crop_settings = {
+            'top': 0.1,
+            'bottom': 0.5,
+            'left': 0.0,
+            'right': 0.5,
+            'zoom': True,  # Default to zoom in
+            'grayscale': True  # Default to grayscale
+        }
+        
+        # Load prompt from file or use default
+        self.load_prompt()
         
         # Thread management
         self.gemini_thread = None
@@ -466,6 +640,9 @@ class MainWindow(QMainWindow):
         
         self.setup_ui()
         
+        # Populate model dropdown
+        self.populate_model_dropdown()
+        
         if self.input_directory and os.path.isdir(self.input_directory):
             self.lab_dir_path.setText(self.input_directory)
             self.refresh_ui()
@@ -476,8 +653,37 @@ class MainWindow(QMainWindow):
         
         self.build_ask_gemini_tab()
         self.build_check_output_tab()
+        self.build_api_keys_tab()  # Add new tab
         
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
+
+    def build_api_keys_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # API Keys text area
+        self.api_keys_text = QTextEdit()
+        self.api_keys_text.setPlaceholderText("Enter API keys here, one per line")
+        
+        # Load existing API keys if any
+        if CONFIG['api_keys']:
+            self.api_keys_text.setPlainText('\n'.join(CONFIG['api_keys']))
+        
+        layout.addWidget(QLabel("API Keys (one per line):"))
+        layout.addWidget(self.api_keys_text)
+        
+        # Save button
+        save_keys_btn = QPushButton("Save API Keys")
+        save_keys_btn.clicked.connect(self.on_save_api_keys)
+        layout.addWidget(save_keys_btn)
+        
+        tab.setLayout(layout)
+        self.tab_widget.addTab(tab, "API Keys")
+
+    def on_save_api_keys(self):
+        keys_text = self.api_keys_text.toPlainText()
+        save_api_keys(keys_text)
+        QMessageBox.information(self, "Success", "API keys saved successfully.")
 
     def cleanup_threads(self):
         # Clean up Gemini thread
@@ -509,7 +715,7 @@ class MainWindow(QMainWindow):
         # Connect signals
         self.gemini_thread.started.connect(self.gemini_worker.process)
         self.gemini_worker.finished.connect(self.on_gemini_processing_finished)
-        self.gemini_worker.progress.connect(self.gemini_progress.setValue)
+        self.gemini_worker.progress.connect(self.progress_bar.setValue)
         self.gemini_worker.error.connect(self.on_gemini_error)
         self.gemini_worker.batch_completed.connect(self.on_batch_completed)
         
@@ -530,7 +736,7 @@ class MainWindow(QMainWindow):
         
         # Create a new thread and worker for image loading
         thread = QtCore.QThread()
-        worker = ImageLoadWorker(image_paths)
+        worker = ImageLoadWorker(image_paths, self.crop_settings)
         worker.moveToThread(thread)
         
         # Connect signals
@@ -585,80 +791,190 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
-        # Directory selection
-        dir_layout = QHBoxLayout()
+        # First row: Input folder, Preview Image dropdown, Rotate JPG dropdown, and Rotate button
+        row1 = QHBoxLayout()
         self.lab_dir_path = QLabel("(none)")
         btn_browse = QPushButton("Browse")
         btn_browse.clicked.connect(self.on_browse_directory)
-        dir_layout.addWidget(QLabel("Input Folder:"))
-        dir_layout.addWidget(self.lab_dir_path)
-        dir_layout.addWidget(btn_browse)
-        layout.addLayout(dir_layout)
+        row1.addWidget(QLabel("Input Folder:"))
+        row1.addWidget(self.lab_dir_path)
+        row1.addWidget(btn_browse)
         
-        # Model selection
-        model_layout = QHBoxLayout()
-        self.model_dropdown = QComboBox()
-        self.populate_model_dropdown()
-        self.model_dropdown.currentIndexChanged.connect(self.on_model_changed)
-        model_layout.addWidget(QLabel("Gemini Model:"))
-        model_layout.addWidget(self.model_dropdown)
-        layout.addLayout(model_layout)
+        self.preview_dropdown = QComboBox()
+        self.preview_dropdown.currentIndexChanged.connect(self.on_preview_dropdown_changed)
+        row1.addWidget(QLabel("Preview Image:"))
+        row1.addWidget(self.preview_dropdown)
         
-        # Rotation settings
-        rotation_layout = QHBoxLayout()
         self.rotation_dropdown = QComboBox()
         for deg, text in [(0, "0° (No rotation)"), (90, "90° anticlockwise"),
                          (180, "180° anticlockwise"), (270, "270° anticlockwise")]:
             self.rotation_dropdown.addItem(text, deg)
         self.rotation_dropdown.setCurrentIndex(2)
         self.rotation_dropdown.currentIndexChanged.connect(self.update_jpg_preview)
-        rotation_layout.addWidget(QLabel("Rotate JPG:"))
-        rotation_layout.addWidget(self.rotation_dropdown)
-        layout.addLayout(rotation_layout)
+        row1.addWidget(QLabel("Rotate JPG:"))
+        row1.addWidget(self.rotation_dropdown)
         
-        # Preview selection
-        preview_layout = QHBoxLayout()
-        self.preview_dropdown = QComboBox()
-        self.preview_dropdown.currentIndexChanged.connect(self.on_preview_dropdown_changed)
-        preview_layout.addWidget(QLabel("Preview Image:"))
-        preview_layout.addWidget(self.preview_dropdown)
-        layout.addLayout(preview_layout)
-        
-        # Preview images
-        preview_images = QHBoxLayout()
-        self.lbl_before_preview = self.create_preview_label()
-        self.lbl_after_preview = self.create_preview_label()
-        preview_images.addWidget(self.lbl_before_preview)
-        preview_images.addWidget(self.lbl_after_preview)
-        layout.addLayout(preview_images)
-        
-        # Progress bar
-        self.export_progress = QProgressBar()
-        self.export_progress.setRange(0, 100)
-        layout.addWidget(self.export_progress)
-        
-        # Rotate button
         btn_rotate = QPushButton("Rotate JPGs")
         btn_rotate.clicked.connect(self.on_rotate_jpgs)
-        layout.addWidget(btn_rotate)
+        row1.addWidget(btn_rotate)
+        layout.addLayout(row1)
         
-        # Continue dropdown
+        # Second row: Original Image and Rotated Image
+        row2 = QHBoxLayout()
+        self.lbl_before_preview = self.create_preview_label()
+        self.lbl_rotated_preview = self.create_preview_label()
+        row2.addWidget(QLabel("Original:"))
+        row2.addWidget(self.lbl_before_preview)
+        row2.addWidget(QLabel("Rotated:"))
+        row2.addWidget(self.lbl_rotated_preview)
+        layout.addLayout(row2)
+        
+        # Third row: Zoom In Image and Zoom settings
+        row3 = QHBoxLayout()
+        
+        # Left side: Zoom In Image
+        left_side = QVBoxLayout()
+        zoomed_row = QHBoxLayout()
+        zoomed_row.addWidget(QLabel("Zoom In:"))
+        self.lbl_after_preview = self.create_preview_label()
+        zoomed_row.addWidget(self.lbl_after_preview)
+        left_side.addLayout(zoomed_row)
+        
+        # Right side: Zoom settings
+        right_side = QVBoxLayout()
+        
+        # Create horizontal layout for checkboxes
+        checkbox_layout = QHBoxLayout()
+        
+        # Zoom checkbox
+        self.zoom_checkbox = QCheckBox("Zoom In (proportion to crop from each side)")
+        self.zoom_checkbox.setChecked(True)
+        self.zoom_checkbox.stateChanged.connect(self.on_zoom_checkbox_changed)
+        checkbox_layout.addWidget(self.zoom_checkbox)
+        
+        # Grayscale checkbox
+        self.grayscale_checkbox = QCheckBox("Convert to Grayscale")
+        self.grayscale_checkbox.setChecked(True)
+        self.grayscale_checkbox.stateChanged.connect(self.on_grayscale_checkbox_changed)
+        checkbox_layout.addWidget(self.grayscale_checkbox)
+        
+        # Add the checkbox layout to the right side
+        right_side.addLayout(checkbox_layout)
+        
+        # Top and Bottom settings
+        top_bottom = QHBoxLayout()
+        self.crop_inputs = {}
+        for key, label in [('top', 'Top:'), ('bottom', 'Bottom:')]:
+            top_bottom.addWidget(QLabel(label))
+            input_widget = QLineEdit(str(self.crop_settings[key]))
+            input_widget.textChanged.connect(self.on_crop_setting_changed)
+            self.crop_inputs[key] = input_widget
+            top_bottom.addWidget(input_widget)
+        right_side.addLayout(top_bottom)
+        
+        # Left and Right settings
+        left_right = QHBoxLayout()
+        for key, label in [('left', 'Left:'), ('right', 'Right:')]:
+            left_right.addWidget(QLabel(label))
+            input_widget = QLineEdit(str(self.crop_settings[key]))
+            input_widget.textChanged.connect(self.on_crop_setting_changed)
+            self.crop_inputs[key] = input_widget
+            left_right.addWidget(input_widget)
+        right_side.addLayout(left_right)
+        
+        # Add left and right sides to row3
+        row3.addLayout(left_side)
+        row3.addLayout(right_side)
+        layout.addLayout(row3)
+        
+        # Fourth row: Combined Image and Batch settings
+        row4 = QHBoxLayout()
+        self.lbl_combined_preview = self.create_preview_label()
+        row4.addWidget(QLabel("Combined:"))
+        row4.addWidget(self.lbl_combined_preview)
+        
+        # Batch settings on the right
+        batch_settings = QVBoxLayout()
+        
+        # Batch preview dropdown
+        self.batch_preview_dropdown = QComboBox()
+        self.batch_preview_dropdown.currentIndexChanged.connect(self.on_batch_preview_changed)
+        batch_preview_layout = QHBoxLayout()
+        batch_preview_layout.addWidget(QLabel("Preview Batch:"))
+        batch_preview_layout.addWidget(self.batch_preview_dropdown)
+        batch_settings.addLayout(batch_preview_layout)
+        
+        # Batch size
+        batch_size_layout = QHBoxLayout()
+        self.batch_size_input = QLineEdit(str(CONFIG['batch_size']))
+        self.batch_size_input.textChanged.connect(self.on_batch_size_changed)
+        batch_size_layout.addWidget(QLabel("Batch Size:"))
+        batch_size_layout.addWidget(self.batch_size_input)
+        batch_settings.addLayout(batch_size_layout)
+        
+        # Total height
+        merged_img_height_layout = QHBoxLayout()
+        self.merged_img_height_input = QLineEdit(str(CONFIG['merged_img_height']))
+        self.merged_img_height_input.textChanged.connect(self.on_merged_img_height_changed)
+        merged_img_height_layout.addWidget(QLabel("Merged Image Height:"))
+        merged_img_height_layout.addWidget(self.merged_img_height_input)
+        batch_settings.addLayout(merged_img_height_layout)
+        
+        row4.addLayout(batch_settings)
+        layout.addLayout(row4)
+        
+        # Fifth row: Prompt
+        row5 = QVBoxLayout()
+        self.prompt_text = QTextEdit()
+        self.prompt_text.setPlainText(CONFIG['prompt_text_base'])
+        self.prompt_text.setMinimumHeight(100)
+        row5.addWidget(self.prompt_text)
+        layout.addLayout(row5)
+        
+        # Sixth row: Main column and Prompt buttons
+        row6 = QHBoxLayout()
+        self.main_column_input = QLineEdit(CONFIG['main_column'])
+        self.main_column_input.textChanged.connect(self.on_main_column_changed)
+        row6.addWidget(QLabel("Main column (column to display in Review Results):"))
+        row6.addWidget(self.main_column_input)
+        
+        save_prompt_btn = QPushButton("Save Prompt")
+        save_prompt_btn.clicked.connect(self.on_save_prompt)
+        restore_prompt_btn = QPushButton("Restore Default Prompt")
+        restore_prompt_btn.clicked.connect(self.restore_default_prompt)
+        row6.addWidget(save_prompt_btn)
+        row6.addWidget(restore_prompt_btn)
+        layout.addLayout(row6)
+        
+        # Seventh row: Continue dropdown and Ask Gemini button
+        row7 = QHBoxLayout()
         self.continue_dropdown = QComboBox()
         self.continue_dropdown.addItem("Start Over")
-        layout.addWidget(self.continue_dropdown)
+        row7.addWidget(self.continue_dropdown)
         
-        # Gemini progress
-        self.gemini_progress = QProgressBar()
-        self.gemini_progress.setRange(0, 100)
-        layout.addWidget(self.gemini_progress)
+        # Add model dropdown
+        self.model_dropdown = QComboBox()
+        self.model_dropdown.currentIndexChanged.connect(self.on_model_changed)
+        row7.addWidget(QLabel("Model:"))
+        row7.addWidget(self.model_dropdown)
         
-        # Ask Gemini button
         ask_btn = QPushButton("Ask Gemini (Start Processing)")
         ask_btn.clicked.connect(self.on_ask_gemini)
-        layout.addWidget(ask_btn)
+        row7.addWidget(ask_btn)
+        layout.addLayout(row7)
+        
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setFormat("%p%")  # Show percentage
+        self.progress_bar.valueChanged.connect(self.update_progress_text)
+        layout.addWidget(self.progress_bar)
         
         tab.setLayout(layout)
-        self.tab_widget.addTab(tab, "Ask Gemini")
+        self.tab_widget.addTab(tab, "Process Images")
+
+    def update_progress_text(self, value):
+        self.progress_bar.setFormat(f"{value}%")
 
     def build_check_output_tab(self):
         tab = QWidget()
@@ -677,15 +993,12 @@ class MainWindow(QMainWindow):
         self.suffix_mode_dropdown.currentIndexChanged.connect(self.on_suffix_mode_changed)
         controls.addWidget(self.suffix_mode_dropdown)
         
-        self.ext_line_edit = QLineEdit()
-        self.ext_line_edit.setPlaceholderText(".JPG, .CR2")
-        controls.addWidget(self.ext_line_edit)
-        
         self.show_dupes_chk = QCheckBox("Show duplicates only")
         self.show_dupes_chk.stateChanged.connect(self.update_display)
         controls.addWidget(self.show_dupes_chk)
         
         for btn_text, handler in [
+            ("Open CSV", self.on_open_csv),
             ("Recalculate Final Name", self.on_recalc_final_name),
             ("Rename Files", self.on_rename_files),
             ("Restore Original", self.on_restore_original_filenames)
@@ -705,11 +1018,19 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.scroll)
         
         tab.setLayout(layout)
-        self.tab_widget.addTab(tab, "Check Output")
+        self.tab_widget.addTab(tab, "Review Results")
+
+    def on_open_csv(self):
+        current_csv = self.csv_dropdown.currentText()
+        if current_csv and current_csv != "(select CSV)":
+            csv_path = os.path.join(self.rename_files_dir, current_csv)
+            if os.path.exists(csv_path):
+                QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(csv_path))
 
     def create_preview_label(self):
         label = QLabel()
-        label.setFixedSize(200, 200)
+        # Set size to 16:9 aspect ratio (480x270) - larger size
+        label.setFixedSize(480, 270)
         label.setStyleSheet("background-color: #aaa;")
         return label
 
@@ -720,26 +1041,70 @@ class MainWindow(QMainWindow):
         label.installEventFilter(self)
         return label
 
+    def get_image_path(self, original_path):
+        if os.path.exists(original_path):
+            return original_path
+            
+        # Try to find renamed file
+        dir_path = os.path.dirname(original_path)
+        
+        # Find the row in current_df that matches this file
+        matching_row = self.current_df[self.current_df['from'] == original_path]
+        if not matching_row.empty:
+            new_name = matching_row.iloc[0]['to']
+            if new_name:
+                renamed_path = os.path.join(dir_path, new_name)
+                if os.path.exists(renamed_path):
+                    return renamed_path
+                    
+        return original_path
+
     def eventFilter(self, obj, event):
         if event.type() == QtCore.QEvent.MouseButtonRelease:
             if hasattr(obj, 'image_path'):
-                QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(obj.image_path))
+                image_path = self.get_image_path(obj.image_path)
+                if os.path.exists(image_path):
+                    QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(image_path))
+                else:
+                    print(f"Error: Could not find image at: {image_path}")
                 return True
         return super().eventFilter(obj, event)
 
     def pil_to_qimage(self, pil_img, w_target, h_target):
-        pil_img = pil_img.copy()
-        pil_img.thumbnail((w_target, h_target), Image.LANCZOS)
-        data = pil_img.tobytes("raw", "RGB")
-        return QtGui.QImage(data, pil_img.width, pil_img.height, QtGui.QImage.Format_RGB888)
+        # Convert to RGB if needed
+        if pil_img.mode != 'RGB':
+            pil_img = pil_img.convert('RGB')
+            
+        # Get image dimensions
+        w, h = pil_img.size
+        
+        # Convert PIL image to bytes in the correct format for QImage
+        # QImage expects RGB data in row-major order
+        img_data = pil_img.tobytes("raw", "RGB")
+        qimg = QtGui.QImage(img_data, w, h, w * 3, QtGui.QImage.Format_RGB888)
+        
+        # Let Qt handle the aspect ratio scaling
+        return qimg.scaled(w_target, h_target, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
 
     def refresh_ui(self):
         self.populate_continue_dropdown()
         self.populate_checkoutput_csv_dropdown()
-        self.populate_preview_dropdown()
+        
+        # Only update image previews if we're on the first tab
+        if self.active_tab == 0:
+            self.populate_preview_dropdown()
+            self.populate_batch_preview_dropdown()
+            
         self.auto_select_latest_csv()
 
     def on_tab_changed(self, index):
+        # Update active tab tracker
+        self.active_tab = index
+        
+        # If switching to Process Images tab (index 0), reload API keys
+        if index == 0:
+            load_api_keys()
+        
         if self.input_directory and os.path.isdir(self.input_directory):
             self.refresh_ui()
 
@@ -765,34 +1130,45 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No folder", "Pick an input folder first.")
             return
             
-        jpg_files = [f for f in os.listdir(self.input_directory) if f.lower().endswith('.jpg')]
-        if not jpg_files:
-            QMessageBox.information(self, "No JPG", "No .JPG files found in this folder.")
+        # Get all compressed image files
+        image_files = [f for f in os.listdir(self.input_directory) 
+                      if ImageExtensionHandler.is_compressed_image(os.path.splitext(f)[1])]
+        
+        if not image_files:
+            QMessageBox.information(self, "No images", "No supported image files found in this folder.")
             return
             
-        self.export_progress.setValue(0)
-        total_files = len(jpg_files)
+        self.progress_bar.setValue(0)
+        total_files = len(image_files)
         rotation_degs = self.rotation_dropdown.currentData()
         
         deg_to_orientation = {0: 1, 90: 6, 180: 3, 270: 8}
         target_orientation = deg_to_orientation.get(rotation_degs, 1)
         
-        for i, filename in enumerate(jpg_files):
-            jpg_path = os.path.join(self.input_directory, filename)
+        for i, filename in enumerate(image_files):
+            img_path = os.path.join(self.input_directory, filename)
             
             try:
-                with Image.open(jpg_path) as img:
-                    if 'exif' in img.info:
-                        exif_dict = piexif.load(img.info['exif'])
-                        exif_dict['0th'][piexif.ImageIFD.Orientation] = target_orientation
-                        piexif.insert(piexif.dump(exif_dict), jpg_path)
+                with Image.open(img_path) as img:
+                    # Check if it's a PNG file
+                    if filename.lower().endswith('.png'):
+                        # Rotate the actual image data
+                        rotated_img = img.rotate(rotation_degs, expand=True)
+                        rotated_img.save(img_path, 'PNG')
+                    else:
+                        # For JPEG files, modify EXIF data
+                        if 'exif' in img.info:
+                            exif_dict = piexif.load(img.info['exif'])
+                            exif_dict['0th'][piexif.ImageIFD.Orientation] = target_orientation
+                            piexif.insert(piexif.dump(exif_dict), img_path)
+                            
             except Exception as e:
-                print(f"Error processing {filename}: {e}")
+                print(f"Error processing {filename}: {str(e)}")
                 
-            self.export_progress.setValue(int((i + 1) / total_files * 100))
+            self.progress_bar.setValue(int((i + 1) / total_files * 100))
             QApplication.processEvents()
             
-        QMessageBox.information(self, "Done", "JPG rotation completed.")
+        QMessageBox.information(self, "Done", "Image rotation completed.")
 
     def on_ask_gemini(self):
         if not self.input_directory:
@@ -827,13 +1203,21 @@ class MainWindow(QMainWindow):
                 
         if choice == "Start Over":
             print("Starting fresh run.")
-            all_files = FileManager.get_all_files(self.input_directory, [".JPG", ".JPEG"])
+            # Get all standard image files for processing
+            all_files = FileManager.get_all_files(self.input_directory, [".JPG", ".JPEG", ".PNG"])
             if not all_files:
-                print("No JPG files found in the input folder.")
-                QMessageBox.warning(self, "No files", "No JPG files found in the input folder.")
+                print("No standard image files (JPG/JPEG/PNG) found in the input folder.")
+                QMessageBox.warning(self, "No files", "No standard image files (JPG/JPEG/PNG) found in the input folder.")
                 return
                 
-            print(f"Found {len(all_files)} JPG files to process")
+            print(f"Found {len(all_files)} standard image files to process")
+            
+            # Get all raw files for reference
+            raw_files = [f for f in os.listdir(self.input_directory) 
+                        if ImageExtensionHandler.is_raw_image(os.path.splitext(f)[1])]
+            if raw_files:
+                print(f"Found {len(raw_files)} raw files (CR2/ORF) - these will be included in renaming")
+            
             df = pd.DataFrame({
                 'from': all_files,
                 'photo_ID': range(1, len(all_files) + 1),
@@ -861,22 +1245,23 @@ class MainWindow(QMainWindow):
                 # Read CSV and handle NaN values
                 df = pd.read_csv(path)
                 
-                # Fill NaN values with empty strings for text columns
-                text_columns = ['from', 'CAM', 'to', 'skip', 'note', 'co']
-                for col in text_columns:
-                    if col in df.columns:
+                # Fill NaN values with empty strings for all string columns
+                for col in df.columns:
+                    if df[col].dtype == 'object':
                         df[col] = df[col].fillna('')
                 
-                # Ensure skip column exists and is properly formatted
-                if 'skip' not in df.columns:
-                    df['skip'] = ''
-                else:
+                # Ensure skip column exists and is properly formatted if it exists
+                if 'skip' in df.columns:
                     df['skip'] = df['skip'].apply(lambda x: 'x' if str(x).lower() == 'x' else '')
                     
-                # Ensure required columns exist
-                for col in ['from', 'CAM', 'to']:
-                    if col not in df.columns:
-                        df[col] = ''
+                # Ensure 'to' column exists 
+                if 'to' not in df.columns:
+                    df['to'] = ''
+                    
+                # Check if the main column exists, if not add a warning
+                main_column = CONFIG['main_column']
+                if main_column not in df.columns:
+                    print(f"Warning: Main column '{main_column}' not found in CSV")
                         
                 self.current_df = df
                 self.update_display()
@@ -890,13 +1275,8 @@ class MainWindow(QMainWindow):
 
     def on_recalc_final_name(self):
         self.collect_ui_changes_into_df()
-        
-        exts_txt = self.ext_line_edit.text().strip()
-        if exts_txt:
-            self.ext_list = [x.strip() for x in exts_txt.split(',') if x.strip()]
-            
         self.current_df = NameCalculator.recalc_final_names(
-            self.current_df, self.suffix_mode, self.ext_list)
+            self.current_df, self.suffix_mode, CONFIG['main_column'])
         self.update_display()
         QMessageBox.information(self, "Done", "Recalculated final names.")
 
@@ -906,45 +1286,73 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No data", "No CSV loaded.")
             return
             
+        # Check if 'to' column is empty or missing
+        if 'to' not in self.current_df.columns or self.current_df['to'].isna().all() or (self.current_df['to'] == '').all():
+            result = QMessageBox.question(
+                self, 
+                "Missing Target Names", 
+                "No target filenames found. Do you want to recalculate them first?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if result == QMessageBox.Yes:
+                self.on_recalc_final_name()
+            else:
+                return
+            
         print("\n=== Starting File Rename ===")
         self.collect_ui_changes_into_df()
-        non_skipped_df = self.current_df[self.current_df['skip'] != 'x']
         
-        cts = non_skipped_df['to'].value_counts()
-        if not cts[cts > 1].empty:
-            print("Cannot rename due to duplicate target names")
-            QMessageBox.warning(self, "Duplicates", "Cannot rename because of duplicates")
-            return
+        # Make skip column handling optional
+        if 'skip' in self.current_df.columns:
+            non_skipped_df = self.current_df[self.current_df['skip'] != 'x']
+        else:
+            non_skipped_df = self.current_df[self.current_df['to'] != '']
             
         log_entries = []
         renamed_count = 0
         
         print(f"Found {len(non_skipped_df)} files to rename")
         
+        # Save the current state of the DataFrame with 'to' column before renaming
+        current_csv = self.csv_dropdown.currentText()
+        if current_csv and current_csv != "(select CSV)":
+            csv_path = os.path.join(self.rename_files_dir, current_csv)
+            print(f"Saving current state to: {csv_path}")
+            self.current_df.to_csv(csv_path, index=False)
+        
         for _, row in non_skipped_df.iterrows():
             if not row['to']:
                 continue
                 
-            src_jpg = row['from']
-            if os.path.exists(src_jpg):
+            src_file = row['from']
+            if os.path.exists(src_file):
+                # Get the original extension with its case
+                src_ext = os.path.splitext(src_file)[1]
                 base_name = os.path.splitext(row['to'])[0]
-                dst_jpg = os.path.join(os.path.dirname(src_jpg), base_name + ".JPG")
+                
+                # Use the original file extension with its case
+                dst_file = os.path.join(os.path.dirname(src_file), base_name + src_ext)
                 
                 try:
-                    print(f"Renaming: {os.path.basename(src_jpg)} -> {os.path.basename(dst_jpg)}")
-                    os.rename(src_jpg, dst_jpg)
-                    log_entries.append({'original': src_jpg, 'renamed': dst_jpg})
+                    print(f"Renaming: {os.path.basename(src_file)} -> {os.path.basename(dst_file)}")
+                    os.rename(src_file, dst_file)
+                    log_entries.append({'original': src_file, 'renamed': dst_file})
                     renamed_count += 1
                     
-                    src_cr2 = os.path.splitext(src_jpg)[0] + ".CR2"
-                    if os.path.exists(src_cr2):
-                        dst_cr2 = os.path.join(os.path.dirname(src_cr2), base_name + ".CR2")
-                        print(f"Renaming CR2: {os.path.basename(src_cr2)} -> {os.path.basename(dst_cr2)}")
-                        os.rename(src_cr2, dst_cr2)
-                        log_entries.append({'original': src_cr2, 'renamed': dst_cr2})
-                        renamed_count += 1
+                    # Check for corresponding raw file
+                    src_base = os.path.splitext(src_file)[0]
+                    for raw_ext in CONFIG['raw_exts']:
+                        raw_file = src_base + raw_ext
+                        if os.path.exists(raw_file):
+                            # Preserve the case of the raw extension
+                            raw_dst = os.path.join(os.path.dirname(raw_file), base_name + raw_ext)
+                            print(f"Renaming raw: {os.path.basename(raw_file)} -> {os.path.basename(raw_dst)}")
+                            os.rename(raw_file, raw_dst)
+                            log_entries.append({'original': raw_file, 'renamed': raw_dst})
+                            renamed_count += 1
+                            
                 except Exception as e:
-                    print(f"Error renaming {src_jpg}: {e}")
+                    print(f"Error renaming {src_file}: {e}")
                     
         if log_entries:
             log_path = os.path.join(self.rename_files_dir, "rename_log.csv")
@@ -1010,14 +1418,21 @@ class MainWindow(QMainWindow):
         if self.current_df.empty:
             return
 
+        main_column = CONFIG['main_column']
+        if main_column not in self.current_df.columns:
+            msg_label = QLabel(f"Column '{main_column}' not found in data. Please select a valid column.")
+            msg_label.setStyleSheet("color: red; font-weight: bold;")
+            self.grid_layout.addWidget(msg_label, 0, 0)
+            return
+
         df_disp = self.current_df.copy()
         if self.show_dupes_chk.isChecked():
-            cam_counts = df_disp['CAM'].value_counts()
-            non_pair_cams = cam_counts[cam_counts != 2].index
-            df_disp = df_disp[df_disp['CAM'].isin(non_pair_cams)]
+            value_counts = df_disp[main_column].value_counts()
+            non_pair_values = value_counts[value_counts != 2].index
+            df_disp = df_disp[df_disp[main_column].isin(non_pair_values)]
             
             if df_disp.empty:
-                msg_label = QLabel("All CAMs appear exactly twice (normal dorsal/ventral pairs)")
+                msg_label = QLabel(f"All {main_column} values appear exactly twice (normal pairs)")
                 msg_label.setStyleSheet("color: blue; font-weight: bold;")
                 self.grid_layout.addWidget(msg_label, 0, 0)
                 return
@@ -1042,43 +1457,53 @@ class MainWindow(QMainWindow):
             vlay = QVBoxLayout(container)
             vlay.setSpacing(10)
 
-            cam_value = str(rowdata.get('CAM', ''))
-            if cam_value:
-                cam_count = len(df_disp[df_disp['CAM'] == cam_value])
-                total_count = len(self.current_df[self.current_df['CAM'] == cam_value])
-                if total_count != 2:
-                    count_label = QLabel(f"Warning: CAM appears {total_count} times")
-                    count_label.setStyleSheet("color: red; font-weight: bold;")
-                    vlay.addWidget(count_label)
+            # Get value from main column and ensure from_path is set
+            main_value = str(rowdata.get(main_column, ''))
+            from_path = rowdata.get('from', '')
+            
+            # Show image if we have a path, regardless of main_value
+            if from_path:
+                # Count occurrences in filtered display and full dataframe
+                if main_value:  # Only show warning if we have a main_value
+                    disp_count = len(df_disp[df_disp[main_column] == main_value])
+                    total_count = len(self.current_df[self.current_df[main_column] == main_value])
+                    if total_count != 2:
+                        count_label = QLabel(f"Warning: {main_column} '{main_value}' appears {total_count} times")
+                        count_label.setStyleSheet("color: red; font-weight: bold;")
+                        vlay.addWidget(count_label)
                 
-                from_path = rowdata['from']
-                if os.path.exists(from_path):
+                # Get the correct image path (either original or renamed)
+                image_path = self.get_image_path(from_path)
+                if os.path.exists(image_path):
                     # Create placeholder label
-                    lbl_img = self.create_clickable_label(from_path)
+                    lbl_img = self.create_clickable_label(image_path)
                     lbl_img.setText("Loading...")
                     lbl_img.setAlignment(QtCore.Qt.AlignCenter)
                     vlay.addWidget(lbl_img, alignment=QtCore.Qt.AlignHCenter)
                     
                     # Store label reference
-                    self.image_labels[from_path] = lbl_img
-                    image_paths_to_load.append(from_path)
+                    self.image_labels[image_path] = lbl_img
+                    image_paths_to_load.append(image_path)
                 else:
                     vlay.addWidget(QLabel("Image not found"))
 
-            lbl_from = QLabel(f"From: {os.path.basename(from_path)}")
-            lbl_from.setStyleSheet("color: blue; font-weight: bold;")
-            lbl_from.setWordWrap(True)
-            vlay.addWidget(lbl_from)
+            # Only show from path if it exists
+            if from_path:
+                lbl_from = QLabel(f"From: {os.path.basename(from_path)}")
+                lbl_from.setStyleSheet("color: blue; font-weight: bold;")
+                lbl_from.setWordWrap(True)
+                vlay.addWidget(lbl_from)
 
-            h_cam = QHBoxLayout()
-            l_cam = QLabel("CAM:")
-            e_cam = QLineEdit(str(rowdata.get('CAM','')))
-            e_cam.textChanged.connect(
-                lambda text, idx=i, path=csv_path: self.on_cam_value_changed(text, idx, path)
+            # Dynamic field for main column value
+            h_main = QHBoxLayout()
+            l_main = QLabel(f"{main_column}:")
+            e_main = QLineEdit(str(rowdata.get(main_column,'')))
+            e_main.textChanged.connect(
+                lambda text, idx=i, col=main_column, path=csv_path: self.on_column_value_changed(text, idx, col, path)
             )
-            h_cam.addWidget(l_cam)
-            h_cam.addWidget(e_cam)
-            vlay.addLayout(h_cam)
+            h_main.addWidget(l_main)
+            h_main.addWidget(e_main)
+            vlay.addLayout(h_main)
 
             h_to = QHBoxLayout()
             l_to = QLabel("To:")
@@ -1087,27 +1512,43 @@ class MainWindow(QMainWindow):
             h_to.addWidget(e_to)
             vlay.addLayout(h_to)
 
-            h_co = QHBoxLayout()
-            l_co = QLabel("Crossed Out:")
-            e_co = QLineEdit(str(rowdata.get('co','')))
-            h_co.addWidget(l_co)
-            h_co.addWidget(e_co)
-            vlay.addLayout(h_co)
+            # Only show crossed-out field if it exists in the dataframe
+            if 'co' in self.current_df.columns:
+                h_co = QHBoxLayout()
+                l_co = QLabel("Crossed Out:")
+                e_co = QLineEdit(str(rowdata.get('co','')))
+                h_co.addWidget(l_co)
+                h_co.addWidget(e_co)
+                vlay.addLayout(h_co)
+            else:
+                e_co = None  # Placeholder so the dictionary below doesn't break
 
-            skip_chk = QCheckBox("Skip")
-            skip_chk.setChecked(str(rowdata.get('skip', '')).lower() == 'x')
-            skip_chk.stateChanged.connect(
-                lambda state, idx=i, path=csv_path: self.on_skip_checkbox_changed(state, idx, path)
-            )
-            vlay.addWidget(skip_chk)
+            # Keep the skip checkbox if it exists
+            skip_chk = None
+            if 'skip' in self.current_df.columns:
+                skip_chk = QCheckBox("Skip")
+                skip_chk.setChecked(str(rowdata.get('skip', '')).lower() == 'x')
+                skip_chk.stateChanged.connect(
+                    lambda state, idx=i, path=csv_path: self.on_skip_checkbox_changed(state, idx, path)
+                )
+                vlay.addWidget(skip_chk)
 
-            self.ui_widgets.append({
+            # Create dynamic widget references
+            widget_dict = {
                 'df_index': i,
-                'cam_line': e_cam,
-                'to_line': e_to,
-                'skip_chk': skip_chk,
-                'co_line': e_co
-            })
+                'to_line': e_to
+            }
+            
+            # Add main column line edit
+            widget_dict[f'{main_column}_line'] = e_main
+            
+            # Add optional fields if they exist
+            if 'co' in self.current_df.columns:
+                widget_dict['co_line'] = e_co
+            if 'skip' in self.current_df.columns:
+                widget_dict['skip_chk'] = skip_chk
+                
+            self.ui_widgets.append(widget_dict)
 
             self.grid_layout.addWidget(container, row_idx, col_idx)
             col_idx += 1
@@ -1123,12 +1564,29 @@ class MainWindow(QMainWindow):
             self.start_image_loading(image_paths_to_load)
 
     def collect_ui_changes_into_df(self):
+        main_column = CONFIG['main_column']
         for w in self.ui_widgets:
             idx = w['df_index']
-            self.current_df.at[idx, 'CAM'] = w['cam_line'].text().strip()
-            self.current_df.at[idx, 'to'] = w['to_line'].text().strip()
-            self.current_df.at[idx, 'skip'] = 'x' if w['skip_chk'].isChecked() else ''
-            self.current_df.at[idx, 'co'] = w['co_line'].text().strip()
+            # Handle main column
+            if f'{main_column}_line' in w:
+                self.current_df.at[idx, main_column] = w[f'{main_column}_line'].text().strip()
+            # Handle 'to' field
+            if 'to_line' in w:
+                self.current_df.at[idx, 'to'] = w['to_line'].text().strip()
+            # Handle skip checkbox if it exists
+            if 'skip_chk' in w:
+                self.current_df.at[idx, 'skip'] = 'x' if w['skip_chk'].isChecked() else ''
+            # Handle crossed out field if it exists
+            if 'co_line' in w:
+                self.current_df.at[idx, 'co'] = w['co_line'].text().strip()
+
+    def on_column_value_changed(self, text, idx, column, csv_path):
+        if self.current_df is not None and not self.current_df.empty and idx < len(self.current_df):
+            self.current_df.at[idx, column] = text
+            
+    def on_skip_checkbox_changed(self, state, idx, csv_path):
+        if self.current_df is not None and not self.current_df.empty and idx < len(self.current_df):
+            self.current_df.at[idx, 'skip'] = 'x' if state == QtCore.Qt.Checked else ''
 
     def populate_continue_dropdown(self):
         self.continue_dropdown.clear()
@@ -1176,45 +1634,120 @@ class MainWindow(QMainWindow):
         if not self.input_directory:
             return
             
-        jpg_files = [f for f in os.listdir(self.input_directory) if f.lower().endswith('.jpg')]
-        if not jpg_files:
+        # Get all compressed image files
+        image_files = [f for f in os.listdir(self.input_directory) 
+                      if ImageExtensionHandler.is_compressed_image(os.path.splitext(f)[1])]
+        
+        if not image_files:
             return
             
-        for jpg in jpg_files:
-            self.preview_dropdown.addItem(jpg)
+        for img in image_files:
+            self.preview_dropdown.addItem(img)
             
         if self.preview_dropdown.count() > 0:
             self.preview_dropdown.setCurrentIndex(0)
-            selected_jpg = self.preview_dropdown.currentText()
-            jpg_path = os.path.join(self.input_directory, selected_jpg)
-            self.show_jpg_previews(jpg_path)
-
-    def show_jpg_previews(self, jpg_path):
-        try:
-            img_pil = Image.open(jpg_path)
+            selected_img = self.preview_dropdown.currentText()
+            img_path = os.path.join(self.input_directory, selected_img)
+            self.show_jpg_previews(img_path)
             
+        # Update batch preview dropdown
+        self.populate_batch_preview_dropdown()
+
+    def populate_batch_preview_dropdown(self):
+        # Remember current selection if any
+        current_selection = None
+        if self.batch_preview_dropdown.count() > 0:
+            current_selection = self.batch_preview_dropdown.currentData()
+        
+        # Temporarily disconnect signal to avoid triggering updates
+        self.batch_preview_dropdown.blockSignals(True)
+        self.batch_preview_dropdown.clear()
+        
+        if not self.input_directory:
+            self.batch_preview_dropdown.blockSignals(False)
+            return
+            
+        # Get all compressed image files
+        image_files = [f for f in os.listdir(self.input_directory) 
+                      if ImageExtensionHandler.is_compressed_image(os.path.splitext(f)[1])]
+        
+        if not image_files:
+            self.batch_preview_dropdown.blockSignals(False)
+            return
+            
+        # Calculate total number of batches
+        total_batches = math.ceil(len(image_files) / CONFIG['batch_size'])
+        
+        # Add batch options
+        for i in range(1, total_batches + 1):
+            start_idx = (i - 1) * CONFIG['batch_size']
+            end_idx = min(i * CONFIG['batch_size'], len(image_files))
+            batch_text = f"Batch {i} ({start_idx + 1}-{end_idx})"
+            self.batch_preview_dropdown.addItem(batch_text, i)
+            
+        # Try to restore previous selection
+        if current_selection is not None and current_selection <= total_batches:
+            index = self.batch_preview_dropdown.findData(current_selection)
+            if index >= 0:
+                self.batch_preview_dropdown.setCurrentIndex(index)
+        elif self.batch_preview_dropdown.count() > 0:
+            self.batch_preview_dropdown.setCurrentIndex(0)
+            
+        # Re-enable signals
+        self.batch_preview_dropdown.blockSignals(False)
+        
+        # Only trigger an update if we have items and not already updating
+        # AND if we're not restoring a previous selection
+        if (self.batch_preview_dropdown.count() > 0 and 
+            not self.combined_preview_updating and 
+            current_selection is None):
+            self.update_combined_preview()
+
+    def on_batch_preview_changed(self, index):
+        """When user selects a different batch to preview"""
+        if index < 0 or not self.input_directory:
+            return
+            
+        # Simply trigger an update - the _do_update_combined_preview method will 
+        # get the current batch from the dropdown
+        self.update_combined_preview()
+
+    def show_jpg_previews(self, img_path):
+        try:
+            img_pil = Image.open(img_path)
+            
+            # Show original
             pil_before = ImageProcessor.fix_orientation(img_pil)
-            pil_before = pil_before.convert('RGB')
-            qimg_before = self.pil_to_qimage(pil_before, 200, 200)
+            qimg_before = self.pil_to_qimage(pil_before, 480, 270)
             self.lbl_before_preview.setPixmap(QtGui.QPixmap.fromImage(qimg_before))
             
-            rotation_degs = self.rotation_dropdown.currentData()
-            pil_after = ImageProcessor.fix_orientation(img_pil)
-            pil_after = pil_after.rotate(rotation_degs, expand=True)
-            pil_after = pil_after.convert('RGB')
-            qimg_after = self.pil_to_qimage(pil_after, 200, 200)
+            # Show zoomed - apply EXIF rotation first if not PNG
+            if not img_path.lower().endswith('.png'):
+                img_pil = ImageProcessor.fix_orientation(img_pil)
+            if self.crop_settings['zoom']:
+                pil_after = ImageProcessor.crop_image(img_pil, self.crop_settings)
+            else:
+                pil_after = ImageProcessor.fix_orientation(img_pil)
+            qimg_after = self.pil_to_qimage(pil_after, 480, 270)
             self.lbl_after_preview.setPixmap(QtGui.QPixmap.fromImage(qimg_after))
             
+            # Show rotated
+            rotation_degs = self.rotation_dropdown.currentData()
+            pil_rotated = ImageProcessor.fix_orientation(img_pil)
+            pil_rotated = pil_rotated.rotate(rotation_degs, expand=True)
+            qimg_rotated = self.pil_to_qimage(pil_rotated, 480, 270)
+            self.lbl_rotated_preview.setPixmap(QtGui.QPixmap.fromImage(qimg_rotated))
+            
         except Exception as e:
-            QMessageBox.warning(self, "Error loading JPG", f"{e}")
+            QMessageBox.warning(self, "Error loading image", f"{e}")
 
     def on_preview_dropdown_changed(self, index):
         if index < 0 or not self.input_directory:
             return
             
-        selected_jpg = self.preview_dropdown.currentText()
-        jpg_path = os.path.join(self.input_directory, selected_jpg)
-        self.show_jpg_previews(jpg_path)
+        selected_img = self.preview_dropdown.currentText()
+        img_path = os.path.join(self.input_directory, selected_img)
+        self.show_jpg_previews(img_path)
 
     def update_jpg_preview(self):
         if self.preview_dropdown.count() > 0:
@@ -1239,6 +1772,233 @@ class MainWindow(QMainWindow):
             CONFIG['model_name'] = selected_model
             if hasattr(self, 'gemini_handler'):
                 self.gemini_handler.update_model(selected_model)
+
+    def load_prompt(self):
+        prompt_file = os.path.join(os.path.dirname(__file__), 'prompt.txt')
+        
+        if os.path.exists(prompt_file):
+            try:
+                with open(prompt_file, 'r', encoding='utf-8') as f:
+                    loaded_prompt = f.read()
+                    # Check if the prompt already contains the sample JSON
+                    if '{sample_json_output}' in loaded_prompt:
+                        CONFIG['prompt_text_base'] = loaded_prompt.format(sample_json_output=SAMPLE_JSON)
+                    else:
+                        CONFIG['prompt_text_base'] = loaded_prompt
+            except Exception as e:
+                print(f"Error loading prompt.txt: {e}")
+                # Use the default prompt as fallback
+                CONFIG['prompt_text_base'] = DEFAULT_PROMPT.format(sample_json_output=SAMPLE_JSON)
+        else:
+            # Use the default prompt
+            CONFIG['prompt_text_base'] = DEFAULT_PROMPT.format(sample_json_output=SAMPLE_JSON)
+
+    def save_prompt(self):
+        prompt_file = os.path.join(os.path.dirname(__file__), 'prompt.txt')
+        try:
+            # Save the unformatted prompt (with {sample_json_output} placeholder)
+            prompt_to_save = CONFIG['prompt_text_base'].replace(SAMPLE_JSON, '{sample_json_output}')
+            with open(prompt_file, 'w', encoding='utf-8') as f:
+                f.write(prompt_to_save)
+            QMessageBox.information(self, "Success", "Prompt saved successfully.")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to save prompt: {e}")
+
+    def restore_default_prompt(self):
+        # Reset to the original unformatted prompt
+        CONFIG['prompt_text_base'] = DEFAULT_PROMPT.format(sample_json_output=SAMPLE_JSON)
+        self.save_prompt()
+        self.prompt_text.setPlainText(CONFIG['prompt_text_base'])
+        QMessageBox.information(self, "Success", "Default prompt restored and saved.")
+
+    def on_main_column_changed(self):
+        CONFIG['main_column'] = self.main_column_input.text().strip()
+        self.update_display()
+
+    def on_batch_size_changed(self):
+        try:
+            new_batch_size = int(self.batch_size_input.text())
+            if new_batch_size != CONFIG['batch_size']:
+                CONFIG['batch_size'] = new_batch_size
+                self.populate_batch_preview_dropdown()
+                self.update_combined_preview()
+        except ValueError:
+            # If invalid input, just don't update the batch size
+            pass
+
+    def on_merged_img_height_changed(self):
+        try:
+            new_height = int(self.merged_img_height_input.text())
+            if new_height != CONFIG['merged_img_height']:
+                CONFIG['merged_img_height'] = new_height
+                self.update_combined_preview()
+        except ValueError:
+            # If invalid input, just don't update the total height
+            pass
+
+    def on_zoom_checkbox_changed(self, state):
+        self.crop_settings['zoom'] = state == QtCore.Qt.Checked
+        # Refresh the preview if one is selected
+        if self.preview_dropdown.count() > 0:
+            self.on_preview_dropdown_changed(self.preview_dropdown.currentIndex())
+        # Update UI for crop settings
+        for widget in self.crop_inputs.values():
+            widget.setEnabled(self.crop_settings['zoom'])
+            
+        # Update the merged preview if we're on the first tab
+        if self.active_tab == 0:
+            self.update_combined_preview()
+
+    def on_crop_setting_changed(self):
+        try:
+            for key, input_widget in self.crop_inputs.items():
+                value = float(input_widget.text())
+                # For bottom and right, use 1 - value to crop from that side
+                if key in ['bottom', 'right']:
+                    self.crop_settings[key] = 1 - value
+                else:
+                    self.crop_settings[key] = value
+                    
+            if self.preview_dropdown.count() > 0:
+                self.on_preview_dropdown_changed(self.preview_dropdown.currentIndex())
+        except ValueError:
+            # If invalid input, just don't update the crop settings
+            pass
+
+    def on_save_prompt(self):
+        CONFIG['prompt_text_base'] = self.prompt_text.toPlainText()
+        self.save_prompt()
+
+    def populate_settings_preview_dropdown(self):
+        self.preview_dropdown.clear()
+        if not self.input_directory:
+            return
+            
+        # Get all compressed image files
+        image_files = [f for f in os.listdir(self.input_directory) 
+                      if ImageExtensionHandler.is_compressed_image(os.path.splitext(f)[1])]
+        
+        if not image_files:
+            return
+            
+        for img in image_files:
+            self.preview_dropdown.addItem(img)
+            
+        if self.preview_dropdown.count() > 0:
+            self.preview_dropdown.setCurrentIndex(0)
+            selected_img = self.preview_dropdown.currentText()
+            img_path = os.path.join(self.input_directory, selected_img)
+            self.show_settings_previews(img_path)
+
+    def show_settings_previews(self, img_path):
+        try:
+            image_path = self.get_image_path(img_path)
+            img_pil = Image.open(image_path)
+            
+            # Show original
+            pil_original = ImageProcessor.fix_orientation(img_pil)
+            qimg_original = self.pil_to_qimage(pil_original, 480, 270)
+            self.lbl_before_preview.setPixmap(QtGui.QPixmap.fromImage(qimg_original))
+            
+            # Show zoomed or unzoomed based on zoom setting
+            if self.crop_settings['zoom']:
+                pil_preview = ImageProcessor.crop_image(img_pil, self.crop_settings)
+            else:
+                pil_preview = ImageProcessor.fix_orientation(img_pil)
+                
+            qimg_preview = self.pil_to_qimage(pil_preview, 480, 270)
+            self.lbl_after_preview.setPixmap(QtGui.QPixmap.fromImage(qimg_preview))
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Error loading image", f"{e}")
+
+    def update_combined_preview(self):
+        """Schedule a combined preview update if not already in progress and we're on the right tab"""
+        # Only update if we're on the Process Images tab
+        if self.active_tab != 0:
+            return
+            
+        # If an update is already in progress, don't start another one
+        if self.combined_preview_updating:
+            return
+            
+        # Mark that we're starting an update
+        self.combined_preview_updating = True
+        
+        # Directly do the update without timer delay
+        self._do_update_combined_preview()
+
+    def _do_update_combined_preview(self):
+        """Actually perform the combined preview update"""
+        try:
+            if not self.input_directory:
+                return
+                
+            # Get all compressed image files
+            image_files = [f for f in os.listdir(self.input_directory) 
+                          if ImageExtensionHandler.is_compressed_image(os.path.splitext(f)[1])]
+            
+            if not image_files:
+                return
+                
+            # Get the selected batch from dropdown if available
+            batch_num = 1  # Default to first batch
+            if hasattr(self, 'batch_preview_dropdown') and self.batch_preview_dropdown.currentData():
+                batch_num = self.batch_preview_dropdown.currentData()
+                
+            # Calculate indices for the selected batch
+            batch_size = CONFIG['batch_size']
+            start_idx = (batch_num - 1) * batch_size
+            end_idx = min(start_idx + batch_size, len(image_files))
+            batch_images = image_files[start_idx:end_idx]
+            
+            # Process and merge images
+            images = []
+            for i, img_file in enumerate(batch_images):
+                img_path = os.path.join(self.input_directory, img_file)
+                try:
+                    # Use the actual row number from the DataFrame
+                    row_number = start_idx + i + 1
+                    img = ImageProcessor.preprocess_image(img_path, row_number, self.crop_settings)
+                    images.append(img)
+                except Exception as e:
+                    print(f"Error processing {img_file}: {e}")
+                    
+            if images:
+                merged = ImageProcessor.merge_images(images, merged_img_height=CONFIG['merged_img_height'])
+                if merged:
+                    # Calculate the path for the merged image
+                    total_batches = math.ceil(len(image_files)/CONFIG['batch_size'])
+                    merged_path = os.path.join(self.rename_files_dir, f"temp_merged_b{batch_num}of{total_batches}.jpg")
+                    
+                    # Save the merged image
+                    try:
+                        merged.save(merged_path)
+                        print(f"Saved merged preview to: {merged_path}")
+                    except Exception as e:
+                        print(f"Error saving merged preview: {e}")
+                        return
+                    
+                    # Convert to QImage and display
+                    qimg = self.pil_to_qimage(merged, 480, 270)
+                    self.lbl_combined_preview.setPixmap(QtGui.QPixmap.fromImage(qimg))
+                    
+                    # Make the combined preview clickable
+                    self.lbl_combined_preview.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+                    self.lbl_combined_preview.installEventFilter(self)
+                    self.lbl_combined_preview.image_path = merged_path
+        finally:
+            # Always mark that we're done updating, even if there was an error
+            self.combined_preview_updating = False
+
+    def on_grayscale_checkbox_changed(self, state):
+        self.crop_settings['grayscale'] = state == QtCore.Qt.Checked
+        # Refresh the preview if one is selected
+        if self.preview_dropdown.count() > 0:
+            self.on_preview_dropdown_changed(self.preview_dropdown.currentIndex())
+        # Update the merged preview if we're on the first tab
+        if self.active_tab == 0:
+            self.update_combined_preview()
 
 def main():
     app = QApplication(sys.argv)
