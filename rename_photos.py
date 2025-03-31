@@ -1029,8 +1029,8 @@ class MainWindow(QMainWindow):
 
     def create_preview_label(self):
         label = QLabel()
-        # Set size to 16:9 aspect ratio (480x270) - larger size
-        label.setFixedSize(480, 270)
+        # Set size to 16:9 aspect ratio (359x202) - 3/4 of original height
+        label.setFixedSize(359, 202)
         label.setStyleSheet("background-color: #aaa;")
         return label
 
@@ -1222,7 +1222,7 @@ class MainWindow(QMainWindow):
                 'from': all_files,
                 'photo_ID': range(1, len(all_files) + 1),
                 'CAM': '',
-                'note': '',
+                'n': '',
                 'skip': '',
                 'co': ''
             })
@@ -1257,6 +1257,10 @@ class MainWindow(QMainWindow):
                 # Ensure 'to' column exists 
                 if 'to' not in df.columns:
                     df['to'] = ''
+                    
+                # Ensure 'n' (notes) column exists
+                if 'n' not in df.columns:
+                    df['n'] = ''
                     
                 # Check if the main column exists, if not add a warning
                 main_column = CONFIG['main_column']
@@ -1523,6 +1527,17 @@ class MainWindow(QMainWindow):
             else:
                 e_co = None  # Placeholder so the dictionary below doesn't break
 
+            # Add notes field
+            h_notes = QHBoxLayout()
+            l_notes = QLabel("Notes:")
+            e_notes = QLineEdit(str(rowdata.get('n','')))
+            e_notes.textChanged.connect(
+                lambda text, idx=i, col='n', path=csv_path: self.on_column_value_changed(text, idx, col, path)
+            )
+            h_notes.addWidget(l_notes)
+            h_notes.addWidget(e_notes)
+            vlay.addLayout(h_notes)
+
             # Keep the skip checkbox if it exists
             skip_chk = None
             if 'skip' in self.current_df.columns:
@@ -1547,6 +1562,8 @@ class MainWindow(QMainWindow):
                 widget_dict['co_line'] = e_co
             if 'skip' in self.current_df.columns:
                 widget_dict['skip_chk'] = skip_chk
+            # Add notes field
+            widget_dict['notes_line'] = e_notes
                 
             self.ui_widgets.append(widget_dict)
 
@@ -1579,6 +1596,9 @@ class MainWindow(QMainWindow):
             # Handle crossed out field if it exists
             if 'co_line' in w:
                 self.current_df.at[idx, 'co'] = w['co_line'].text().strip()
+            # Handle notes field
+            if 'notes_line' in w:
+                self.current_df.at[idx, 'n'] = w['notes_line'].text().strip()
 
     def on_column_value_changed(self, text, idx, column, csv_path):
         if self.current_df is not None and not self.current_df.empty and idx < len(self.current_df):
