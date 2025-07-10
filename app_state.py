@@ -64,7 +64,7 @@ class AppState:
             }
         }
 
-        script_dir = Path(__file__).resolve().parent.parent
+        script_dir = Path(__file__).resolve().parent
         self._config_path = script_dir / CONFIG_DIR_NAME
         ensure_directory_exists(self._config_path)
 
