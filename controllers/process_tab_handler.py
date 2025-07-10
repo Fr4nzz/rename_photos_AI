@@ -163,6 +163,7 @@ class ProcessTabHandler(QObject):
             QMessageBox.warning(self.main_window, "No Folder", "Please select an input folder first."); return
         self._sync_settings_from_ui()
         settings_copy = self.app_state.settings.copy()
+        settings_copy['folder_path'] = self.app_state.input_directory
         settings_copy['file_type'] = 'raw' if settings_copy['preview_raw'] else 'compressed'
         self.current_worker = RotationWorker(settings_copy, self.logger)
         self._start_worker_thread()
