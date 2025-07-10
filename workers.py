@@ -14,7 +14,7 @@ from PIL import Image
 from utils.gemini_handler import GeminiHandler
 from utils.image_processing import (
     preprocess_image, merge_images, apply_rotation_to_folder, fix_orientation,
-    decode_raw_with_info
+    decode_raw_image  # <-- CORRECTED FUNCTION NAME HERE
 )
 from utils.logger import SimpleLogger
 
@@ -107,8 +107,9 @@ class ImageLoadWorker(QObject):
         for path in self.image_paths:
             if self.is_stopped: break
             try:
-                pil_img = decode_raw_with_info(path)[0] if path.suffix.lower() in {'.cr2', '.orf', '.tif', '.tiff'} else Image.open(path)
+                pil_img = decode_raw_image(path, use_exif=True) if path.suffix.lower() in {'.cr2', '.orf', '.tif', '.tiff'} else Image.open(path)
                 if not pil_img: continue
+                # For the review tab, we always want the exif-corrected version.
                 pil_img = fix_orientation(pil_img).convert('RGB')
                 q_img = QImage(pil_img.tobytes("raw", "RGB"), pil_img.width, pil_img.height, pil_img.width * 3, QImage.Format_RGB888)
                 self.image_loaded.emit(str(path), q_img.scaled(self.target_w, self.target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation))
