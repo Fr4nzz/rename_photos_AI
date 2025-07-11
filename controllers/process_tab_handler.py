@@ -3,6 +3,7 @@
 import os
 import google.generativeai as genai
 import pandas as pd
+import re
 from pathlib import Path
 from PIL import Image
 
@@ -172,9 +173,21 @@ class ProcessTabHandler(QObject):
         self._sync_settings_from_ui()
         if not (image_paths := get_image_files(self.app_state.input_directory, 'compressed')):
             QMessageBox.warning(self.main_window, "No Images", "No compressed images found."); return
+
+        # 1. Add a check to ensure API keys exist before starting.
+        if not self.app_state.api_keys:
+            QMessageBox.warning(self.main_window, "No API Keys", "Please add one or more API keys in the 'API Keys' tab before processing.")
+            return
+
+        # 2. Create a temporary config dictionary for the worker that INCLUDES the api_keys.
+        settings_for_worker = self.app_state.settings.copy()
+        settings_for_worker['api_keys'] = self.app_state.api_keys
+
         df_data = {'from': [str(p) for p in image_paths], 'photo_ID': range(1, len(image_paths) + 1)}
         self.app_state.current_df = pd.DataFrame(df_data)
-        self.current_worker = GeminiWorker(self.app_state.current_df.copy(), self.app_state.settings, self.app_state.rename_files_dir, self.logger)
+        
+        # 3. Pass the new, complete dictionary to the worker.
+        self.current_worker = GeminiWorker(self.app_state.current_df.copy(), settings_for_worker, self.app_state.rename_files_dir, self.logger)
         self._start_worker_thread()
 
     def _start_worker_thread(self):
@@ -296,18 +309,53 @@ class ProcessTabHandler(QObject):
     def update_models_dropdown(self):
         self.ui.model_dropdown.clear()
         if not self.app_state.api_keys:
-            self.ui.model_dropdown.addItem("No API Key Set"); return
+            self.ui.model_dropdown.addItem("No API Key Set")
+            return
         try:
             genai.configure(api_key=self.app_state.api_keys[0])
-            all_models = genai.list_models()
-            vision_models = sorted([m.name.split('/')[-1] for m in all_models if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name])
+
+            MIN_MODEL_VERSION = 2.5
+            usable_models = []
+
+            for m in genai.list_models():
+                model_name = m.name.split('/')[-1]
+                version_match = re.search(r'(\d+\.\d+)', model_name)
+                version = float(version_match.group(1)) if version_match else 0.0
+
+                # Filter for usable Gemini models of the minimum required version
+                if ('generateContent' in m.supported_generation_methods and
+                    'gemini' in model_name and
+                    version >= MIN_MODEL_VERSION):
+                    usable_models.append(model_name)
+
+            # Define a hierarchical sort key to rank models from best to worst
+            def hierarchical_sort_key(model_name):
+                version_match = re.search(r'(\d+\.\d+)', model_name)
+                version = float(version_match.group(1)) if version_match else 0.0
+                is_stable = 'preview' not in model_name # Stable models are preferred
+                tier = 2 if 'pro' in model_name else (1 if 'flash' in model_name else 0)
+
+                # Sort by: 1. Version, 2. Stability (stable > preview), 3. Tier (pro > flash)
+                return (version, is_stable, tier)
+
+            vision_models = sorted(usable_models, key=hierarchical_sort_key, reverse=True)
+
             if vision_models:
                 self.app_state.available_models = vision_models
                 self.ui.model_dropdown.addItems(vision_models)
-                if (saved_model := self.app_state.settings.get('model_name')) in vision_models:
+
+                saved_model = self.app_state.settings.get('model_name')
+                # If saved model is no longer valid, select the new best one
+                if saved_model and saved_model in vision_models:
                     self.ui.model_dropdown.setCurrentText(saved_model)
-                else: self.app_state.settings['model_name'] = vision_models[0]
-            else: self.ui.model_dropdown.addItem("Could not fetch models")
+                else:
+                    new_best_model = vision_models[0]
+                    self.app_state.settings['model_name'] = new_best_model
+                    self.ui.model_dropdown.setCurrentText(new_best_model)
+                    self.logger.info(f"Default model was invalid. Set new default to: {new_best_model}")
+            else:
+                self.ui.model_dropdown.addItem(f"No models found >= v{MIN_MODEL_VERSION}")
+
         except Exception as e:
             self.logger.error("Failed to fetch Gemini models", exception=e)
             self.ui.model_dropdown.addItem("Error fetching models")
