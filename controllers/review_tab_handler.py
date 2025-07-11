@@ -113,41 +113,59 @@ class ReviewTabHandler(QObject):
         QMessageBox.information(self.main_window, "Success", "'To' column has been recalculated.")
 
     def rename_files(self):
-        if self.app_state.current_df.empty or 'to' not in self.app_state.current_df.columns: return
-        if QMessageBox.question(self.main_window, "Confirm Rename", "This will rename files on your disk. Are you sure?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.No: return
-        
+        if self.app_state.current_df.empty or 'to' not in self.app_state.current_df.columns:
+            return
+        if QMessageBox.question(self.main_window, "Confirm Rename", "This will rename files on your disk. Are you sure?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.No:
+            return
+       
         self.logger.info("--- Starting File Rename Process ---")
         log_entries, renamed_count, error_count = [], 0, 0
         op_time = datetime.now().isoformat()
         df = self.app_state.current_df
 
         for idx, row in df.iterrows():
-            if row.get('skip') == 'x' or not row.get('to'): continue
-            src_path, dst_path = Path(row['from']), Path(row['from']).parent / row['to']
-            if not src_path.exists(): self.logger.warn(f"Skipping rename. Source not found: {src_path.name}"); continue
+            if row.get('skip') == 'x' or not row.get('to'):
+                continue
+            
+            src_path = Path(row['from'])
+            dst_path = src_path.parent / row['to']
+
+            if not src_path.exists():
+                self.logger.warn(f"Skipping rename. Source not found: {src_path.name}")
+                continue
+            
             try:
+                # Rename the primary file (e.g., the JPG)
                 src_path.rename(dst_path)
                 self.logger.info(f"Renamed: '{src_path.name}' -> '{dst_path.name}'")
                 renamed_count += 1
                 log_entries.append({'timestamp': op_time, 'original_path': str(src_path), 'new_path': str(dst_path)})
-                for raw_ext in SUPPORTED_RAW_EXTENSIONS:
-                    if (raw_src := src_path.with_suffix(raw_ext)).exists():
-                        raw_dst = dst_path.with_suffix(raw_ext)
-                        raw_src.rename(raw_dst)
+
+                # Find and rename the associated RAW file, preserving its extension case.
+                original_base_name = src_path.stem
+                for raw_src_path in src_path.parent.glob(f"{original_base_name}.*"):
+                    if raw_src_path.suffix.lower() in SUPPORTED_RAW_EXTENSIONS:
+                        raw_dst_path = dst_path.with_suffix(raw_src_path.suffix)
+                        raw_src_path.rename(raw_dst_path)
+                        self.logger.info(f"Renamed RAW: '{raw_src_path.name}' -> '{raw_dst_path.name}'")
                         renamed_count += 1
-                        log_entries.append({'timestamp': op_time, 'original_path': str(raw_src), 'new_path': str(raw_dst)})
-                        break
-            except Exception as e: self.logger.error(f"Could not rename {src_path.name}", exception=e); error_count += 1
-        
+                        log_entries.append({'timestamp': op_time, 'original_path': str(raw_src_path), 'new_path': str(raw_dst_path)})
+                        break # Assume one RAW file per primary file
+
+            except Exception as e:
+                self.logger.error(f"Could not rename {src_path.name} or its counterpart", exception=e)
+                error_count += 1
+       
         if log_entries:
             log_path = Path(self.app_state.rename_files_dir) / "rename_log.csv"
             pd.DataFrame(log_entries).to_csv(log_path, mode='a', header=not log_path.exists(), index=False)
             self.logger.info(f"Appended {len(log_entries)} entries to rename log.")
-        
+       
         msg = f"Successfully renamed {renamed_count} files."
-        if error_count > 0: msg += f"\n\nEncountered {error_count} errors. Check console log."
+        if error_count > 0:
+            msg += f"\n\nEncountered {error_count} errors. Check console log."
         QMessageBox.information(self.main_window, "Rename Complete", msg)
-
+    
     def restore_file_names(self):
         log_path = Path(self.app_state.rename_files_dir) / "rename_log.csv"
         if not log_path.exists():
