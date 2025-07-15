@@ -77,15 +77,17 @@ class AppState:
             saved_settings = json.loads(settings_path.read_text('utf-8'))
             def recursive_update(d, u):
                 for k, v in u.items():
-                    if isinstance(v, dict): d[k] = recursive_update(d.get(k, {}), v)
-                    else: d[k] = v
+                    if isinstance(v, dict) and k in d and isinstance(d[k], dict):
+                        d[k] = recursive_update(d.get(k, {}), v)
+                    else:
+                        d[k] = v
                 return d
             self.settings = recursive_update(self.settings, saved_settings)
             self.logger.info(f"Loaded settings from {SETTINGS_FILE}")
         except FileNotFoundError:
             self.logger.info(f"{SETTINGS_FILE} not found. Using default settings.")
-        except (json.JSONDecodeError, TypeError):
-            self.logger.warn(f"Could not parse {SETTINGS_FILE}. Using default settings.")
+        except (json.JSONDecodeError, TypeError) as e:
+            self.logger.warn(f"Could not parse {SETTINGS_FILE}. Using default settings. Error: {e}")
 
         keys_path = self._config_path / API_KEYS_FILE
         if keys_path.exists():
@@ -125,5 +127,5 @@ class AppState:
     def _find_exiftool(self) -> Optional[str]:
         path = shutil.which('exiftool')
         if not path:
-             self.logger.warn("'exiftool' not found in system PATH. RAW file rotation will be disabled.")
+             self.logger.warn("'exiftool' not found in system PATH. RAW file rotation may be disabled.")
         return path

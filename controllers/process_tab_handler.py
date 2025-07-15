@@ -62,28 +62,49 @@ class ProcessTabHandler(QObject):
             label.clicked.connect(self.on_preview_label_clicked)
 
     def populate_initial_ui(self):
+        """Populates all UI elements with values from the application state."""
         path = self.app_state.input_directory
         self.ui.dir_path_label.setText(path or "(No folder selected)")
         self.ui.dir_path_label.setFilePath(path)
         self.ui.exiftool_path_input.setText(self.app_state.settings.get('exiftool_path', ''))
+        
         orientations = {"0° (No Change)": 0, "90° CCW": 90, "180°": 180, "90° CW": 270}
         self.ui.rotation_dropdown.blockSignals(True)
-        for text, angle in orientations.items(): self.ui.rotation_dropdown.addItem(text, angle)
+        self.ui.rotation_dropdown.clear()
+        for text, angle in orientations.items():
+            self.ui.rotation_dropdown.addItem(text, angle)
+        
         saved_angle = self.app_state.settings.get('rotation_angle', 180)
         index = self.ui.rotation_dropdown.findData(saved_angle)
         self.ui.rotation_dropdown.setCurrentIndex(index if index >= 0 else 2)
         self.ui.rotation_dropdown.blockSignals(False)
+        
         self.ui.use_exif_checkbox.setChecked(self.app_state.settings['use_exif'])
         self.ui.preview_raw_checkbox.setChecked(self.app_state.settings['preview_raw'])
+        
         cs = self.app_state.settings['crop_settings']
         self.ui.zoom_checkbox.setChecked(cs['zoom'])
         self.ui.grayscale_checkbox.setChecked(cs['grayscale'])
-        self.ui.crop_top_input.setText(str(cs['top'])); self.ui.crop_bottom_input.setText(str(cs['bottom']))
-        self.ui.crop_left_input.setText(str(cs['left'])); self.ui.crop_right_input.setText(str(cs['right']))
+        self.ui.crop_top_input.setText(str(cs['top']))
+        self.ui.crop_bottom_input.setText(str(cs['bottom']))
+        self.ui.crop_left_input.setText(str(cs['left']))
+        self.ui.crop_right_input.setText(str(cs['right']))
+        
         self.ui.batch_size_input.setText(str(self.app_state.settings['batch_size']))
         self.ui.merged_img_height_input.setText(str(self.app_state.settings['merged_img_height']))
         self.ui.main_column_input.setText(str(self.app_state.settings['main_column']))
-        self.ui.prompt_text_edit.setPlainText(self.app_state.settings['prompt_text'])
+        
+        # --- CONCISE FIX ---
+        # 1. Determine the correct prompt text
+        prompt_text = self.app_state.settings.get('prompt_text', '').strip()
+        if not prompt_text:
+            self.logger.info("Prompt is empty, loading default.")
+            prompt_text = DEFAULT_PROMPT
+            self.app_state.settings['prompt_text'] = prompt_text
+        
+        # 2. Set the UI widget text from the determined value
+        self.ui.prompt_text_edit.setPlainText(prompt_text)
+        
         self.update_models_dropdown()
         self.refresh_file_dependent_ui()
 
@@ -98,7 +119,8 @@ class ProcessTabHandler(QObject):
     def select_exiftool_path(self):
         if path := QFileDialog.getOpenFileName(self.main_window, "Select exiftool executable")[0]:
             self.ui.exiftool_path_input.setText(path)
-            self._sync_settings_from_ui(); self.app_state.save_settings()
+            self._sync_settings_from_ui()
+            self.app_state.save_settings()
 
     def on_folder_path_clicked(self, path: str):
         if path and os.path.isdir(path):
@@ -112,10 +134,12 @@ class ProcessTabHandler(QObject):
         else: self.logger.warn(f"Cannot open file. Invalid path: {path}")
 
     def save_settings(self):
-        self._sync_settings_from_ui(); self.app_state.save_settings()
+        self._sync_settings_from_ui()
+        self.app_state.save_settings()
         QMessageBox.information(self.main_window, "Success", "Settings have been saved.")
 
     def restore_default_prompt(self):
+        """Restores the default prompt and saves the settings."""
         self.app_state.settings['prompt_text'] = DEFAULT_PROMPT
         self.ui.prompt_text_edit.setPlainText(DEFAULT_PROMPT)
         self.save_settings()
@@ -135,8 +159,10 @@ class ProcessTabHandler(QObject):
             cs = s['crop_settings']
             cs['zoom'] = ui.zoom_checkbox.isChecked()
             cs['grayscale'] = ui.grayscale_checkbox.isChecked()
-            cs['top'] = float(ui.crop_top_input.text()); cs['bottom'] = float(ui.crop_bottom_input.text())
-            cs['left'] = float(ui.crop_left_input.text()); cs['right'] = float(ui.crop_right_input.text())
+            cs['top'] = float(ui.crop_top_input.text())
+            cs['bottom'] = float(ui.crop_bottom_input.text())
+            cs['left'] = float(ui.crop_left_input.text())
+            cs['right'] = float(ui.crop_right_input.text())
         except (ValueError, TypeError): self.logger.warn("Invalid crop value entered.")
 
     def on_preview_mode_changed(self):
@@ -151,17 +177,22 @@ class ProcessTabHandler(QObject):
         self.ui.preview_image_dropdown.clear()
         if image_files: self.ui.preview_image_dropdown.addItems([p.name for p in image_files])
         self.ui.preview_image_dropdown.blockSignals(False)
-        if image_files: self.update_previews(); self.update_batch_preview()
+        if image_files: 
+            self.update_previews()
+            self.update_batch_preview()
         else: self.clear_all_previews()
 
     def clear_all_previews(self):
         for label in [self.ui.original_preview_label, self.ui.rotated_preview_label,
                       self.ui.processed_preview_label, self.ui.combined_preview_label]:
-            label.clear(); label.setText("No Images Found"); label.setFilePath("")
+            label.clear()
+            label.setText("No Images Found")
+            label.setFilePath("")
 
     def start_rotation(self):
         if not self.app_state.input_directory:
-            QMessageBox.warning(self.main_window, "No Folder", "Please select an input folder first."); return
+            QMessageBox.warning(self.main_window, "No Folder", "Please select an input folder first.")
+            return
         self._sync_settings_from_ui()
         settings_copy = self.app_state.settings.copy()
         settings_copy['folder_path'] = self.app_state.input_directory
@@ -172,21 +203,19 @@ class ProcessTabHandler(QObject):
     def start_gemini_processing(self):
         self._sync_settings_from_ui()
         if not (image_paths := get_image_files(self.app_state.input_directory, 'compressed')):
-            QMessageBox.warning(self.main_window, "No Images", "No compressed images found."); return
+            QMessageBox.warning(self.main_window, "No Images", "No compressed images found.")
+            return
 
-        # 1. Add a check to ensure API keys exist before starting.
         if not self.app_state.api_keys:
             QMessageBox.warning(self.main_window, "No API Keys", "Please add one or more API keys in the 'API Keys' tab before processing.")
             return
 
-        # 2. Create a temporary config dictionary for the worker that INCLUDES the api_keys.
         settings_for_worker = self.app_state.settings.copy()
         settings_for_worker['api_keys'] = self.app_state.api_keys
 
         df_data = {'from': [str(p) for p in image_paths], 'photo_ID': range(1, len(image_paths) + 1)}
         self.app_state.current_df = pd.DataFrame(df_data)
         
-        # 3. Pass the new, complete dictionary to the worker.
         self.current_worker = GeminiWorker(self.app_state.current_df.copy(), settings_for_worker, self.app_state.rename_files_dir, self.logger)
         self._start_worker_thread()
 
@@ -198,7 +227,8 @@ class ProcessTabHandler(QObject):
         self.current_worker.error.connect(self.on_worker_error)
         if isinstance(self.current_worker, GeminiWorker):
             self.current_worker.batch_completed.connect(self.on_gemini_batch_complete)
-        self.worker_thread.started.connect(self.current_worker.run); self.worker_thread.start()
+        self.worker_thread.started.connect(self.current_worker.run)
+        self.worker_thread.start()
         self.set_ui_processing_state(True)
 
     def stop_worker(self):
@@ -218,27 +248,35 @@ class ProcessTabHandler(QObject):
     def on_worker_finished(self):
         QMessageBox.information(self.main_window, "Complete", "The process has finished.")
         self.set_ui_processing_state(False)
-        if self.worker_thread: self.worker_thread.quit(); self.worker_thread.wait()
+        if self.worker_thread: 
+            self.worker_thread.quit()
+            self.worker_thread.wait()
         self.worker_thread, self.current_worker = None, None
         self.update_progress_bar(0, "%p%")
 
     def on_worker_error(self, message: str):
         QMessageBox.critical(self.main_window, "Error", message)
         self.set_ui_processing_state(False)
-        if self.worker_thread: self.worker_thread.quit(); self.worker_thread.wait()
+        if self.worker_thread: 
+            self.worker_thread.quit()
+            self.worker_thread.wait()
         self.worker_thread, self.current_worker = None, None
         self.update_progress_bar(0, "Error")
 
     def update_progress_bar(self, value: int, text_format: str):
-        self.ui.progress_bar.setFormat(text_format); self.ui.progress_bar.setValue(value)
+        self.ui.progress_bar.setFormat(text_format)
+        self.ui.progress_bar.setValue(value)
 
     def pil_to_qpixmap(self, pil_img: Image.Image) -> QPixmap:
         if not pil_img: return QPixmap()
         if pil_img.mode not in ['RGB', 'RGBA']: pil_img = pil_img.convert('RGB')
+        
         if pil_img.mode == 'RGB':
-            return QPixmap.fromImage(QImage(pil_img.tobytes(), pil_img.width, pil_img.height, 3 * pil_img.width, QImage.Format_RGB888))
+            q_img = QImage(pil_img.tobytes(), pil_img.width, pil_img.height, 3 * pil_img.width, QImage.Format_RGB888)
         else: # RGBA
-            return QPixmap.fromImage(QImage(pil_img.tobytes(), pil_img.width, pil_img.height, 4 * pil_img.width, QImage.Format_RGBA8888))
+            q_img = QImage(pil_img.tobytes(), pil_img.width, pil_img.height, 4 * pil_img.width, QImage.Format_RGBA8888)
+        
+        return QPixmap.fromImage(q_img)
 
     def update_previews(self):
         self._sync_settings_from_ui()
@@ -250,11 +288,8 @@ class ProcessTabHandler(QObject):
         base_img_previews, exif_corrected_img = None, None
         
         try:
-            # --- START OF THE FINAL, SIMPLIFIED FIX ---
             if img_path.suffix.lower() in SUPPORTED_RAW_EXTENSIONS:
-                # For RAW, decode_raw_image directly gives us the correctly oriented base image.
                 base_img_previews = decode_raw_image(img_path, use_exif=s['use_exif'])
-                # For the 'processed' preview, we always need the EXIF-corrected version.
                 exif_corrected_img = decode_raw_image(img_path, use_exif=True)
             else: # Compressed
                 unrotated_pil = Image.open(img_path)
@@ -263,7 +298,6 @@ class ProcessTabHandler(QObject):
             
             if not base_img_previews:
                 raise IOError("Failed to load base image for preview.")
-            # --- END OF THE FINAL, SIMPLIFIED FIX ---
             
             rotated_image = base_img_previews.rotate(s['rotation_angle'], expand=True)
             processed_image = preprocess_image(exif_corrected_img, "1", s['crop_settings'])
@@ -273,21 +307,29 @@ class ProcessTabHandler(QObject):
                 (self.ui.rotated_preview_label, rotated_image, str(img_path)),
                 (self.ui.processed_preview_label, processed_image, str(img_path))
             ]:
-                label.setPixmap(self.pil_to_qpixmap(img)); label.setFilePath(path)
+                label.setPixmap(self.pil_to_qpixmap(img))
+                label.setFilePath(path)
         except Exception as e:
             self.logger.error(f"Error generating preview for {img_path.name}", exception=e)
             for label in [self.ui.original_preview_label, self.ui.rotated_preview_label, self.ui.processed_preview_label]:
-                label.setText("Preview Error"); label.setFilePath("")
+                label.setText("Preview Error")
+                label.setFilePath("")
 
     def update_batch_preview(self):
         self._sync_settings_from_ui()
         if not (jpg_files := get_image_files(self.app_state.input_directory, 'compressed')):
-            self.ui.combined_preview_label.clear(); self.ui.combined_preview_label.setText("No Images"); return
+            self.ui.combined_preview_label.clear()
+            self.ui.combined_preview_label.setText("No Images")
+            return
+        
         s = self.app_state.settings
-        batch_size, num_batches = s['batch_size'], (len(jpg_files) + s['batch_size'] - 1) // s['batch_size']
+        batch_size = s['batch_size']
+        if batch_size <= 0: return # Avoid division by zero
+        num_batches = (len(jpg_files) + batch_size - 1) // batch_size
         
         current_idx = self.ui.batch_preview_dropdown.currentIndex()
-        self.ui.batch_preview_dropdown.blockSignals(True); self.ui.batch_preview_dropdown.clear()
+        self.ui.batch_preview_dropdown.blockSignals(True)
+        self.ui.batch_preview_dropdown.clear()
         if num_batches > 0:
             self.ui.batch_preview_dropdown.addItems([f"Batch {i+1}" for i in range(num_batches)])
             if 0 <= current_idx < num_batches: self.ui.batch_preview_dropdown.setCurrentIndex(current_idx)
@@ -296,15 +338,25 @@ class ProcessTabHandler(QObject):
         if self.ui.batch_preview_dropdown.count() == 0: return
         
         start_idx = self.ui.batch_preview_dropdown.currentIndex() * batch_size
-        images_to_merge = [preprocess_image(fix_orientation(Image.open(p)), str(start_idx+i+1), s['crop_settings']) for i,p in enumerate(jpg_files[start_idx:start_idx+batch_size])]
-        
+        images_to_merge = []
+        for i, p in enumerate(jpg_files[start_idx : start_idx + batch_size]):
+            try:
+                img = Image.open(p)
+                exif_corrected_img = fix_orientation(img)
+                processed_img = preprocess_image(exif_corrected_img, str(start_idx + i + 1), s['crop_settings'])
+                images_to_merge.append(processed_img)
+            except Exception as e:
+                self.logger.error(f"Failed to process image for batch preview: {p.name}", exception=e)
+
         if merged := merge_images(images_to_merge, s['merged_img_height']):
             temp_path = Path(self.app_state.rename_files_dir) / "temp_merged_preview.jpg"
             merged.save(temp_path, quality=90)
             self.ui.combined_preview_label.setPixmap(self.pil_to_qpixmap(merged))
             self.ui.combined_preview_label.setFilePath(str(temp_path))
         else:
-            self.ui.combined_preview_label.clear(); self.ui.combined_preview_label.setText("Batch Preview"); self.ui.combined_preview_label.setFilePath("")
+            self.ui.combined_preview_label.clear()
+            self.ui.combined_preview_label.setText("Batch Preview")
+            self.ui.combined_preview_label.setFilePath("")
 
     def update_models_dropdown(self):
         self.ui.model_dropdown.clear()
@@ -322,20 +374,16 @@ class ProcessTabHandler(QObject):
                 version_match = re.search(r'(\d+\.\d+)', model_name)
                 version = float(version_match.group(1)) if version_match else 0.0
 
-                # Filter for usable Gemini models of the minimum required version
                 if ('generateContent' in m.supported_generation_methods and
                     'gemini' in model_name and
                     version >= MIN_MODEL_VERSION):
                     usable_models.append(model_name)
 
-            # Define a hierarchical sort key to rank models from best to worst
             def hierarchical_sort_key(model_name):
                 version_match = re.search(r'(\d+\.\d+)', model_name)
                 version = float(version_match.group(1)) if version_match else 0.0
-                is_stable = 'preview' not in model_name # Stable models are preferred
+                is_stable = 'preview' not in model_name
                 tier = 2 if 'pro' in model_name else (1 if 'flash' in model_name else 0)
-
-                # Sort by: 1. Version, 2. Stability (stable > preview), 3. Tier (pro > flash)
                 return (version, is_stable, tier)
 
             vision_models = sorted(usable_models, key=hierarchical_sort_key, reverse=True)
@@ -345,7 +393,6 @@ class ProcessTabHandler(QObject):
                 self.ui.model_dropdown.addItems(vision_models)
 
                 saved_model = self.app_state.settings.get('model_name')
-                # If saved model is no longer valid, select the new best one
                 if saved_model and saved_model in vision_models:
                     self.ui.model_dropdown.setCurrentText(saved_model)
                 else:
