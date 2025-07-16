@@ -11,14 +11,13 @@ class ReviewResultsTab(QWidget):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.ui_widgets = []
+        # The redundant ui_widgets list has been removed.
         self._setup_ui()
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
         controls_layout = QHBoxLayout()
         
-        # --- Top Controls ---
         controls_layout.addWidget(QLabel("CSV File:"))
         self.csv_dropdown = QComboBox()
         controls_layout.addWidget(self.csv_dropdown, 1)
@@ -40,7 +39,6 @@ class ReviewResultsTab(QWidget):
         controls_layout.addWidget(self.restore_names_button)
         main_layout.addLayout(controls_layout)
 
-        # --- Scroll Area & Grid ---
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -49,7 +47,6 @@ class ReviewResultsTab(QWidget):
         self.grid_layout = QGridLayout(self.grid_container)
         self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         
-        # ADDED: Allow columns to expand equally
         self.grid_layout.setColumnStretch(0, 1)
         self.grid_layout.setColumnStretch(1, 1)
 
@@ -58,7 +55,7 @@ class ReviewResultsTab(QWidget):
 
     def clear_grid(self):
         """Removes all items from the results grid."""
-        self.ui_widgets.clear()
+        # The ui_widgets list is gone, so no need to clear it here.
         while self.grid_layout.count():
             if child := self.grid_layout.takeAt(0):
                 if child.widget():

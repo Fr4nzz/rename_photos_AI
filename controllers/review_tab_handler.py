@@ -156,7 +156,6 @@ class ReviewTabHandler(QObject):
         self.image_load_thread.start()
        
     def on_review_image_loaded(self, path_str: str, img_bytes: bytes, width: int, height: int):
-        # FINAL FIX: Reconstruct the QImage and QPixmap in the main GUI thread.
         q_image = QImage(img_bytes, width, height, width * 3, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(q_image)
         
@@ -204,7 +203,7 @@ class ReviewTabHandler(QObject):
                 for raw_src_path in src_path.parent.glob(f"{original_base_name}.*"):
                     if raw_src_path.suffix.lower() in SUPPORTED_RAW_EXTENSIONS:
                         raw_dst_path = dst_path.with_suffix(raw_src_path.suffix)
-                        raw_src_path.rename(raw_dst_path)
+                        raw_dst_path.rename(raw_dst_path)
                         self.logger.info(f"Renamed RAW: '{raw_src_path.name}' -> '{raw_dst_path.name}'")
                         renamed_count += 1
                         log_entries.append({'timestamp': op_time, 'original_path': str(raw_src_path), 'new_path': str(raw_dst_path)})
