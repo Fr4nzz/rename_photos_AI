@@ -57,7 +57,7 @@ class AppState:
             'batch_size': 9, 'merged_img_height': 1080, 'main_column': 'CAM',
             'model_name': '', 'prompt_text': DEFAULT_PROMPT,
             'exiftool_path': self._find_exiftool(), 'rotation_angle': 180,
-            'use_exif': True, 'preview_raw': False,
+            'use_exif': True, 'preview_raw': False, 'review_crop_enabled': True,
             'crop_settings': {
                 'top': 0.1, 'bottom': 0.0, 'left': 0.0, 'right': 0.5,
                 'zoom': True, 'grayscale': True

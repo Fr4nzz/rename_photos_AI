@@ -14,7 +14,7 @@ from PIL import Image
 from utils.gemini_handler import GeminiHandler
 from utils.image_processing import (
     preprocess_image, merge_images, apply_rotation_to_folder, fix_orientation,
-    decode_raw_image  # <-- CORRECTED FUNCTION NAME HERE
+    decode_raw_image, crop_image
 )
 from utils.logger import SimpleLogger
 
@@ -96,9 +96,11 @@ class GeminiWorker(QObject):
 class ImageLoadWorker(QObject):
     image_loaded, finished = pyqtSignal(str, QImage), pyqtSignal()
     
-    def __init__(self, image_paths: List[Path], target_size: Tuple[int, int], logger: SimpleLogger):
+    def __init__(self, image_paths: List[Path], target_size: Tuple[int, int], logger: SimpleLogger, crop_settings: Dict[str, Any]):
         super().__init__()
-        self.image_paths, self.target_w, self.target_h, self.logger = image_paths, *target_size, logger
+        self.image_paths, self.target_w, self.target_h = image_paths, *target_size
+        self.logger = logger
+        self.crop_settings = crop_settings
         self.is_stopped = False
 
     def stop(self): self.is_stopped = True
@@ -109,8 +111,14 @@ class ImageLoadWorker(QObject):
             try:
                 pil_img = decode_raw_image(path, use_exif=True) if path.suffix.lower() in {'.cr2', '.orf', '.tif', '.tiff'} else Image.open(path)
                 if not pil_img: continue
-                # For the review tab, we always want the exif-corrected version.
-                pil_img = fix_orientation(pil_img).convert('RGB')
+                
+                # Always apply EXIF orientation for correct display
+                pil_img = fix_orientation(pil_img)
+                
+                # Apply cropping. The crop_image function will check the 'zoom' key internally.
+                pil_img = crop_image(pil_img, self.crop_settings)
+
+                pil_img = pil_img.convert('RGB')
                 q_img = QImage(pil_img.tobytes("raw", "RGB"), pil_img.width, pil_img.height, pil_img.width * 3, QImage.Format_RGB888)
                 self.image_loaded.emit(str(path), q_img.scaled(self.target_w, self.target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             except Exception as e:

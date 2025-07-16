@@ -31,12 +31,23 @@ class ReviewTabHandler(QObject):
 
     def connect_signals(self):
         self.ui.csv_dropdown.currentIndexChanged.connect(self.load_selected_csv)
+        self.ui.crop_review_checkbox.stateChanged.connect(self._handle_ui_change)
+        self.ui.show_duplicates_checkbox.stateChanged.connect(self._handle_ui_change)
         self.ui.recalc_names_button.clicked.connect(self.recalculate_names)
         self.ui.rename_files_button.clicked.connect(self.rename_files)
         self.ui.restore_names_button.clicked.connect(self.restore_file_names)
     
+    def populate_initial_ui(self):
+        """Syncs the UI elements with the initial application state."""
+        self.ui.crop_review_checkbox.setChecked(self.app_state.settings.get('review_crop_enabled', True))
+    
     def stop_worker(self):
         if self.image_load_worker: self.image_load_worker.stop()
+
+    def _handle_ui_change(self):
+        """Saves UI state and re-populates the grid."""
+        self.app_state.settings['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
+        self._populate_review_grid()
 
     def refresh_csv_dropdown(self):
         self.ui.csv_dropdown.blockSignals(True)
@@ -61,27 +72,67 @@ class ReviewTabHandler(QObject):
             self._populate_review_grid()
         except Exception as e:
             self.logger.error(f"Could not load or parse CSV file: {csv_name}", exception=e)
-            QMessageBox.critical(self.main_window, "Error", f"Could not load or parse CSV file: {e}")
+            self.ui.set_grid_message(f"Error loading {csv_name}: {e}")
 
     def _populate_review_grid(self):
         self.ui.clear_grid()
         df = self.app_state.current_df
         main_col = self.app_state.settings['main_column']
-        if df.empty: return
-        if main_col not in df.columns:
-            QMessageBox.warning(self.main_window, "Column Not Found", f"The main column '{main_col}' was not found in the CSV."); return
 
+        if df.empty:
+            self.ui.set_grid_message("No data to display. Select a CSV file.")
+            return
+        if main_col not in df.columns:
+            self.ui.set_grid_message(f"Error: Main column '{main_col}' not found in the CSV.")
+            return
+
+        # Calculate counts on the full, unfiltered dataframe
+        id_counts = df[main_col].value_counts().to_dict()
+        
+        display_df = df
+        if self.ui.show_duplicates_checkbox.isChecked():
+            # An identifier is a mismatch if it's not blank and its count is not 2
+            mismatched_ids = [
+                identifier for identifier, count in id_counts.items() 
+                if pd.notna(identifier) and identifier != '' and count != 2
+            ]
+            display_df = df[df[main_col].isin(mismatched_ids)]
+            if display_df.empty:
+                self.ui.set_grid_message("No mismatched items found. All identified items appear in pairs.")
+                return
+
+        grid_row, grid_col = 0, 0
         image_paths_to_load = []
-        for i, (idx, row) in enumerate(df.iterrows()):
-            item_widget = ReviewItemWidget(idx, row.to_dict(), main_col)
-            item_widget.data_changed.connect(lambda w=item_widget: self._sync_df_from_review_item(w))
-            self.ui.add_item_to_grid(i // 2, i % 2, item_widget)
-            self.ui.ui_widgets.append(item_widget)
-            img_path = Path(row['from'])
-            item_widget.image_label.setFilePath(str(img_path))
-            item_widget.image_label.clicked.connect(self.main_window.process_handler.on_preview_label_clicked)
-            if img_path.exists(): image_paths_to_load.append(img_path)
+
+        grouped = display_df.groupby(main_col, sort=False, dropna=False)
+        for identifier, group in grouped:
+            for idx, row in group.iterrows():
+                # Get the total count from the original unfiltered calculation
+                total_count = id_counts.get(identifier, 0)
+                
+                item_widget = ReviewItemWidget(idx, row.to_dict(), main_col, total_count)
+                item_widget.data_changed.connect(lambda w=item_widget: self._sync_df_from_review_item(w))
+                self.ui.add_item_to_grid(grid_row, grid_col, item_widget)
+                self.ui.ui_widgets.append(item_widget)
+
+                img_path = Path(row['from'])
+                item_widget.image_label.setFilePath(str(img_path))
+                item_widget.image_label.clicked.connect(self.main_window.process_handler.on_preview_label_clicked)
+                if img_path.exists(): image_paths_to_load.append(img_path)
+                
+                grid_col += 1
+                if grid_col >= 2:
+                    grid_col = 0
+                    grid_row += 1
+            
+            # If a group has an odd number of items, ensure the next group starts on a new row
+            if grid_col != 0:
+                grid_col = 0
+                grid_row += 1
+
         if image_paths_to_load: self.start_image_load_worker(image_paths_to_load)
+        elif display_df.empty and not self.ui.show_duplicates_checkbox.isChecked():
+             self.ui.set_grid_message("Data loaded, but no items to display.")
 
     def _sync_df_from_review_item(self, sender_widget: ReviewItemWidget):
         data = sender_widget.get_data()
@@ -92,8 +143,13 @@ class ReviewTabHandler(QObject):
                
     def start_image_load_worker(self, paths):
         if self.image_load_thread and self.image_load_thread.isRunning(): self.image_load_worker.stop()
+        
+        # FIX: Create a copy of the settings and set the 'zoom' key based on the review tab's checkbox.
+        active_crop_settings = self.app_state.settings['crop_settings'].copy()
+        active_crop_settings['zoom'] = self.ui.crop_review_checkbox.isChecked()
+        
         self.image_load_thread = QThread()
-        self.image_load_worker = ImageLoadWorker(paths, (320, 180), self.logger)
+        self.image_load_worker = ImageLoadWorker(paths, (320, 180), self.logger, active_crop_settings)
         self.image_load_worker.moveToThread(self.image_load_thread)
         self.image_load_worker.image_loaded.connect(self.on_review_image_loaded)
         self.image_load_worker.finished.connect(self.image_load_thread.quit)
@@ -114,8 +170,9 @@ class ReviewTabHandler(QObject):
 
     def rename_files(self):
         if self.app_state.current_df.empty or 'to' not in self.app_state.current_df.columns:
+            QMessageBox.warning(self.main_window, "No Data", "No data loaded or 'to' column is missing.")
             return
-        if QMessageBox.question(self.main_window, "Confirm Rename", "This will rename files on your disk. Are you sure?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.No:
+        if QMessageBox.question(self.main_window, "Confirm Rename", "This will rename files on your disk based on the 'to' column. This action is difficult to reverse. Are you sure?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.No:
             return
        
         self.logger.info("--- Starting File Rename Process ---")
@@ -129,6 +186,8 @@ class ReviewTabHandler(QObject):
             
             src_path = Path(row['from'])
             dst_path = src_path.parent / row['to']
+
+            if src_path == dst_path: continue # Skip if name is unchanged
 
             if not src_path.exists():
                 self.logger.warn(f"Skipping rename. Source not found: {src_path.name}")
@@ -176,14 +235,23 @@ class ReviewTabHandler(QObject):
         log_df = pd.read_csv(log_path)
         restored_count, error_count = 0, 0
         
+        # Iterate backwards through the log to restore correctly
         for idx, row in log_df.iloc[::-1].iterrows():
             src_path, dst_path = Path(row['new_path']), Path(row['original_path'])
-            if not src_path.exists(): self.logger.warn(f"Skipping restore. File not found: {src_path.name}"); continue
+            if not src_path.exists(): 
+                self.logger.warn(f"Skipping restore. File not found: {src_path.name}"); continue
             try:
+                # To prevent overwriting, ensure destination does not exist
+                if dst_path.exists():
+                     self.logger.error(f"Could not restore {src_path.name}, destination {dst_path.name} already exists.")
+                     error_count += 1
+                     continue
                 src_path.rename(dst_path)
                 self.logger.info(f"Restored: '{src_path.name}' -> '{dst_path.name}'")
                 restored_count += 1
-            except Exception as e: self.logger.error(f"Could not restore {src_path.name}", exception=e); error_count += 1
+            except Exception as e: 
+                self.logger.error(f"Could not restore {src_path.name}", exception=e)
+                error_count += 1
         
         if restored_count > 0:
             restored_log_path = log_path.with_name(f"rename_log_{datetime.now():%Y%m%d_%H%M%S}.csv.restored")

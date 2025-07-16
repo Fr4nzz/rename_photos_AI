@@ -13,16 +13,30 @@ class ReviewItemWidget(QGroupBox):
     """A widget representing a single item in the review grid."""
     data_changed = pyqtSignal()
 
-    def __init__(self, df_index: int, item_data: dict, main_column: str, parent=None):
+    def __init__(self, df_index: int, item_data: dict, main_column: str, count: int, parent=None):
         super().__init__(os.path.basename(item_data.get('from', 'N/A')), parent)
         self.df_index = df_index
         self.main_column = main_column
         self.fields = {}
         self._setup_ui(item_data)
+        
+        # Display a warning if the count is anything other than 2
+        if count != 2:
+            self.set_warning(f"Warning: Appears {count} times in total.")
+        else:
+            self.clear_warning()
 
     def _setup_ui(self, item_data: dict):
         main_layout = QVBoxLayout(self)
         self.setMinimumWidth(350)
+
+        # Warning Label (initially hidden)
+        self.warning_label = QLabel()
+        self.warning_label.setStyleSheet("color: red; font-weight: bold;")
+        self.warning_label.setWordWrap(True)
+        self.warning_label.setVisible(False)
+        main_layout.addWidget(self.warning_label)
+
         self.image_label = ClickableLabel("Loading...")
         self.image_label.setFixedSize(320, 180)
         self.image_label.setAlignment(Qt.AlignCenter)
@@ -50,6 +64,13 @@ class ReviewItemWidget(QGroupBox):
 
     def set_image(self, pixmap: QPixmap):
         self.image_label.setPixmap(pixmap)
+    
+    def set_warning(self, text: str):
+        self.warning_label.setText(text)
+        self.warning_label.setVisible(True)
+
+    def clear_warning(self):
+        self.warning_label.setVisible(False)
        
     def get_data(self) -> dict:
         data = {'df_index': self.df_index}
