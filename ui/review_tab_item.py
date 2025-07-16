@@ -20,7 +20,6 @@ class ReviewItemWidget(QGroupBox):
         self.fields = {}
         self._setup_ui(item_data)
         
-        # Display a warning if the count is anything other than 2
         if count != 2:
             self.set_warning(f"Warning: Appears {count} times in total.")
         else:
@@ -28,20 +27,19 @@ class ReviewItemWidget(QGroupBox):
 
     def _setup_ui(self, item_data: dict):
         main_layout = QVBoxLayout(self)
-        self.setMinimumWidth(350)
-
-        # Warning Label (initially hidden)
+        
         self.warning_label = QLabel()
         self.warning_label.setStyleSheet("color: red; font-weight: bold;")
         self.warning_label.setWordWrap(True)
         self.warning_label.setVisible(False)
         main_layout.addWidget(self.warning_label)
 
+        # Restore the ClickableLabel for the image
         self.image_label = ClickableLabel("Loading...")
-        self.image_label.setFixedSize(320, 180)
+        self.image_label.setMinimumHeight(180)
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setStyleSheet("background-color:#333; color:white;")
-        main_layout.addWidget(self.image_label, alignment=Qt.AlignCenter)
+        main_layout.addWidget(self.image_label, 1)
         
         self._add_field_row(f"{self.main_column}:", 'main_column', item_data.get(self.main_column, ''))
         self._add_field_row("To:", 'to', item_data.get('to', ''))
@@ -51,7 +49,6 @@ class ReviewItemWidget(QGroupBox):
             self.fields['skip'].setChecked(item_data.get('skip', '') == 'x')
             self.fields['skip'].stateChanged.connect(self.data_changed.emit)
             main_layout.addWidget(self.fields['skip'])
-        main_layout.addStretch()
 
     def _add_field_row(self, label_text: str, field_key: str, initial_value: str):
         row_layout = QHBoxLayout()

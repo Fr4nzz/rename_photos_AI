@@ -48,6 +48,11 @@ class ReviewResultsTab(QWidget):
         self.grid_container = QWidget()
         self.grid_layout = QGridLayout(self.grid_container)
         self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        
+        # ADDED: Allow columns to expand equally
+        self.grid_layout.setColumnStretch(0, 1)
+        self.grid_layout.setColumnStretch(1, 1)
+
         scroll_area.setWidget(self.grid_container)
         main_layout.addWidget(scroll_area)
 
