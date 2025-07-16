@@ -19,14 +19,19 @@ class ProcessImagesTab(QWidget):
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
 
-        # --- Top Bar: Inputs ---
-        top_bar_layout = QHBoxLayout()
+        # --- Left Panel: ALL Settings ---
+        settings_panel = QWidget()
+        settings_vbox = QVBoxLayout(settings_panel)
+        settings_vbox.setContentsMargins(0, 0, 5, 0)
+
         folder_group = QGroupBox("Input Folder")
         folder_layout = QHBoxLayout(folder_group)
         self.dir_path_label = ClickableLabel("(No folder selected)")
+        self.dir_path_label.setWordWrap(True)
         self.browse_button = QPushButton("Browse...")
         folder_layout.addWidget(self.dir_path_label, 1)
         folder_layout.addWidget(self.browse_button)
+        settings_vbox.addWidget(folder_group)
         
         exiftool_group = QGroupBox("ExifTool Configuration")
         exiftool_layout = QHBoxLayout(exiftool_group)
@@ -35,18 +40,7 @@ class ProcessImagesTab(QWidget):
         exiftool_layout.addWidget(QLabel("Path:"))
         exiftool_layout.addWidget(self.exiftool_path_input, 1)
         exiftool_layout.addWidget(self.exiftool_browse_button)
-
-        top_bar_layout.addWidget(folder_group, 1)
-        top_bar_layout.addWidget(exiftool_group, 1)
-        main_layout.addLayout(top_bar_layout)
-        
-        # --- Main Content Area is now a QSplitter ---
-        main_splitter = QSplitter(Qt.Horizontal)
-
-        # --- Left Panel: ALL Settings ---
-        settings_panel = QWidget()
-        settings_vbox = QVBoxLayout(settings_panel)
-        settings_vbox.setContentsMargins(0, 0, 5, 0)
+        settings_vbox.addWidget(exiftool_group)
 
         selection_group = QGroupBox("Preview Selection")
         selection_layout = QFormLayout(selection_group)
@@ -104,7 +98,7 @@ class ProcessImagesTab(QWidget):
         settings_vbox.addWidget(api_group)
         settings_vbox.addStretch()
 
-        # --- Right Panel: Previews and Prompt (in a nested splitter) ---
+        # --- Right Panel: Previews and Prompt ---
         right_panel = QSplitter(Qt.Vertical)
         right_panel.setContentsMargins(5, 0, 0, 0)
         
@@ -122,22 +116,10 @@ class ProcessImagesTab(QWidget):
         ]
         
         for i, (title, label) in enumerate(previews_data):
-            label.setScaledContents(True)
-            label.setMinimumSize(150, 100)
-            
-            label.setAlignment(Qt.AlignCenter)
-            label.setStyleSheet("background-color: #333; color: white; border: 1px solid #555; border-radius: 4px;")
-            
+            label.setStyleSheet("background-color: #333;")
             group_box = QGroupBox(title)
             group_layout = QHBoxLayout(group_box)
-            
-            # --- THE ASPECT RATIO FIX ---
-            # Add spacers on either side of the label to maintain aspect ratio
-            group_layout.addStretch()
             group_layout.addWidget(label)
-            group_layout.addStretch()
-            # --- END OF FIX ---
-            
             previews_grid_layout.addWidget(group_box, i // 2, i % 2)
         
         prompt_group = QGroupBox("Prompt")
@@ -149,15 +131,16 @@ class ProcessImagesTab(QWidget):
         right_panel.addWidget(previews_container)
         right_panel.addWidget(prompt_group)
 
+        # --- Main Splitter Setup ---
+        main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.addWidget(settings_panel)
         main_splitter.addWidget(right_panel)
-        
         main_splitter.setSizes([450, 800])
         right_panel.setSizes([600, 200])
 
         main_layout.addWidget(main_splitter)
 
-        # --- Bottom Bar: Actions and Status ---
+        # --- Bottom Bar ---
         bottom_bar_layout = QHBoxLayout()
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)

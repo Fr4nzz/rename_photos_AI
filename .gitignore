@@ -9,4 +9,7 @@
 !*/
 
 # No ignorar el archivo .gitignore
-!.gitignore 
+!.gitignore
+
+# No ignorar requirements.txt
+!requirements.txt 

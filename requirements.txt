@@ -1,0 +1,18 @@
+# ai-photo-processor/requirements.txt
+
+# --- Core Application Framework ---
+PyQt5
+
+# --- Data Handling ---
+pandas
+numpy
+
+# --- Google API ---
+google-generativeai
+
+# --- Image Processing ---
+Pillow
+piexif
+rawpy
+pyexiftool
+pillow-heif
