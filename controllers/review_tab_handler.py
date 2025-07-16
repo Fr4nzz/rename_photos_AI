@@ -123,6 +123,12 @@ class ReviewTabHandler(QObject):
                         grid_col = 0
                         grid_row += 1
                 
+                # Keep every row at two columns - add invisible spacer if needed
+                if grid_col == 1:  # there's only one widget in this row
+                    from PyQt5.QtWidgets import QWidget
+                    dummy = QWidget()                 # invisible spacer
+                    self.ui.add_item_to_grid(grid_row, 1, dummy)
+                
                 if grid_col != 0:
                     grid_col = 0
                     grid_row += 1

@@ -30,16 +30,20 @@ class ClickableLabel(QLabel):
             self.clicked.emit(self._file_path)
 
     def setPixmap(self, pixmap: QPixmap):
-        """Stores the original pixmap and triggers a repaint."""
+        """Store pixmap and ask the layout to recalc geometry."""
         self._pixmap = pixmap if pixmap else QPixmap()
-        self.update() # Trigger a repaint, which will call paintEvent
+        self.updateGeometry()          # <- important for height-for-width
+        self.update()                  # repaint
 
+    # 1️⃣  Tell Qt that height follows width
     def hasHeightForWidth(self) -> bool:
-        """Tells the layout that height depends on width."""
         return not self._pixmap.isNull()
 
     def heightForWidth(self, width: int) -> int:
-        """Calculates the ideal height for a given width to maintain aspect ratio."""
+        """
+        Return the height needed to keep the original aspect ratio when the
+        layout gives us 'width' pixels.
+        """
         if self._pixmap.isNull() or self._pixmap.width() == 0:
             return self.height()
         return int(width * (self._pixmap.height() / self._pixmap.width()))
@@ -55,10 +59,16 @@ class ClickableLabel(QLabel):
             return
 
         size = self.size()
-        scaled_pixmap = self._pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        # 2️⃣  Fit the pixmap fully inside the label while preserving aspect ratio
+        scaled_pixmap = self._pixmap.scaled(
+            size,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
         
-        x = (size.width() - scaled_pixmap.width()) / 2
-        y = (size.height() - scaled_pixmap.height()) / 2
+        # Centre the pixmap in the label's rect
+        x = (size.width()  - scaled_pixmap.width())  // 2
+        y = (size.height() - scaled_pixmap.height()) // 2
 
         painter = QPainter(self)
         painter.drawPixmap(int(x), int(y), scaled_pixmap)
