@@ -11,7 +11,6 @@ class ReviewResultsTab(QWidget):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # The redundant ui_widgets list has been removed.
         self._setup_ui()
 
     def _setup_ui(self):
@@ -21,6 +20,10 @@ class ReviewResultsTab(QWidget):
         controls_layout.addWidget(QLabel("CSV File:"))
         self.csv_dropdown = QComboBox()
         controls_layout.addWidget(self.csv_dropdown, 1)
+
+        # --- FIX: Add the missing refresh button ---
+        self.refresh_from_disk_button = QPushButton("Refresh from Disk")
+        controls_layout.addWidget(self.refresh_from_disk_button)
 
         self.crop_review_checkbox = QCheckBox("Enable Cropping")
         controls_layout.addWidget(self.crop_review_checkbox)
@@ -55,7 +58,6 @@ class ReviewResultsTab(QWidget):
 
     def clear_grid(self):
         """Removes all items from the results grid."""
-        # The ui_widgets list is gone, so no need to clear it here.
         while self.grid_layout.count():
             if child := self.grid_layout.takeAt(0):
                 if child.widget():

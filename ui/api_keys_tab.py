@@ -12,8 +12,14 @@ class ApiKeysTab(QWidget):
 
     def _setup_ui(self):
         """Sets up the widgets for the API keys tab."""
-        self.main_layout.addWidget(QLabel("Enter Google AI API keys below, one per line:"))
+        # --- ENHANCEMENT: Add hyperlink ---
+        api_info_label = QLabel(
+            'Get your Google AI API key from: <a href="https://aistudio.google.com/app/apikey">https://aistudio.google.com/app/apikey</a>'
+        )
+        api_info_label.setOpenExternalLinks(True) # Make the link clickable
+        self.main_layout.addWidget(api_info_label)
 
+        self.main_layout.addWidget(QLabel("Enter API keys below, one per line:"))
         self.api_keys_text_edit = QTextEdit()
         self.api_keys_text_edit.setPlaceholderText("g_api_key_1...\ng_api_key_2...")
         self.main_layout.addWidget(self.api_keys_text_edit)

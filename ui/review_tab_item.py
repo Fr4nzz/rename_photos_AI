@@ -20,21 +20,37 @@ class ReviewItemWidget(QGroupBox):
         self.fields = {}
         self._setup_ui(item_data)
         
-        if count != 2:
+        if count != 2 and item_data.get(main_column): # Only show warning if there's an identifier
             self.set_warning(f"Warning: Appears {count} times in total.")
         else:
             self.clear_warning()
+        
+        status = item_data.get('status', '')
+        if status == 'Renamed':
+            self.set_status("Already Renamed", "color: #FF8C00;") # Orange
+        elif status == 'New':
+            self.set_status("New File", "color: #32CD32;") # LimeGreen
+        else:
+            self.status_label.setVisible(False)
+
 
     def _setup_ui(self, item_data: dict):
         main_layout = QVBoxLayout(self)
         
+        # Top bar for status messages
+        top_bar_layout = QHBoxLayout()
         self.warning_label = QLabel()
         self.warning_label.setStyleSheet("color: red; font-weight: bold;")
         self.warning_label.setWordWrap(True)
         self.warning_label.setVisible(False)
-        main_layout.addWidget(self.warning_label)
+        self.status_label = QLabel()
+        self.status_label.setWordWrap(True)
+        self.status_label.setVisible(False)
+        top_bar_layout.addWidget(self.warning_label)
+        top_bar_layout.addStretch()
+        top_bar_layout.addWidget(self.status_label)
+        main_layout.addLayout(top_bar_layout)
 
-        # Restore the ClickableLabel for the image
         self.image_label = ClickableLabel("Loading...")
         self.image_label.setMinimumHeight(180)
         self.image_label.setAlignment(Qt.AlignCenter)
@@ -68,6 +84,11 @@ class ReviewItemWidget(QGroupBox):
 
     def clear_warning(self):
         self.warning_label.setVisible(False)
+        
+    def set_status(self, text: str, style: str):
+        self.status_label.setText(text)
+        self.status_label.setStyleSheet(style)
+        self.status_label.setVisible(True)
        
     def get_data(self) -> dict:
         data = {'df_index': self.df_index}
