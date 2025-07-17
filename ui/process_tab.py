@@ -45,7 +45,8 @@ class ProcessImagesTab(QWidget):
         selection_group = QGroupBox("Preview Selection")
         selection_layout = QFormLayout(selection_group)
         self.preview_image_dropdown = QComboBox()
-        self.preview_raw_checkbox = QCheckBox("Preview RAW")
+        # --- CHANGE: Updated label text for clarity ---
+        self.preview_raw_checkbox = QCheckBox("Process RAW Images")
         self.batch_preview_dropdown = QComboBox()
         selection_layout.addRow("Image:", self.preview_image_dropdown)
         selection_layout.addRow("Batch:", self.batch_preview_dropdown)
