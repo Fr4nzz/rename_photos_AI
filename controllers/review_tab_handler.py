@@ -1,6 +1,7 @@
 # ai-photo-processor/controllers/review_tab_handler.py
 
 import os
+import math
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
@@ -30,6 +31,10 @@ class ReviewTabHandler(QObject):
         self.image_load_worker = None
         self.image_load_thread = None
         self.path_to_widget_map = {}
+        # --- NEW: State for pagination ---
+        self.current_page = 0
+        self.total_pages = 1
+        self.filtered_df = pd.DataFrame()
 
     def connect_signals(self):
         self.ui.csv_dropdown.currentIndexChanged.connect(self.refresh_view)
@@ -40,6 +45,9 @@ class ReviewTabHandler(QObject):
         self.ui.recalc_names_button.clicked.connect(self.recalculate_names)
         self.ui.rename_files_button.clicked.connect(self.rename_files)
         self.ui.restore_names_button.clicked.connect(self.restore_file_names)
+        # --- NEW: Connect pagination buttons ---
+        self.ui.next_page_button.clicked.connect(self.go_to_next_page)
+        self.ui.prev_page_button.clicked.connect(self.go_to_prev_page)
     
     def populate_initial_ui(self):
         self.ui.crop_review_checkbox.setChecked(self.app_state.settings.get('review_crop_enabled', True))
@@ -52,10 +60,11 @@ class ReviewTabHandler(QObject):
 
     def _handle_ui_change(self):
         self.app_state.settings['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
-        self._populate_review_grid()
+        # --- CHANGE: Don't do a full refresh, just repopulate the grid ---
+        # This will re-apply filters and redraw the current page.
+        self.refresh_view()
 
     def refresh_csv_dropdown(self):
-        """Populates the CSV dropdown and triggers a full view refresh."""
         self.ui.csv_dropdown.blockSignals(True)
         current_selection = self.ui.csv_dropdown.currentText()
         self.ui.csv_dropdown.clear()
@@ -74,7 +83,7 @@ class ReviewTabHandler(QObject):
         self.refresh_view()
 
     def refresh_view(self):
-        """The main method to refresh the entire review tab, using the filesystem as the source of truth."""
+        """Reconciles data and sets up the view for the first page."""
         self.logger.info("Refreshing Review Results view...")
         self.stop_worker()
 
@@ -84,7 +93,7 @@ class ReviewTabHandler(QObject):
 
         disk_files = get_image_files(self.app_state.input_directory, 'compressed')
         if not disk_files:
-            self.ui.set_grid_message("No compressed image files (JPG, PNG, etc.) found in the selected directory.")
+            self.ui.set_grid_message("No compressed image files found.")
             return
 
         main_col = self.app_state.settings['main_column']
@@ -92,97 +101,112 @@ class ReviewTabHandler(QObject):
         
         csv_df = pd.DataFrame()
         csv_name = self.ui.csv_dropdown.currentText()
-        if csv_name:
-            path = os.path.join(self.app_state.rename_files_dir, csv_name)
-            if os.path.exists(path):
-                try:
-                    csv_df = pd.read_csv(path, dtype=str).fillna('')
-                    for col in df_cols:
-                        if col not in csv_df.columns: csv_df[col] = ''
-                except Exception as e:
-                    self.logger.error(f"Could not load or parse CSV: {csv_name}", exception=e)
+        if csv_name and os.path.exists(os.path.join(self.app_state.rename_files_dir, csv_name)):
+            try:
+                csv_df = pd.read_csv(os.path.join(self.app_state.rename_files_dir, csv_name), dtype=str).fillna('')
+                for col in df_cols:
+                    if col not in csv_df.columns: csv_df[col] = ''
+            except Exception as e:
+                self.logger.error(f"Could not load CSV: {csv_name}", exception=e)
 
         reconciled_data = []
         for file_path in disk_files:
             file_path_str = str(file_path)
             new_row = {col: '' for col in df_cols}
             new_row.update({'from': file_path_str, 'status': 'New'})
-
             if not csv_df.empty:
                 match = csv_df[csv_df['from'] == file_path_str]
                 if not match.empty:
-                    new_row.update(match.iloc[0].to_dict())
-                    new_row['status'] = 'Original'
+                    new_row.update(match.iloc[0].to_dict()); new_row['status'] = 'Original'
                 else:
                     match = csv_df[csv_df['to'] == file_path.name]
                     if not match.empty:
-                        new_row.update(match.iloc[0].to_dict())
-                        new_row['from'] = file_path_str
-                        new_row['status'] = 'Renamed'
+                        new_row.update(match.iloc[0].to_dict()); new_row['from'] = file_path_str; new_row['status'] = 'Renamed'
             reconciled_data.append(new_row)
 
-        final_df = pd.DataFrame(reconciled_data)
-        if 'photo_ID' not in final_df.columns or final_df['photo_ID'].isnull().any():
-            final_df['photo_ID'] = range(1, len(final_df) + 1)
+        self.app_state.current_df = pd.DataFrame(reconciled_data)
+        if 'photo_ID' not in self.app_state.current_df.columns or self.app_state.current_df['photo_ID'].isnull().any():
+            self.app_state.current_df['photo_ID'] = range(1, len(self.app_state.current_df) + 1)
         
-        self.app_state.current_df = final_df
+        # --- NEW: Apply filters and reset pagination ---
+        self._apply_filters_and_update_pages()
         self._populate_review_grid()
 
+    def _apply_filters_and_update_pages(self):
+        """Applies UI filters to the main DataFrame and resets pagination."""
+        df = self.app_state.current_df
+        if df.empty:
+            self.filtered_df = pd.DataFrame()
+            self.total_pages = 1
+            self.current_page = 0
+            return
+
+        display_df = df
+        if self.ui.show_duplicates_checkbox.isChecked():
+            main_col = self.app_state.settings['main_column']
+            if main_col in df.columns:
+                id_counts = df.loc[df[main_col] != '', main_col].value_counts()
+                mismatched_ids = id_counts[id_counts != 2].index
+                display_df = df[df[main_col].isin(mismatched_ids)]
+
+        self.filtered_df = display_df
+        items_per_page = self.app_state.settings['review_items_per_page']
+        self.total_pages = math.ceil(len(self.filtered_df) / items_per_page) if items_per_page > 0 else 1
+        if self.total_pages == 0: self.total_pages = 1
+        self.current_page = 0 # Reset to first page
+
     def _populate_review_grid(self):
+        """Populates the grid with items for the CURRENT page."""
         try:
             self.stop_worker()
             self.ui.clear_grid()
             self.path_to_widget_map.clear()
+            self._update_navigation_controls()
 
-            df = self.app_state.current_df
             main_col = self.app_state.settings['main_column']
-
-            if df.empty or main_col not in df.columns:
-                self.ui.set_grid_message("No data or main column not found.")
+            if self.filtered_df.empty or main_col not in self.filtered_df.columns:
+                self.ui.set_grid_message("No items to display with current filters.")
                 return
 
-            display_df = df
-            if self.ui.show_duplicates_checkbox.isChecked():
-                id_counts = df.loc[df[main_col] != '', main_col].value_counts()
-                mismatched_ids = id_counts[id_counts != 2].index
-                display_df = df[df[main_col].isin(mismatched_ids)]
-                if display_df.empty:
-                    self.ui.set_grid_message("No items with mismatched pair counts found.")
-                    return
+            # --- CHANGE: Paginate the filtered DataFrame ---
+            items_per_page = self.app_state.settings['review_items_per_page']
+            start_idx = self.current_page * items_per_page
+            end_idx = start_idx + items_per_page
+            page_df = self.filtered_df.iloc[start_idx:end_idx]
 
-            grid_row, grid_col = 0, 0
-            image_paths_to_load = []
-            id_counts_total = df.loc[df[main_col] != '', main_col].value_counts().to_dict()
+            if page_df.empty:
+                self.ui.set_grid_message("No items on this page.")
+                return
 
-            grouped = display_df.groupby(main_col, sort=False, dropna=False)
-            for identifier, group in grouped:
+            grid_row, grid_col, image_paths_to_load = 0, 0, []
+            id_counts_total = self.app_state.current_df.loc[self.app_state.current_df[main_col] != '', main_col].value_counts().to_dict()
+
+            # Group by identifier for layout purposes, even on the single page
+            for identifier, group in page_df.groupby(main_col, sort=False, dropna=False):
                 for idx, row in group.iterrows():
                     total_count = id_counts_total.get(identifier, 0)
-                    
                     item_widget = ReviewItemWidget(idx, row.to_dict(), main_col, total_count)
                     item_widget.data_changed.connect(lambda w=item_widget: self._sync_df_from_review_item(w))
                     self.ui.add_item_to_grid(grid_row, grid_col, item_widget)
                     
-                    img_path = Path(row['from'])
-                    if img_path.exists():
-                        self.path_to_widget_map[str(img_path)] = item_widget
-                        item_widget.image_label.setFilePath(str(img_path))
-                        item_widget.image_label.clicked.connect(self.main_window.process_handler.on_preview_label_clicked)
-                        image_paths_to_load.append(img_path)
+                    if img_path := Path(row['from']):
+                        if img_path.exists():
+                            self.path_to_widget_map[str(img_path)] = item_widget
+                            item_widget.image_label.setFilePath(str(img_path))
+                            item_widget.image_label.clicked.connect(self.main_window.process_handler.on_preview_label_clicked)
+                            image_paths_to_load.append(img_path)
                     
                     grid_col += 1
                     if grid_col >= 2: grid_col, grid_row = 0, grid_row + 1
                 
-                if grid_col == 1: self.ui.add_item_to_grid(grid_row, 1, QWidget())
+                if grid_col == 1: self.ui.add_item_to_grid(grid_row, 1, QWidget()) # Fill row
                 if grid_col != 0: grid_col, grid_row = 0, grid_row + 1
             
             if image_paths_to_load:
                 self.start_image_load_worker(image_paths_to_load)
 
         except Exception as e:
-            error_message = f"Error populating review grid: {e}\n{traceback.format_exc()}"
-            self.logger.error(error_message)
-            QMessageBox.critical(self.main_window, "Application Error", f"{error_message}")
+            self.logger.error(f"Error populating review grid: {e}", exception=e)
 
     def _sync_df_from_review_item(self, sender_widget: ReviewItemWidget):
         data = sender_widget.get_data()
@@ -192,11 +216,9 @@ class ReviewTabHandler(QObject):
                 self.app_state.current_df.loc[idx, col] = value
                
     def start_image_load_worker(self, paths):
-        active_crop_settings = self.app_state.settings['crop_settings'].copy()
-        active_crop_settings['zoom'] = self.ui.crop_review_checkbox.isChecked()
-        
+        crop_settings = {**self.app_state.settings['crop_settings'], 'zoom': self.ui.crop_review_checkbox.isChecked()}
         self.image_load_thread = QThread()
-        self.image_load_worker = ImageLoadWorker(paths, self.logger, active_crop_settings)
+        self.image_load_worker = ImageLoadWorker(paths, self.logger, crop_settings)
         self.image_load_worker.moveToThread(self.image_load_thread)
         self.image_load_worker.image_loaded.connect(self.on_review_image_loaded)
         self.image_load_worker.finished.connect(self.image_load_thread.quit)
@@ -204,33 +226,25 @@ class ReviewTabHandler(QObject):
         self.image_load_thread.start()
        
     def on_review_image_loaded(self, path_str: str, img_bytes: bytes, width: int, height: int):
-        q_image = QImage(img_bytes, width, height, width * 3, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(q_image)
-        
+        pixmap = QPixmap.fromImage(QImage(img_bytes, width, height, width * 3, QImage.Format_RGB888))
         if widget := self.path_to_widget_map.get(path_str):
             widget.set_image(pixmap)
 
     def save_manual_changes(self):
-        """
-        Saves any edits in the review grid. If no CSV is selected, it creates a new one.
-        """
         if self.app_state.current_df.empty:
-            QMessageBox.warning(self.main_window, "No Data", "There is no data to save.")
-            return
-
+            return QMessageBox.warning(self.main_window, "No Data", "There is no data to save.")
         try:
             self._save_current_df()
-            # After saving, the dropdown is refreshed and the correct file is selected.
             QMessageBox.information(self.main_window, "Success", f"Changes saved to {self.ui.csv_dropdown.currentText()}.")
         except Exception as e:
             self.logger.error("Failed during manual save.", exception=e)
-            QMessageBox.critical(self.main_window, "Save Error", f"Could not save changes to the CSV file.\n\nError: {e}")
 
+    # --- All the other methods like recalculate_names, rename_files, etc. remain the same ---
     def recalculate_names(self):
         if self.app_state.current_df.empty: return
         self.app_state.current_df = calculate_final_names(self.app_state.current_df, self.app_state.settings['main_column'])
         self._save_current_df()
-        self._populate_review_grid()
+        self.refresh_view() # Refresh to show changes
         QMessageBox.information(self.main_window, "Success", "'To' column recalculated and saved.")
 
     def rename_files(self):
@@ -240,6 +254,7 @@ class ReviewTabHandler(QObject):
             return
        
         self.logger.info("--- Starting File Rename Process ---")
+        # ... (rest of rename_files method is unchanged)
         log_entries, renamed_count, error_count = [], 0, 0
         df = self.app_state.current_df
 
@@ -283,8 +298,9 @@ class ReviewTabHandler(QObject):
         self._save_current_df()
         self.refresh_view()
         QMessageBox.information(self.main_window, "Rename Complete", f"Renamed {renamed_count} files.\n{error_count} errors occurred.")
-    
+        
     def restore_file_names(self):
+        # ... (restore_file_names method is unchanged)
         log_path = Path(self.app_state.rename_files_dir) / "rename_log.csv"
         if not log_path.exists(): return QMessageBox.warning(self.main_window, "Not Found", "rename_log.csv not found.")
         if QMessageBox.question(self.main_window, "Confirm Restore", "Restore filenames based on the log?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.No: return
@@ -312,27 +328,45 @@ class ReviewTabHandler(QObject):
         QMessageBox.information(self.main_window, "Restore Complete", f"Restored {restored_count} files.\n{error_count} errors occurred.")
 
     def _save_current_df(self):
-        """Saves the current DataFrame to the selected CSV or a new one."""
         if self.app_state.current_df.empty: return
-
-        csv_name = self.ui.csv_dropdown.currentText()
-        if not csv_name:
-            csv_name = f"review_state_{datetime.now():%Y%m%d_%H%M%S}.csv"
-        
+        csv_name = self.ui.csv_dropdown.currentText() or f"review_state_{datetime.now():%Y%m%d_%H%M%S}.csv"
         save_path = Path(self.app_state.rename_files_dir) / csv_name
         try:
             df_to_save = self.app_state.current_df.drop(columns=['status'], errors='ignore')
             df_to_save.to_csv(save_path, index=False)
             self.logger.info(f"DataFrame state saved to {save_path.name}")
             
-            # This is a critical step to ensure the UI is in sync after saving
-            current_text = self.ui.csv_dropdown.currentText()
             self.refresh_csv_dropdown()
-            # After refresh, try to set the dropdown to the file we just saved to.
-            # This handles both updating an existing file and creating a new one.
             new_index = self.ui.csv_dropdown.findText(csv_name)
-            if new_index > -1:
-                 self.ui.csv_dropdown.setCurrentIndex(new_index)
-
+            if new_index > -1: self.ui.csv_dropdown.setCurrentIndex(new_index)
         except Exception as e:
             self.logger.error(f"Failed to save DataFrame to {save_path.name}", exception=e)
+
+    # --- NEW: Methods for pagination ---
+    def go_to_next_page(self):
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self._populate_review_grid()
+
+    def go_to_prev_page(self):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self._populate_review_grid()
+
+    def _update_navigation_controls(self):
+        """Updates the state and text of pagination controls."""
+        self.ui.prev_page_button.setEnabled(self.current_page > 0)
+        self.ui.next_page_button.setEnabled(self.current_page < self.total_pages - 1)
+        
+        items_per_page = self.app_state.settings['review_items_per_page']
+        start_item = self.current_page * items_per_page + 1
+        end_item = min((self.current_page + 1) * items_per_page, len(self.filtered_df))
+        total_items = len(self.filtered_df)
+        
+        if total_items == 0:
+            self.ui.page_label.setText("No items found")
+        else:
+            self.ui.page_label.setText(
+                f"Page {self.current_page + 1} of {self.total_pages} "
+                f"({start_item}-{end_item} of {total_items})"
+            )

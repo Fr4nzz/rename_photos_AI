@@ -58,6 +58,8 @@ class AppState:
             'model_name': '', 'prompt_text': DEFAULT_PROMPT,
             'exiftool_path': self._find_exiftool(), 'rotation_angle': 180,
             'use_exif': True, 'preview_raw': False, 'review_crop_enabled': True,
+            # --- NEW: Setting for pagination ---
+            'review_items_per_page': 50,
             'crop_settings': {
                 'top': 0.1, 'bottom': 0.0, 'left': 0.0, 'right': 0.5,
                 'zoom': True, 'grayscale': True
