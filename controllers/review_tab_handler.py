@@ -5,7 +5,6 @@ import math
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
-import traceback
 
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QMainWindow, QWidget
 from PyQt5.QtCore import QThread, QObject
@@ -31,7 +30,6 @@ class ReviewTabHandler(QObject):
         self.image_load_worker = None
         self.image_load_thread = None
         self.path_to_widget_map = {}
-        # --- NEW: State for pagination ---
         self.current_page = 0
         self.total_pages = 1
         self.filtered_df = pd.DataFrame()
@@ -41,17 +39,34 @@ class ReviewTabHandler(QObject):
         self.ui.refresh_from_disk_button.clicked.connect(self.refresh_view)
         self.ui.crop_review_checkbox.stateChanged.connect(self._handle_ui_change)
         self.ui.show_duplicates_checkbox.stateChanged.connect(self._handle_ui_change)
+        
+        # --- NEW: Connect items per page input ---
+        self.ui.items_per_page_input.editingFinished.connect(self._handle_ui_change)
+        
         self.ui.save_changes_button.clicked.connect(self.save_manual_changes)
         self.ui.recalc_names_button.clicked.connect(self.recalculate_names)
         self.ui.rename_files_button.clicked.connect(self.rename_files)
         self.ui.restore_names_button.clicked.connect(self.restore_file_names)
-        # --- NEW: Connect pagination buttons ---
         self.ui.next_page_button.clicked.connect(self.go_to_next_page)
         self.ui.prev_page_button.clicked.connect(self.go_to_prev_page)
     
     def populate_initial_ui(self):
         self.ui.crop_review_checkbox.setChecked(self.app_state.settings.get('review_crop_enabled', True))
-    
+        # --- NEW: Set initial value for items per page ---
+        items_per_page = self.app_state.settings.get('review_items_per_page', 50)
+        self.ui.items_per_page_input.setText(str(items_per_page))
+
+    def _sync_settings_from_ui(self):
+        """Read values from the UI and update the app_state."""
+        self.app_state.settings['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
+        try:
+            items_per_page = int(self.ui.items_per_page_input.text())
+            self.app_state.settings['review_items_per_page'] = items_per_page if items_per_page > 0 else 1
+        except (ValueError, TypeError):
+            # On error, fall back to a safe default and correct the UI
+            self.app_state.settings['review_items_per_page'] = 50
+            self.ui.items_per_page_input.setText("50")
+
     def stop_worker(self):
         if self.image_load_thread and self.image_load_thread.isRunning():
             self.image_load_worker.stop()
@@ -59,9 +74,7 @@ class ReviewTabHandler(QObject):
             self.image_load_thread.wait()
 
     def _handle_ui_change(self):
-        self.app_state.settings['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
-        # --- CHANGE: Don't do a full refresh, just repopulate the grid ---
-        # This will re-apply filters and redraw the current page.
+        self._sync_settings_from_ui()
         self.refresh_view()
 
     def refresh_csv_dropdown(self):
@@ -75,9 +88,10 @@ class ReviewTabHandler(QObject):
                 key=lambda f: os.path.getmtime(os.path.join(self.app_state.rename_files_dir, f)),
                 reverse=True
             )
-            self.ui.csv_dropdown.addItems(csv_files)
-            if current_selection in csv_files:
-                self.ui.csv_dropdown.setCurrentText(current_selection)
+            if csv_files:
+                self.ui.csv_dropdown.addItems(csv_files)
+                if current_selection in csv_files:
+                    self.ui.csv_dropdown.setCurrentText(current_selection)
 
         self.ui.csv_dropdown.blockSignals(False)
         self.refresh_view()
@@ -128,7 +142,6 @@ class ReviewTabHandler(QObject):
         if 'photo_ID' not in self.app_state.current_df.columns or self.app_state.current_df['photo_ID'].isnull().any():
             self.app_state.current_df['photo_ID'] = range(1, len(self.app_state.current_df) + 1)
         
-        # --- NEW: Apply filters and reset pagination ---
         self._apply_filters_and_update_pages()
         self._populate_review_grid()
 
@@ -136,24 +149,23 @@ class ReviewTabHandler(QObject):
         """Applies UI filters to the main DataFrame and resets pagination."""
         df = self.app_state.current_df
         if df.empty:
-            self.filtered_df = pd.DataFrame()
-            self.total_pages = 1
-            self.current_page = 0
+            self.filtered_df, self.total_pages, self.current_page = pd.DataFrame(), 1, 0
             return
 
         display_df = df
         if self.ui.show_duplicates_checkbox.isChecked():
             main_col = self.app_state.settings['main_column']
             if main_col in df.columns:
-                id_counts = df.loc[df[main_col] != '', main_col].value_counts()
+                valid_ids = df.loc[df[main_col].notna() & (df[main_col] != ''), main_col]
+                id_counts = valid_ids.value_counts()
                 mismatched_ids = id_counts[id_counts != 2].index
                 display_df = df[df[main_col].isin(mismatched_ids)]
 
-        self.filtered_df = display_df
-        items_per_page = self.app_state.settings['review_items_per_page']
+        self.filtered_df = display_df.reset_index(drop=True)
+        items_per_page = self.app_state.settings.get('review_items_per_page', 50)
         self.total_pages = math.ceil(len(self.filtered_df) / items_per_page) if items_per_page > 0 else 1
-        if self.total_pages == 0: self.total_pages = 1
-        self.current_page = 0 # Reset to first page
+        self.total_pages = max(1, self.total_pages)
+        self.current_page = 0
 
     def _populate_review_grid(self):
         """Populates the grid with items for the CURRENT page."""
@@ -168,8 +180,7 @@ class ReviewTabHandler(QObject):
                 self.ui.set_grid_message("No items to display with current filters.")
                 return
 
-            # --- CHANGE: Paginate the filtered DataFrame ---
-            items_per_page = self.app_state.settings['review_items_per_page']
+            items_per_page = self.app_state.settings.get('review_items_per_page', 50)
             start_idx = self.current_page * items_per_page
             end_idx = start_idx + items_per_page
             page_df = self.filtered_df.iloc[start_idx:end_idx]
@@ -179,13 +190,12 @@ class ReviewTabHandler(QObject):
                 return
 
             grid_row, grid_col, image_paths_to_load = 0, 0, []
-            id_counts_total = self.app_state.current_df.loc[self.app_state.current_df[main_col] != '', main_col].value_counts().to_dict()
+            id_counts_total = self.app_state.current_df.loc[self.app_state.current_df[main_col].notna() & (self.app_state.current_df[main_col] != ''), main_col].value_counts().to_dict()
 
-            # Group by identifier for layout purposes, even on the single page
             for identifier, group in page_df.groupby(main_col, sort=False, dropna=False):
-                for idx, row in group.iterrows():
-                    total_count = id_counts_total.get(identifier, 0)
-                    item_widget = ReviewItemWidget(idx, row.to_dict(), main_col, total_count)
+                for _, row in group.iterrows():
+                    total_count = id_counts_total.get(identifier, 0) if pd.notna(identifier) else 0
+                    item_widget = ReviewItemWidget(row.name, row.to_dict(), main_col, total_count)
                     item_widget.data_changed.connect(lambda w=item_widget: self._sync_df_from_review_item(w))
                     self.ui.add_item_to_grid(grid_row, grid_col, item_widget)
                     
@@ -199,7 +209,7 @@ class ReviewTabHandler(QObject):
                     grid_col += 1
                     if grid_col >= 2: grid_col, grid_row = 0, grid_row + 1
                 
-                if grid_col == 1: self.ui.add_item_to_grid(grid_row, 1, QWidget()) # Fill row
+                if grid_col == 1: self.ui.add_item_to_grid(grid_row, 1, QWidget())
                 if grid_col != 0: grid_col, grid_row = 0, grid_row + 1
             
             if image_paths_to_load:
@@ -211,14 +221,17 @@ class ReviewTabHandler(QObject):
     def _sync_df_from_review_item(self, sender_widget: ReviewItemWidget):
         data = sender_widget.get_data()
         idx = data.pop('df_index')
-        for col, value in data.items():
-            if col in self.app_state.current_df.columns:
-                self.app_state.current_df.loc[idx, col] = value
+        for df in [self.app_state.current_df, self.filtered_df]:
+             for col, value in data.items():
+                if col in df.columns and idx in df.index:
+                    df.loc[idx, col] = value
                
     def start_image_load_worker(self, paths):
         crop_settings = {**self.app_state.settings['crop_settings'], 'zoom': self.ui.crop_review_checkbox.isChecked()}
+        thumb_height = self.app_state.settings.get('review_thumb_height', 900)
+        
         self.image_load_thread = QThread()
-        self.image_load_worker = ImageLoadWorker(paths, self.logger, crop_settings)
+        self.image_load_worker = ImageLoadWorker(paths, self.logger, crop_settings, thumb_height)
         self.image_load_worker.moveToThread(self.image_load_thread)
         self.image_load_worker.image_loaded.connect(self.on_review_image_loaded)
         self.image_load_worker.finished.connect(self.image_load_thread.quit)
@@ -226,7 +239,8 @@ class ReviewTabHandler(QObject):
         self.image_load_thread.start()
        
     def on_review_image_loaded(self, path_str: str, img_bytes: bytes, width: int, height: int):
-        pixmap = QPixmap.fromImage(QImage(img_bytes, width, height, width * 3, QImage.Format_RGB888))
+        q_img = QImage(img_bytes, width, height, width * 3, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(q_img)
         if widget := self.path_to_widget_map.get(path_str):
             widget.set_image(pixmap)
 
@@ -238,8 +252,8 @@ class ReviewTabHandler(QObject):
             QMessageBox.information(self.main_window, "Success", f"Changes saved to {self.ui.csv_dropdown.currentText()}.")
         except Exception as e:
             self.logger.error("Failed during manual save.", exception=e)
+            QMessageBox.critical(self.main_window, "Error", f"Could not save changes: {e}")
 
-    # --- All the other methods like recalculate_names, rename_files, etc. remain the same ---
     def recalculate_names(self):
         if self.app_state.current_df.empty: return
         self.app_state.current_df = calculate_final_names(self.app_state.current_df, self.app_state.settings['main_column'])
@@ -254,12 +268,11 @@ class ReviewTabHandler(QObject):
             return
        
         self.logger.info("--- Starting File Rename Process ---")
-        # ... (rest of rename_files method is unchanged)
         log_entries, renamed_count, error_count = [], 0, 0
         df = self.app_state.current_df
 
         for idx, row in df.iterrows():
-            if row.get('skip') == 'x' or not row.get('to'): continue
+            if row.get('skip') == 'x' or pd.isna(row.get('to')) or not row.get('to'): continue
             
             src_path, dst_name = Path(row['from']), row['to']
             dst_path = src_path.parent / dst_name
@@ -276,8 +289,8 @@ class ReviewTabHandler(QObject):
                 log_entries.append({'original_path': str(src_path), 'new_path': str(dst_path)})
                 renamed_count += 1
 
-                original_base_name = os.path.splitext(os.path.basename(str(src_path)))[0]
-                new_base_name = os.path.splitext(dst_name)[0]
+                original_base_name = src_path.stem
+                new_base_name = dst_path.stem
                 for raw_file in Path(src_path.parent).glob(f"{original_base_name}.*"):
                     if raw_file.suffix.lower() in SUPPORTED_RAW_EXTENSIONS:
                         raw_dst_path = raw_file.with_name(f"{new_base_name}{raw_file.suffix}")
@@ -300,37 +313,46 @@ class ReviewTabHandler(QObject):
         QMessageBox.information(self.main_window, "Rename Complete", f"Renamed {renamed_count} files.\n{error_count} errors occurred.")
         
     def restore_file_names(self):
-        # ... (restore_file_names method is unchanged)
         log_path = Path(self.app_state.rename_files_dir) / "rename_log.csv"
         if not log_path.exists(): return QMessageBox.warning(self.main_window, "Not Found", "rename_log.csv not found.")
         if QMessageBox.question(self.main_window, "Confirm Restore", "Restore filenames based on the log?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.No: return
         
-        log_df = pd.read_csv(log_path)
-        restored_count, error_count = 0, 0
-        
-        for idx, row in log_df.iloc[::-1].iterrows():
-            src_path, dst_path = Path(row['new_path']), Path(row['original_path'])
-            if not src_path.exists(): continue
-            try:
-                if dst_path.exists():
-                     self.logger.error(f"Cannot restore {src_path.name}, destination {dst_path.name} already exists.")
-                     error_count += 1; continue
-                src_path.rename(dst_path)
-                restored_count += 1
-            except Exception as e: 
-                self.logger.error(f"Could not restore {src_path.name}", exception=e); error_count += 1
-        
-        if restored_count > 0:
-            archive_name = f"rename_log_{datetime.now():%Y%m%d_%H%M%S}.csv.restored"
-            log_path.rename(log_path.with_name(archive_name))
-        
-        self.refresh_view()
-        QMessageBox.information(self.main_window, "Restore Complete", f"Restored {restored_count} files.\n{error_count} errors occurred.")
+        try:
+            log_df = pd.read_csv(log_path)
+            restored_count, error_count = 0, 0
+            
+            for _, row in log_df.iloc[::-1].iterrows():
+                src_path, dst_path = Path(row['new_path']), Path(row['original_path'])
+                if not src_path.exists(): continue
+                try:
+                    if dst_path.exists():
+                         self.logger.error(f"Cannot restore {src_path.name}, destination {dst_path.name} already exists.")
+                         error_count += 1; continue
+                    src_path.rename(dst_path)
+                    restored_count += 1
+                except Exception as e: 
+                    self.logger.error(f"Could not restore {src_path.name}", exception=e); error_count += 1
+            
+            if restored_count > 0:
+                archive_name = f"rename_log_{datetime.now():%Y%m%d_%H%M%S}.csv.restored"
+                log_path.rename(log_path.with_name(archive_name))
+            
+            self.refresh_view()
+            QMessageBox.information(self.main_window, "Restore Complete", f"Restored {restored_count} files.\n{error_count} errors occurred.")
+        except Exception as e:
+            self.logger.error("Failed during restore operation.", exception=e)
+            QMessageBox.critical(self.main_window, "Error", f"An error occurred during restore: {e}")
 
     def _save_current_df(self):
         if self.app_state.current_df.empty: return
-        csv_name = self.ui.csv_dropdown.currentText() or f"review_state_{datetime.now():%Y%m%d_%H%M%S}.csv"
+        
+        csv_name = self.ui.csv_dropdown.currentText()
+        if not csv_name:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            csv_name = f"review_state_{timestamp}.csv"
+
         save_path = Path(self.app_state.rename_files_dir) / csv_name
+        
         try:
             df_to_save = self.app_state.current_df.drop(columns=['status'], errors='ignore')
             df_to_save.to_csv(save_path, index=False)
@@ -341,8 +363,8 @@ class ReviewTabHandler(QObject):
             if new_index > -1: self.ui.csv_dropdown.setCurrentIndex(new_index)
         except Exception as e:
             self.logger.error(f"Failed to save DataFrame to {save_path.name}", exception=e)
+            raise
 
-    # --- NEW: Methods for pagination ---
     def go_to_next_page(self):
         if self.current_page < self.total_pages - 1:
             self.current_page += 1
@@ -358,14 +380,14 @@ class ReviewTabHandler(QObject):
         self.ui.prev_page_button.setEnabled(self.current_page > 0)
         self.ui.next_page_button.setEnabled(self.current_page < self.total_pages - 1)
         
-        items_per_page = self.app_state.settings['review_items_per_page']
-        start_item = self.current_page * items_per_page + 1
-        end_item = min((self.current_page + 1) * items_per_page, len(self.filtered_df))
+        items_per_page = self.app_state.settings.get('review_items_per_page', 50)
         total_items = len(self.filtered_df)
         
         if total_items == 0:
-            self.ui.page_label.setText("No items found")
+            self.ui.page_label.setText("Page 1 of 1 (No items)")
         else:
+            start_item = self.current_page * items_per_page + 1
+            end_item = min((self.current_page + 1) * items_per_page, total_items)
             self.ui.page_label.setText(
                 f"Page {self.current_page + 1} of {self.total_pages} "
                 f"({start_item}-{end_item} of {total_items})"

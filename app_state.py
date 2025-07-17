@@ -58,8 +58,9 @@ class AppState:
             'model_name': '', 'prompt_text': DEFAULT_PROMPT,
             'exiftool_path': self._find_exiftool(), 'rotation_angle': 180,
             'use_exif': True, 'preview_raw': False, 'review_crop_enabled': True,
-            # --- NEW: Setting for pagination ---
+            # --- MODIFIED: Added settings for pagination and thumbnail resizing ---
             'review_items_per_page': 50,
+            'review_thumb_height': 900,
             'crop_settings': {
                 'top': 0.1, 'bottom': 0.0, 'left': 0.0, 'right': 0.5,
                 'zoom': True, 'grayscale': True
@@ -77,6 +78,7 @@ class AppState:
         settings_path = self._config_path / SETTINGS_FILE
         try:
             saved_settings = json.loads(settings_path.read_text('utf-8'))
+            # --- REFINED: Recursive update to safely add new settings ---
             def recursive_update(d, u):
                 for k, v in u.items():
                     if isinstance(v, dict) and k in d and isinstance(d[k], dict):

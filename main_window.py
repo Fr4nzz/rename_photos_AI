@@ -48,6 +48,8 @@ class MainWindow(QMainWindow):
 
         # 4. Populate UI with initial state
         self.process_handler.populate_initial_ui()
+        # --- FIX: Call populate_initial_ui for the review tab ---
+        self.review_handler.populate_initial_ui()
         self.api_keys_tab.api_keys_text_edit.setPlainText("\n".join(self.app_state.api_keys))
 
         self.logger.info("Application UI is ready.")
@@ -61,7 +63,6 @@ class MainWindow(QMainWindow):
         """Handle logic for when the user switches tabs."""
         if self.tab_widget.widget(index) == self.review_tab:
             self.logger.info("Switched to Review Results tab.")
-            # The handler is responsible for its own refresh logic
             self.review_handler.refresh_csv_dropdown()
 
     def save_api_keys(self):
@@ -75,10 +76,16 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Ensures graceful shutdown of the application."""
         self.logger.info("--- Application closing ---")
+        
+        # --- FIX: Sync pending UI changes to settings before saving ---
+        self.process_handler._sync_settings_from_ui()
+        self.review_handler._sync_settings_from_ui()
+        
+        # Save the final state of all settings
+        self.app_state.save_settings()
+
         # Ask handlers to stop any running background tasks
         self.process_handler.stop_worker()
         self.review_handler.stop_worker()
 
-        # Save the final state of all settings
-        self.app_state.save_settings()
         event.accept()

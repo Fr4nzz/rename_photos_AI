@@ -2,9 +2,10 @@
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox,
-    QScrollArea, QGridLayout, QLabel, QCheckBox
+    QScrollArea, QGridLayout, QLabel, QCheckBox, QLineEdit
 )
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QIntValidator
 
 class ReviewResultsTab(QWidget):
     """The UI for the 'Review Results' tab."""
@@ -27,9 +28,18 @@ class ReviewResultsTab(QWidget):
         top_controls_layout.addWidget(self.crop_review_checkbox)
         self.show_duplicates_checkbox = QCheckBox("Show Mismatches Only")
         top_controls_layout.addWidget(self.show_duplicates_checkbox)
+        
+        # --- NEW: Added control for items per page ---
+        top_controls_layout.addStretch()
+        top_controls_layout.addWidget(QLabel("Items/Page:"))
+        self.items_per_page_input = QLineEdit()
+        self.items_per_page_input.setValidator(QIntValidator(1, 9999))
+        self.items_per_page_input.setFixedWidth(50)
+        top_controls_layout.addWidget(self.items_per_page_input)
+        
         main_layout.addLayout(top_controls_layout)
 
-        # --- NEW: Pagination Controls Toolbar ---
+        # --- Pagination Controls Toolbar ---
         pagination_controls_layout = QHBoxLayout()
         self.prev_page_button = QPushButton("<< Previous")
         self.page_label = QLabel("Page 1 of 1")
