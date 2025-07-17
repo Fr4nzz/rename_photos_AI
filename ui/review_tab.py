@@ -29,13 +29,21 @@ class ReviewResultsTab(QWidget):
         self.show_duplicates_checkbox = QCheckBox("Show Mismatches Only")
         top_controls_layout.addWidget(self.show_duplicates_checkbox)
         
-        # --- NEW: Added control for items per page ---
         top_controls_layout.addStretch()
+        
+        # --- Items per Page Input ---
         top_controls_layout.addWidget(QLabel("Items/Page:"))
         self.items_per_page_input = QLineEdit()
         self.items_per_page_input.setValidator(QIntValidator(1, 9999))
         self.items_per_page_input.setFixedWidth(50)
         top_controls_layout.addWidget(self.items_per_page_input)
+        
+        # --- NEW: Thumbnail Height Input ---
+        top_controls_layout.addWidget(QLabel("Thumb H:"))
+        self.thumb_height_input = QLineEdit()
+        self.thumb_height_input.setValidator(QIntValidator(100, 4000)) # Height from 100px to 4k
+        self.thumb_height_input.setFixedWidth(60)
+        top_controls_layout.addWidget(self.thumb_height_input)
         
         main_layout.addLayout(top_controls_layout)
 

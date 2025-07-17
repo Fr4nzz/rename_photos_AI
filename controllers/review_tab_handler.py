@@ -40,8 +40,9 @@ class ReviewTabHandler(QObject):
         self.ui.crop_review_checkbox.stateChanged.connect(self._handle_ui_change)
         self.ui.show_duplicates_checkbox.stateChanged.connect(self._handle_ui_change)
         
-        # --- NEW: Connect items per page input ---
         self.ui.items_per_page_input.editingFinished.connect(self._handle_ui_change)
+        # --- NEW: Connect thumb height input ---
+        self.ui.thumb_height_input.editingFinished.connect(self._handle_ui_change)
         
         self.ui.save_changes_button.clicked.connect(self.save_manual_changes)
         self.ui.recalc_names_button.clicked.connect(self.recalculate_names)
@@ -52,20 +53,34 @@ class ReviewTabHandler(QObject):
     
     def populate_initial_ui(self):
         self.ui.crop_review_checkbox.setChecked(self.app_state.settings.get('review_crop_enabled', True))
-        # --- NEW: Set initial value for items per page ---
+        
         items_per_page = self.app_state.settings.get('review_items_per_page', 50)
         self.ui.items_per_page_input.setText(str(items_per_page))
+        
+        # --- NEW: Set initial value for thumb height ---
+        thumb_height = self.app_state.settings.get('review_thumb_height', 900)
+        self.ui.thumb_height_input.setText(str(thumb_height))
+
 
     def _sync_settings_from_ui(self):
         """Read values from the UI and update the app_state."""
         self.app_state.settings['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
+        
         try:
             items_per_page = int(self.ui.items_per_page_input.text())
             self.app_state.settings['review_items_per_page'] = items_per_page if items_per_page > 0 else 1
         except (ValueError, TypeError):
-            # On error, fall back to a safe default and correct the UI
             self.app_state.settings['review_items_per_page'] = 50
             self.ui.items_per_page_input.setText("50")
+
+        # --- NEW: Sync thumb height from UI ---
+        try:
+            thumb_height = int(self.ui.thumb_height_input.text())
+            # Set reasonable bounds
+            self.app_state.settings['review_thumb_height'] = max(100, min(thumb_height, 4000))
+        except (ValueError, TypeError):
+            self.app_state.settings['review_thumb_height'] = 900
+            self.ui.thumb_height_input.setText("900")
 
     def stop_worker(self):
         if self.image_load_thread and self.image_load_thread.isRunning():
@@ -75,6 +90,7 @@ class ReviewTabHandler(QObject):
 
     def _handle_ui_change(self):
         self._sync_settings_from_ui()
+        # A full refresh is needed if pagination or thumbnail size changes
         self.refresh_view()
 
     def refresh_csv_dropdown(self):
@@ -227,6 +243,7 @@ class ReviewTabHandler(QObject):
                     df.loc[idx, col] = value
                
     def start_image_load_worker(self, paths):
+        # The new thumb height setting is now read from app_state here
         crop_settings = {**self.app_state.settings['crop_settings'], 'zoom': self.ui.crop_review_checkbox.isChecked()}
         thumb_height = self.app_state.settings.get('review_thumb_height', 900)
         
