@@ -38,12 +38,11 @@ class ReviewResultsTab(QWidget):
         self.items_per_page_input.setFixedWidth(50)
         top_controls_layout.addWidget(self.items_per_page_input)
         
-        # --- NEW: Thumbnail Height Input ---
-        top_controls_layout.addWidget(QLabel("Thumb H:"))
-        self.thumb_height_input = QLineEdit()
-        self.thumb_height_input.setValidator(QIntValidator(100, 4000)) # Height from 100px to 4k
-        self.thumb_height_input.setFixedWidth(60)
-        top_controls_layout.addWidget(self.thumb_height_input)
+        # --- HERE IS THE FIX: Replacing the text input with the dropdown ---
+        top_controls_layout.addWidget(QLabel("Image Quality:"))
+        self.image_quality_dropdown = QComboBox()
+        self.image_quality_dropdown.addItems(["480p", "540p", "720p", "900p", "1080p", "Original"])
+        top_controls_layout.addWidget(self.image_quality_dropdown)
         
         main_layout.addLayout(top_controls_layout)
 

@@ -137,8 +137,8 @@ class ImageLoadWorker(QObject):
                 pil_img = fix_orientation(pil_img)
                 pil_img = crop_image(pil_img, self.crop_settings)
                 
-                # --- NEW: Resize image if it's taller than the threshold ---
-                if pil_img.height > self.thumb_height:
+                # --- MODIFIED: Only resize if thumb_height > 0 and image is larger ---
+                if self.thumb_height > 0 and pil_img.height > self.thumb_height:
                     aspect_ratio = pil_img.width / pil_img.height
                     new_width = int(self.thumb_height * aspect_ratio)
                     pil_img = pil_img.resize((new_width, self.thumb_height), Resampling.LANCZOS)

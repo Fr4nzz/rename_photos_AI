@@ -48,7 +48,6 @@ class MainWindow(QMainWindow):
 
         # 4. Populate UI with initial state
         self.process_handler.populate_initial_ui()
-        # --- FIX: Call populate_initial_ui for the review tab ---
         self.review_handler.populate_initial_ui()
         self.api_keys_tab.api_keys_text_edit.setPlainText("\n".join(self.app_state.api_keys))
 
@@ -77,14 +76,11 @@ class MainWindow(QMainWindow):
         """Ensures graceful shutdown of the application."""
         self.logger.info("--- Application closing ---")
         
-        # --- FIX: Sync pending UI changes to settings before saving ---
         self.process_handler._sync_settings_from_ui()
         self.review_handler._sync_settings_from_ui()
         
-        # Save the final state of all settings
         self.app_state.save_settings()
 
-        # Ask handlers to stop any running background tasks
         self.process_handler.stop_worker()
         self.review_handler.stop_worker()
 
