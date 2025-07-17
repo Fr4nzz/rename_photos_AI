@@ -31,14 +31,12 @@ class ReviewResultsTab(QWidget):
         
         top_controls_layout.addStretch()
         
-        # --- Items per Page Input ---
         top_controls_layout.addWidget(QLabel("Items/Page:"))
         self.items_per_page_input = QLineEdit()
         self.items_per_page_input.setValidator(QIntValidator(1, 9999))
         self.items_per_page_input.setFixedWidth(50)
         top_controls_layout.addWidget(self.items_per_page_input)
         
-        # --- HERE IS THE FIX: Replacing the text input with the dropdown ---
         top_controls_layout.addWidget(QLabel("Image Quality:"))
         self.image_quality_dropdown = QComboBox()
         self.image_quality_dropdown.addItems(["480p", "540p", "720p", "900p", "1080p", "Original"])
@@ -67,20 +65,42 @@ class ReviewResultsTab(QWidget):
         self.grid_layout.setColumnStretch(0, 1)
         self.grid_layout.setColumnStretch(1, 1)
         scroll_area.setWidget(self.grid_container)
-        main_layout.addWidget(scroll_area)
+        main_layout.addWidget(scroll_area, 1)
 
-        # --- Bottom Action Buttons Toolbar ---
-        bottom_actions_layout = QHBoxLayout()
-        bottom_actions_layout.addStretch(1)
-        self.save_changes_button = QPushButton("Save Changes")
+        # --- Bottom Action Bar (Single Row) ---
+        bottom_bar_layout = QHBoxLayout()
+
+        # Suffix controls on the left
+        bottom_bar_layout.addWidget(QLabel("Suffix Rules:"))
+        self.suffix_mode_dropdown = QComboBox()
+        self.suffix_mode_dropdown.addItems([
+            "Standard (d, v, d2, v2, ...)",
+            "Wing Clips (v1, v2, v3, ...)",
+            "Custom"
+        ])
+        bottom_bar_layout.addWidget(self.suffix_mode_dropdown)
+
+        self.custom_suffix_label = QLabel("Custom Suffixes:")
+        self.custom_suffix_input = QLineEdit()
+        self.custom_suffix_input.setPlaceholderText("e.g., d,v,body")
+        bottom_bar_layout.addWidget(self.custom_suffix_label)
+        bottom_bar_layout.addWidget(self.custom_suffix_input)
+
+        # Spacer in the middle
+        bottom_bar_layout.addStretch(1)
+
+        # Action buttons on the right
         self.recalc_names_button = QPushButton("Recalculate Final Names")
+        self.save_changes_button = QPushButton("Save Changes")
         self.rename_files_button = QPushButton("Rename Files")
         self.restore_names_button = QPushButton("Restore Original Names")
-        bottom_actions_layout.addWidget(self.save_changes_button)
-        bottom_actions_layout.addWidget(self.recalc_names_button)
-        bottom_actions_layout.addWidget(self.rename_files_button)
-        bottom_actions_layout.addWidget(self.restore_names_button)
-        main_layout.addLayout(bottom_actions_layout)
+
+        bottom_bar_layout.addWidget(self.recalc_names_button)
+        bottom_bar_layout.addWidget(self.save_changes_button)
+        bottom_bar_layout.addWidget(self.rename_files_button)
+        bottom_bar_layout.addWidget(self.restore_names_button)
+
+        main_layout.addLayout(bottom_bar_layout)
 
     def clear_grid(self):
         """Removes all items from the results grid."""

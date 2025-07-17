@@ -23,6 +23,16 @@ QUALITY_TO_HEIGHT = {
     "Original": 0
 }
 
+# Map UI text to internal setting value
+SUFFIX_MODE_MAP = {
+    "Standard (d, v, d2, v2, ...)": "Standard",
+    "Wing Clips (v1, v2, v3, ...)": "Wing Clips",
+    "Custom": "Custom"
+}
+# Create a reverse map for populating the UI from settings
+REVERSE_SUFFIX_MODE_MAP = {v: k for k, v in SUFFIX_MODE_MAP.items()}
+
+
 class ReviewTabHandler(QObject):
     """Controller for all logic related to the Review Results tab."""
 
@@ -48,6 +58,9 @@ class ReviewTabHandler(QObject):
         self.ui.items_per_page_input.editingFinished.connect(self._handle_ui_change)
         self.ui.image_quality_dropdown.currentIndexChanged.connect(self._handle_ui_change)
         
+        self.ui.suffix_mode_dropdown.currentIndexChanged.connect(self._on_suffix_mode_changed)
+        self.ui.custom_suffix_input.editingFinished.connect(self._sync_settings_from_ui)
+
         self.ui.save_changes_button.clicked.connect(self.save_manual_changes)
         self.ui.recalc_names_button.clicked.connect(self.recalculate_names)
         self.ui.rename_files_button.clicked.connect(self.rename_files)
@@ -64,19 +77,40 @@ class ReviewTabHandler(QObject):
         quality_setting = self.app_state.settings.get('review_thumb_height', '720p')
         self.ui.image_quality_dropdown.setCurrentText(quality_setting)
 
+        # Populate suffix controls using the reverse map
+        suffix_mode_setting = self.app_state.settings.get('suffix_mode', 'Standard')
+        ui_text = REVERSE_SUFFIX_MODE_MAP.get(suffix_mode_setting, "Standard (d, v, d2, v2, ...)")
+        self.ui.suffix_mode_dropdown.setCurrentText(ui_text)
+        
+        custom_suffixes = self.app_state.settings.get('custom_suffixes', 'd,v')
+        self.ui.custom_suffix_input.setText(custom_suffixes)
+        self._on_suffix_mode_changed()
 
     def _sync_settings_from_ui(self):
         """Read values from the UI and update the app_state."""
-        self.app_state.settings['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
+        s = self.app_state.settings
+        s['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
         
         try:
             items_per_page = int(self.ui.items_per_page_input.text())
-            self.app_state.settings['review_items_per_page'] = items_per_page if items_per_page > 0 else 1
+            s['review_items_per_page'] = items_per_page if items_per_page > 0 else 1
         except (ValueError, TypeError):
-            self.app_state.settings['review_items_per_page'] = 50
+            s['review_items_per_page'] = 50
             self.ui.items_per_page_input.setText("50")
 
-        self.app_state.settings['review_thumb_height'] = self.ui.image_quality_dropdown.currentText()
+        s['review_thumb_height'] = self.ui.image_quality_dropdown.currentText()
+        
+        # Sync suffix controls using the map
+        selected_ui_text = self.ui.suffix_mode_dropdown.currentText()
+        s['suffix_mode'] = SUFFIX_MODE_MAP.get(selected_ui_text, 'Standard')
+        s['custom_suffixes'] = self.ui.custom_suffix_input.text()
+
+    def _on_suffix_mode_changed(self):
+        """Shows or hides the custom suffix input based on the dropdown selection."""
+        is_custom = self.ui.suffix_mode_dropdown.currentText() == "Custom"
+        self.ui.custom_suffix_label.setVisible(is_custom)
+        self.ui.custom_suffix_input.setVisible(is_custom)
+        self._sync_settings_from_ui()
 
     def stop_worker(self):
         if self.image_load_thread and self.image_load_thread.isRunning():
@@ -269,7 +303,7 @@ class ReviewTabHandler(QObject):
 
     def recalculate_names(self):
         if self.app_state.current_df.empty: return
-        self.app_state.current_df = calculate_final_names(self.app_state.current_df, self.app_state.settings['main_column'])
+        self.app_state.current_df = calculate_final_names(self.app_state.current_df, self.app_state.settings)
         self._save_current_df()
         self.refresh_view()
         QMessageBox.information(self.main_window, "Success", "'To' column recalculated and saved.")

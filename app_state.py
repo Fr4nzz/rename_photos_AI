@@ -60,6 +60,8 @@ class AppState:
             'use_exif': True, 'preview_raw': False, 'review_crop_enabled': True,
             'review_items_per_page': 50,
             'review_thumb_height': '720p',
+            'suffix_mode': 'Standard',  # New setting
+            'custom_suffixes': 'd,v',  # New setting
             'crop_settings': {
                 'top': 0.1, 'bottom': 0.0, 'left': 0.0, 'right': 0.5,
                 'zoom': True, 'grayscale': True
