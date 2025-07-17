@@ -94,15 +94,12 @@ class ProcessTabHandler(QObject):
         self.ui.merged_img_height_input.setText(str(self.app_state.settings['merged_img_height']))
         self.ui.main_column_input.setText(str(self.app_state.settings['main_column']))
         
-        # --- CONCISE FIX ---
-        # 1. Determine the correct prompt text
         prompt_text = self.app_state.settings.get('prompt_text', '').strip()
         if not prompt_text:
             self.logger.info("Prompt is empty, loading default.")
             prompt_text = DEFAULT_PROMPT
             self.app_state.settings['prompt_text'] = prompt_text
         
-        # 2. Set the UI widget text from the determined value
         self.ui.prompt_text_edit.setPlainText(prompt_text)
         
         self.update_models_dropdown()
@@ -213,7 +210,16 @@ class ProcessTabHandler(QObject):
         settings_for_worker = self.app_state.settings.copy()
         settings_for_worker['api_keys'] = self.app_state.api_keys
 
-        df_data = {'from': [str(p) for p in image_paths], 'photo_ID': range(1, len(image_paths) + 1)}
+        # --- FIX: Create DataFrame with all required columns from the start ---
+        num_files = len(image_paths)
+        df_data = {
+            'from': [str(p) for p in image_paths],
+            'photo_ID': range(1, num_files + 1),
+            'CAM': [''] * num_files,
+            'co': [''] * num_files,    # Crossed-out ID
+            'n': [''] * num_files,     # Note
+            'skip': [''] * num_files,
+        }
         self.app_state.current_df = pd.DataFrame(df_data)
         
         self.current_worker = GeminiWorker(self.app_state.current_df.copy(), settings_for_worker, self.app_state.rename_files_dir, self.logger)

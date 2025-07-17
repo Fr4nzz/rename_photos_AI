@@ -5,7 +5,7 @@ import pandas as pd
 
 def calculate_final_names(df: pd.DataFrame, main_column: str) -> pd.DataFrame:
     """
-    Calculates the 'to' column based on the main identifier column and suffixes.
+    Calculates the 'to' and 'suffix' columns based on the main identifier column.
     This implementation assumes a simple pair 'd'/'v' suffixing for each unique
     identifier in the main_column.
     """
@@ -13,7 +13,9 @@ def calculate_final_names(df: pd.DataFrame, main_column: str) -> pd.DataFrame:
         return df
 
     df_copy = df.copy()
-    df_copy['to'] = '' # Ensure 'to' column exists and is cleared
+    # --- FIX: Ensure 'to' and 'suffix' columns exist and are cleared ---
+    df_copy['to'] = ''
+    df_copy['suffix'] = ''
 
     # Determine which rows to process
     if 'skip' in df_copy.columns:
@@ -37,9 +39,12 @@ def calculate_final_names(df: pd.DataFrame, main_column: str) -> pd.DataFrame:
                 suffix += str(round_num + 1)
             suffixes.append(suffix)
 
-        # Apply the new names only to the relevant indices
+        # Apply the new names and suffixes only to the relevant indices
         for i, suffix in enumerate(suffixes):
             df_index = group.index[i]
+            # Store the calculated suffix in its own column
+            df_copy.at[df_index, 'suffix'] = suffix
+            
             base_name = f"{identifier}{suffix}"
            
             original_path = df_copy.at[df_index, 'from']
