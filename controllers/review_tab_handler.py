@@ -36,6 +36,7 @@ class ReviewTabHandler(QObject):
         self.ui.refresh_from_disk_button.clicked.connect(self.refresh_view)
         self.ui.crop_review_checkbox.stateChanged.connect(self._handle_ui_change)
         self.ui.show_duplicates_checkbox.stateChanged.connect(self._handle_ui_change)
+        self.ui.save_changes_button.clicked.connect(self.save_manual_changes)
         self.ui.recalc_names_button.clicked.connect(self.recalculate_names)
         self.ui.rename_files_button.clicked.connect(self.rename_files)
         self.ui.restore_names_button.clicked.connect(self.restore_file_names)
@@ -81,7 +82,6 @@ class ReviewTabHandler(QObject):
             self.ui.set_grid_message("Select an input directory in the 'Process Images' tab first.")
             return
 
-        # --- FIX: Only get compressed image files for display ---
         disk_files = get_image_files(self.app_state.input_directory, 'compressed')
         if not disk_files:
             self.ui.set_grid_message("No compressed image files (JPG, PNG, etc.) found in the selected directory.")
@@ -109,17 +109,15 @@ class ReviewTabHandler(QObject):
             new_row.update({'from': file_path_str, 'status': 'New'})
 
             if not csv_df.empty:
-                # Match by 'from' column (original path)
                 match = csv_df[csv_df['from'] == file_path_str]
                 if not match.empty:
                     new_row.update(match.iloc[0].to_dict())
                     new_row['status'] = 'Original'
                 else:
-                    # If no match, check if it was renamed by matching the 'to' column
                     match = csv_df[csv_df['to'] == file_path.name]
                     if not match.empty:
                         new_row.update(match.iloc[0].to_dict())
-                        new_row['from'] = file_path_str # Update the 'from' path to the current one
+                        new_row['from'] = file_path_str
                         new_row['status'] = 'Renamed'
             reconciled_data.append(new_row)
 
@@ -212,10 +210,26 @@ class ReviewTabHandler(QObject):
         if widget := self.path_to_widget_map.get(path_str):
             widget.set_image(pixmap)
 
+    def save_manual_changes(self):
+        """
+        Saves any edits in the review grid. If no CSV is selected, it creates a new one.
+        """
+        if self.app_state.current_df.empty:
+            QMessageBox.warning(self.main_window, "No Data", "There is no data to save.")
+            return
+
+        try:
+            self._save_current_df()
+            # After saving, the dropdown is refreshed and the correct file is selected.
+            QMessageBox.information(self.main_window, "Success", f"Changes saved to {self.ui.csv_dropdown.currentText()}.")
+        except Exception as e:
+            self.logger.error("Failed during manual save.", exception=e)
+            QMessageBox.critical(self.main_window, "Save Error", f"Could not save changes to the CSV file.\n\nError: {e}")
+
     def recalculate_names(self):
         if self.app_state.current_df.empty: return
         self.app_state.current_df = calculate_final_names(self.app_state.current_df, self.app_state.settings['main_column'])
-        self._save_current_df() # Save changes
+        self._save_current_df()
         self._populate_review_grid()
         QMessageBox.information(self.main_window, "Success", "'To' column recalculated and saved.")
 
@@ -240,7 +254,6 @@ class ReviewTabHandler(QObject):
                 self.logger.warn(f"Skipping. Source not found: {src_path.name}"); continue
             
             try:
-                # Rename the main (compressed) file
                 src_path.rename(dst_path)
                 self.logger.info(f"Renamed: '{src_path.name}' -> '{dst_path.name}'")
                 df.at[idx, 'from'] = str(dst_path) 
@@ -248,7 +261,6 @@ class ReviewTabHandler(QObject):
                 log_entries.append({'original_path': str(src_path), 'new_path': str(dst_path)})
                 renamed_count += 1
 
-                # Find and rename the associated RAW file
                 original_base_name = os.path.splitext(os.path.basename(str(src_path)))[0]
                 new_base_name = os.path.splitext(dst_name)[0]
                 for raw_file in Path(src_path.parent).glob(f"{original_base_name}.*"):
@@ -258,7 +270,7 @@ class ReviewTabHandler(QObject):
                         self.logger.info(f"Renamed RAW: '{raw_file.name}' -> '{raw_dst_path.name}'")
                         log_entries.append({'original_path': str(raw_file), 'new_path': str(raw_dst_path)})
                         renamed_count += 1
-                        break # Assume only one RAW file per compressed file
+                        break
 
             except Exception as e:
                 self.logger.error(f"Could not rename {src_path.name} or its counterpart", exception=e); error_count += 1
@@ -316,8 +328,11 @@ class ReviewTabHandler(QObject):
             # This is a critical step to ensure the UI is in sync after saving
             current_text = self.ui.csv_dropdown.currentText()
             self.refresh_csv_dropdown()
-            if self.ui.csv_dropdown.findText(current_text) > -1:
-                 self.ui.csv_dropdown.setCurrentText(current_text)
+            # After refresh, try to set the dropdown to the file we just saved to.
+            # This handles both updating an existing file and creating a new one.
+            new_index = self.ui.csv_dropdown.findText(csv_name)
+            if new_index > -1:
+                 self.ui.csv_dropdown.setCurrentIndex(new_index)
 
         except Exception as e:
             self.logger.error(f"Failed to save DataFrame to {save_path.name}", exception=e)

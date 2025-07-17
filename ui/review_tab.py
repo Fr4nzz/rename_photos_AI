@@ -21,7 +21,6 @@ class ReviewResultsTab(QWidget):
         self.csv_dropdown = QComboBox()
         controls_layout.addWidget(self.csv_dropdown, 1)
 
-        # --- FIX: Add the missing refresh button ---
         self.refresh_from_disk_button = QPushButton("Refresh from Disk")
         controls_layout.addWidget(self.refresh_from_disk_button)
 
@@ -33,10 +32,13 @@ class ReviewResultsTab(QWidget):
 
         controls_layout.addStretch(1)
 
+        # --- CHANGE: Updated button text to be more concise ---
+        self.save_changes_button = QPushButton("Save Changes")
         self.recalc_names_button = QPushButton("Recalculate Final Names")
         self.rename_files_button = QPushButton("Rename Files")
         self.restore_names_button = QPushButton("Restore Original Names")
 
+        controls_layout.addWidget(self.save_changes_button)
         controls_layout.addWidget(self.recalc_names_button)
         controls_layout.addWidget(self.rename_files_button)
         controls_layout.addWidget(self.restore_names_button)
