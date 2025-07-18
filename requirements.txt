@@ -16,3 +16,6 @@ piexif
 rawpy
 pyexiftool
 pillow-heif
+
+# --- Build Tool (for build.py) ---
+PyInstaller
