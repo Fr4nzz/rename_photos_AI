@@ -15,4 +15,8 @@
 !requirements.txt
 
 # No ignorar README.md
-!README.md 
+!README.md
+
+# No ignorar carpeta de screenshots
+!screenshots/
+!screenshots/* 

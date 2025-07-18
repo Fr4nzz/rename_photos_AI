@@ -2,7 +2,7 @@
 
 The AI Photo Processor is a desktop application designed to streamline the process of cataloging large batches of photos, particularly for scientific specimen collections. It leverages the Google Gemini Vision API to automatically extract text-based data (like specimen IDs) from images and provides a powerful interface to review, correct, and rename the corresponding files.
 
-[To add a screenshot: take one of your app, upload it to a site like Imgur, and replace the URL above]
+![AI Photo Processor Screenshot](screenshots/2025-07-17.png)
 
 ## Key Features
 
