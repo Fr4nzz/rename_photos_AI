@@ -12,4 +12,7 @@
 !.gitignore
 
 # No ignorar requirements.txt
-!requirements.txt 
+!requirements.txt
+
+# No ignorar README.md
+!README.md 
