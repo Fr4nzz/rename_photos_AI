@@ -19,4 +19,10 @@
 
 # No ignorar carpeta de screenshots
 !screenshots/
-!screenshots/* 
+!screenshots/*
+
+# No ignorar build.spec
+!build.spec
+
+# Ignorar carpeta dist
+dist/ 
