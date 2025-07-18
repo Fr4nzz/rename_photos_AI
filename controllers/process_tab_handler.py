@@ -168,6 +168,7 @@ class ProcessTabHandler(QObject):
     def refresh_file_dependent_ui(self):
         self._sync_settings_from_ui()
         if not self.app_state.input_directory: return
+        self.populate_continue_dropdown() # Populate the continue dropdown
         file_type = 'raw' if self.app_state.settings['preview_raw'] else 'compressed'
         image_files = get_image_files(self.app_state.input_directory, file_type)
         self.ui.preview_image_dropdown.blockSignals(True)
@@ -199,30 +200,60 @@ class ProcessTabHandler(QObject):
 
     def start_gemini_processing(self):
         self._sync_settings_from_ui()
-        if not (image_paths := get_image_files(self.app_state.input_directory, 'compressed')):
-            QMessageBox.warning(self.main_window, "No Images", "No compressed images found.")
-            return
+        run_mode = self.ui.continue_dropdown.currentText()
+        start_batch, total_batches, df = 1, 0, pd.DataFrame()
 
         if not self.app_state.api_keys:
-            QMessageBox.warning(self.main_window, "No API Keys", "Please add one or more API keys in the 'API Keys' tab before processing.")
+            QMessageBox.warning(self.main_window, "No API Keys", "Please add one or more API keys in the 'API Keys' tab.")
             return
 
+        if run_mode.startswith("Continue from"):
+            csv_name = self.ui.continue_dropdown.currentData()
+            csv_path = os.path.join(self.app_state.rename_files_dir, csv_name)
+            if os.path.exists(csv_path):
+                self.logger.info(f"Attempting to continue from {csv_name}")
+                df = pd.read_csv(csv_path)
+                match = re.search(r'_b(\d+)of(\d+)\.csv$', csv_name)
+                if match:
+                    last_completed = int(match.group(1))
+                    total_batches = int(match.group(2))
+                    start_batch = last_completed + 1
+                    self.logger.info(f"Resuming from batch {start_batch} of {total_batches}.")
+                else:
+                    self.logger.warn(f"Could not parse batch numbers from {csv_name}. Starting over.")
+                    run_mode = "Start Over"
+            else:
+                self.logger.warn(f"Selected CSV {csv_name} not found. Starting over.")
+                run_mode = "Start Over"
+        
+        if run_mode == "Start Over":
+            self.logger.info("Starting a new processing run.")
+            image_paths = get_image_files(self.app_state.input_directory, 'compressed')
+            if not image_paths:
+                QMessageBox.warning(self.main_window, "No Images", "No compressed images found to process.")
+                return
+
+            num_files = len(image_paths)
+            df_data = {
+                'from': [str(p) for p in image_paths],
+                'photo_ID': range(1, num_files + 1),
+                'CAM': [''] * num_files, 'co': [''] * num_files,
+                'n': [''] * num_files, 'skip': [''] * num_files,
+            }
+            df = pd.DataFrame(df_data)
+
+        if df.empty:
+            QMessageBox.warning(self.main_window, "No Data", "Could not prepare data for processing.")
+            return
+
+        self.app_state.current_df = df
         settings_for_worker = self.app_state.settings.copy()
         settings_for_worker['api_keys'] = self.app_state.api_keys
-
-        # --- FIX: Create DataFrame with all required columns from the start ---
-        num_files = len(image_paths)
-        df_data = {
-            'from': [str(p) for p in image_paths],
-            'photo_ID': range(1, num_files + 1),
-            'CAM': [''] * num_files,
-            'co': [''] * num_files,    # Crossed-out ID
-            'n': [''] * num_files,     # Note
-            'skip': [''] * num_files,
-        }
-        self.app_state.current_df = pd.DataFrame(df_data)
         
-        self.current_worker = GeminiWorker(self.app_state.current_df.copy(), settings_for_worker, self.app_state.rename_files_dir, self.logger)
+        self.current_worker = GeminiWorker(
+            df.copy(), settings_for_worker, self.app_state.rename_files_dir, self.logger,
+            start_batch=start_batch, total_batches=total_batches
+        )
         self._start_worker_thread()
 
     def _start_worker_thread(self):
@@ -259,6 +290,7 @@ class ProcessTabHandler(QObject):
             self.worker_thread.wait()
         self.worker_thread, self.current_worker = None, None
         self.update_progress_bar(0, "%p%")
+        self.populate_continue_dropdown() # Refresh options after run
 
     def on_worker_error(self, message: str):
         QMessageBox.critical(self.main_window, "Error", message)
@@ -268,6 +300,7 @@ class ProcessTabHandler(QObject):
             self.worker_thread.wait()
         self.worker_thread, self.current_worker = None, None
         self.update_progress_bar(0, "Error")
+        self.populate_continue_dropdown() # Refresh options after error
 
     def update_progress_bar(self, value: int, text_format: str):
         self.ui.progress_bar.setFormat(text_format)
@@ -363,6 +396,33 @@ class ProcessTabHandler(QObject):
             self.ui.combined_preview_label.clear()
             self.ui.combined_preview_label.setText("Batch Preview")
             self.ui.combined_preview_label.setFilePath("")
+
+    def populate_continue_dropdown(self):
+        """Scans for partial output files and populates the continue dropdown."""
+        self.ui.continue_dropdown.clear()
+        self.ui.continue_dropdown.addItem("Start Over", "")
+
+        if not self.app_state.rename_files_dir or not os.path.isdir(self.app_state.rename_files_dir):
+            return
+
+        try:
+            partials = [
+                f for f in os.listdir(self.app_state.rename_files_dir)
+                if f.startswith("temp_output_") and f.endswith('.csv')
+            ]
+            # Sort by modification time, newest first
+            partials.sort(
+                key=lambda f: os.path.getmtime(os.path.join(self.app_state.rename_files_dir, f)),
+                reverse=True
+            )
+
+            for p in partials:
+                self.ui.continue_dropdown.addItem(f"Continue from {p}", p) # Store filename in UserData
+
+            if len(partials) > 0:
+                self.ui.continue_dropdown.setCurrentIndex(1) # Select the newest partial by default
+        except FileNotFoundError:
+            self.logger.warn("Could not populate continue dropdown, rename_files directory not found.")
 
     def update_models_dropdown(self):
         self.ui.model_dropdown.clear()

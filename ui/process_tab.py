@@ -143,6 +143,10 @@ class ProcessImagesTab(QWidget):
 
         # --- Bottom Bar ---
         bottom_bar_layout = QHBoxLayout()
+        self.continue_dropdown = QComboBox()
+        bottom_bar_layout.addWidget(QLabel("Run Mode:"))
+        bottom_bar_layout.addWidget(self.continue_dropdown)
+        bottom_bar_layout.addSpacing(20)
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("%p%")

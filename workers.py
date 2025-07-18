@@ -44,10 +44,12 @@ class GeminiWorker(QObject):
     batch_completed = pyqtSignal(pd.DataFrame, int, int)
     progress = pyqtSignal(int, str)
 
-    def __init__(self, df: pd.DataFrame, config: Dict[str, Any], temp_dir: str, logger: SimpleLogger):
+    def __init__(self, df: pd.DataFrame, config: Dict[str, Any], temp_dir: str, logger: SimpleLogger, start_batch: int = 1, total_batches: int = 0):
         super().__init__()
         self.df, self.config, self.temp_dir, self.logger = df, config, temp_dir, logger
         self.is_stopped = False
+        self.start_batch = start_batch
+        self.total_batches = total_batches
 
     def stop(self):
         self.is_stopped = True
@@ -57,15 +59,19 @@ class GeminiWorker(QObject):
         try:
             handler = GeminiHandler(self.config['api_keys'], self.config['model_name'], self.logger)
             batch_size = self.config['batch_size']
-            total_batches = (len(self.df) + batch_size - 1) // batch_size
             
-            for i in range(total_batches):
+            # If total_batches was not provided, calculate it now
+            if self.total_batches == 0:
+                self.total_batches = (len(self.df) + batch_size - 1) // batch_size
+            
+            # Start loop from the specified start_batch
+            for i in range(self.start_batch - 1, self.total_batches):
                 if self.is_stopped:
                     self.logger.warn("Processing stopped by user."); break
                 
                 batch_num, start_idx = i + 1, i * batch_size
                 batch_df = self.df.iloc[start_idx : start_idx + batch_size]
-                self.logger.info(f"--- Starting Batch {batch_num}/{total_batches} ---")
+                self.logger.info(f"--- Starting Batch {batch_num}/{self.total_batches} ---")
 
                 images = [preprocess_image(fix_orientation(Image.open(row['from'])), str(row['photo_ID']), self.config['crop_settings']) for _, row in batch_df.iterrows()]
                 
@@ -87,8 +93,8 @@ class GeminiWorker(QObject):
                 self.logger.info(f"Gemini response received in {time.perf_counter() - start_time:.2f}s. Response: {response_text.replace(chr(10), ' ')}")
                 self._parse_and_update_df(response_text)
                 
-                self.progress.emit(int(batch_num / total_batches * 100), f"Batch {batch_num}/{total_batches} - %p%")
-                self.batch_completed.emit(self.df.copy(), batch_num, total_batches)
+                self.progress.emit(int(batch_num / self.total_batches * 100), f"Batch {batch_num}/{self.total_batches} - %p%")
+                self.batch_completed.emit(self.df.copy(), batch_num, self.total_batches)
         except Exception as e:
             self.error.emit(f"An unexpected error occurred in GeminiWorker: {e}")
             self.logger.error("GeminiWorker run failed.", exception=e)
