@@ -49,6 +49,9 @@ class ReviewTabHandler(QObject):
         self.ui.items_per_page_input.editingFinished.connect(self._handle_ui_change)
         self.ui.image_quality_dropdown.currentIndexChanged.connect(self._handle_ui_change)
         
+        self.ui.suffix_mode_dropdown.currentIndexChanged.connect(self._handle_suffix_mode_change)
+        self.ui.custom_suffix_input.editingFinished.connect(self._sync_settings_from_ui)
+
         self.ui.save_changes_button.clicked.connect(self.create_checked_csv) 
         self.ui.recalc_names_button.clicked.connect(self.recalculate_names)
         self.ui.rename_files_button.clicked.connect(self.rename_files)
@@ -65,6 +68,13 @@ class ReviewTabHandler(QObject):
         quality_setting = self.app_state.settings.get('review_thumb_height', '720p')
         self.ui.image_quality_dropdown.setCurrentText(quality_setting)
 
+        suffix_mode = self.app_state.settings.get('suffix_mode', 'Standard (d, v, d2, v2, ...)')
+        self.ui.suffix_mode_dropdown.setCurrentText(suffix_mode)
+
+        custom_suffixes = self.app_state.settings.get('custom_suffixes', 'd,v')
+        self.ui.custom_suffix_input.setText(custom_suffixes)
+        
+        self._update_suffix_widgets_visibility()
 
     def _sync_settings_from_ui(self):
         """Read values from the UI and update the app_state."""
@@ -78,12 +88,25 @@ class ReviewTabHandler(QObject):
             self.ui.items_per_page_input.setText("50")
 
         self.app_state.settings['review_thumb_height'] = self.ui.image_quality_dropdown.currentText()
+        self.app_state.settings['suffix_mode'] = self.ui.suffix_mode_dropdown.currentText()
+        self.app_state.settings['custom_suffixes'] = self.ui.custom_suffix_input.text()
 
     def stop_worker(self):
         if self.image_load_thread and self.image_load_thread.isRunning():
             self.image_load_worker.stop()
             self.image_load_thread.quit()
             self.image_load_thread.wait()
+    
+    def _handle_suffix_mode_change(self):
+        """Syncs settings and updates widget visibility when the suffix mode changes."""
+        self._sync_settings_from_ui()
+        self._update_suffix_widgets_visibility()
+
+    def _update_suffix_widgets_visibility(self):
+        """Shows or hides the custom suffix input based on the dropdown selection."""
+        is_custom_mode = (self.ui.suffix_mode_dropdown.currentText() == "Custom")
+        self.ui.custom_suffix_label.setVisible(is_custom_mode)
+        self.ui.custom_suffix_input.setVisible(is_custom_mode)
 
     def _handle_ui_change(self):
         self._sync_settings_from_ui()
@@ -261,7 +284,6 @@ class ReviewTabHandler(QObject):
         if widget := self.path_to_widget_map.get(path_str):
             widget.set_image(pixmap)
 
-    # --- MODIFIED: This method now correctly performs a manual, "checked" save ---
     def recalculate_names(self):
         """
         Recalculates the 'to' column and saves the result to a new, permanent
@@ -270,13 +292,16 @@ class ReviewTabHandler(QObject):
         if self.app_state.current_df.empty:
             return
 
-        # 1. Perform the calculation on the current in-memory DataFrame
+        self._sync_settings_from_ui()
+        settings = self.app_state.settings
+        
         self.app_state.current_df = calculate_final_names(
-            self.app_state.current_df, self.app_state.settings['main_column']
+            self.app_state.current_df,
+            settings['main_column'],
+            settings['suffix_mode'],
+            settings['custom_suffixes']
         )
         
-        # 2. Delegate to the 'create_checked_csv' method to handle saving and reloading.
-        # This automatically saves to a new timestamped file and refreshes the UI to show it.
         self.create_checked_csv(
             success_message="'To' column recalculated and saved to a new 'checked' file."
         )
@@ -374,7 +399,7 @@ class ReviewTabHandler(QObject):
             base_name = base_name[len("checked_"):]
 
         base_name, _ = os.path.splitext(base_name)
-        base_name = re.sub(r'_\d{8}_\d{6}$', '', base_name, 1)
+        base_name = re.sub(r'_\d{8}_\d{6}', '', base_name, 1)
 
         return base_name
 
