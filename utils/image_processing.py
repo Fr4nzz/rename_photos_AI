@@ -1,7 +1,7 @@
 # ai-photo-processor/utils/image_processing.py
 
 import math
-import re  # <-- Import 're' for parsing exiftool output
+import re
 import piexif
 import rawpy
 import subprocess
@@ -36,8 +36,7 @@ def decode_raw_image(image_path: Path, use_exif: bool) -> Optional[Image.Image]:
     Decodes a RAW file into a viewable PIL Image, respecting the 'use_exif' flag.
     """
     try:
-        with rawpy.imread(str(image_path)) as raw:
-            # When use_exif is False, user_flip=0 tells rawpy to ignore the orientation tag.
+        with rawpy.imread(str(image_path))as raw:
             flip_override = 0 if not use_exif else None
             rgb_array = raw.postprocess(use_camera_wb=True, no_auto_bright=True, user_flip=flip_override)
             return Image.fromarray(rgb_array)
@@ -45,93 +44,54 @@ def decode_raw_image(image_path: Path, use_exif: bool) -> Optional[Image.Image]:
         print(f"CRITICAL: Failed to decode RAW file {image_path.name}: {e}")
         return None
 
-# --- MODIFIED FUNCTION ---
 def get_angle_from_exif(img_path: Path, file_type: str, exiftool_path: Optional[str] = None) -> int:
-    """
-    Reads the orientation from a file and returns its rotation angle in degrees.
-    Uses exiftool via subprocess for RAW files and piexif for compressed files.
-    """
     orientation_tag = 1
     try:
         if file_type == 'raw':
-            if not exiftool_path:
-                return 0 # Cannot proceed without exiftool for RAWs
-            # Use a direct subprocess call to read the orientation tag numerically.
+            if not exiftool_path: return 0
             command = [exiftool_path, "-n", "-Orientation", str(img_path)]
             result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=10)
             if result.returncode == 0 and result.stdout:
-                # Example output: "Orientation                     : 6"
                 match = re.search(r':\s*(\d+)', result.stdout)
-                if match:
-                    orientation_tag = int(match.group(1))
+                if match: orientation_tag = int(match.group(1))
         else: # 'compressed'
-            # piexif is faster for JPGs and doesn't require a subprocess.
             exif_dict = piexif.load(str(img_path))
             orientation_tag = exif_dict.get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
-    except (subprocess.TimeoutExpired, ValueError, TypeError, piexif.InvalidImageDataError):
-        # On any error (timeout, parsing, bad image), default to 1 (unrotated).
-        pass
-    except Exception:
-        # Catch-all for other potential issues.
+    except (subprocess.TimeoutExpired, ValueError, TypeError, piexif.InvalidImageDataError, Exception):
         pass
     return ORIENTATION_TO_ANGLE.get(orientation_tag, 0)
 
 
-# --- MODIFIED FUNCTION ---
 def process_single_file_for_rotation(img_path: Path, config: Dict, logger: SimpleLogger):
-    """
-    Calculates the final orientation and writes it to the file using exiftool or piexif.
-    """
     try:
-        # Determine current angle based on 'use_exif' setting
-        if config['use_exif']:
-            exiftool_path = config.get('exiftool_path') if config['file_type'] == 'raw' else None
-            current_angle = get_angle_from_exif(img_path, config['file_type'], exiftool_path)
-        else:
-            current_angle = 0
-
+        current_angle = get_angle_from_exif(img_path, config['file_type'], config.get('exiftool_path')) if config['use_exif'] else 0
         final_angle = (current_angle + config['rotation_angle']) % 360
         final_orientation_tag = ANGLE_TO_ORIENTATION.get(final_angle, 1)
         mode = "using EXIF" if config['use_exif'] else "ignoring EXIF"
         logger.info(f"Rotating {img_path.name}: angle={current_angle}°+{config['rotation_angle']}°, new_tag={final_orientation_tag} ({mode})")
 
         if config['file_type'] == 'raw':
-            # For RAW files, always use exiftool (via subprocess) to write the tag.
-            exiftool_path = config.get('exiftool_path')
-            command = [
-                exiftool_path,
-                f"-Orientation={final_orientation_tag}",
-                "-overwrite_original",
-                "-n",  # Crucial: treat Orientation value as a number
-                str(img_path)
-            ]
+            command = [config.get('exiftool_path'), f"-Orientation={final_orientation_tag}", "-overwrite_original", "-n", str(img_path)]
             result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=15)
             if result.returncode != 0:
                 logger.error(f"ExifTool failed for {img_path.name}. Stderr: {result.stderr.strip()}")
         else:
-            # For compressed files, use piexif.
             exif_dict = piexif.load(str(img_path))
             exif_dict['0th'][piexif.ImageIFD.Orientation] = final_orientation_tag
             piexif.insert(piexif.dump(exif_dict), str(img_path))
 
     except subprocess.TimeoutExpired:
-        logger.error(f"ExifTool timed out processing {img_path.name}. The file may be corrupt or locked.")
+        logger.error(f"ExifTool timed out processing {img_path.name}.")
     except Exception as e:
         logger.error(f"Failed to write orientation for {img_path.name}", exception=e)
 
-# --- MODIFIED FUNCTION ---
 def apply_rotation_to_folder(config: Dict, logger: SimpleLogger):
-    """
-    Orchestrates the rotation process for all files in a folder.
-    This no longer creates a persistent exiftool instance.
-    """
     file_type, folder_path = config['file_type'], config['folder_path']
     image_files = get_image_files(folder_path, file_type)
 
     if not image_files:
         logger.warn(f"No '{file_type}' files found in '{folder_path}' to rotate.")
-        if 'progress_callback' in config:
-             config['progress_callback'](100, "No files found")
+        if 'progress_callback' in config: config['progress_callback'](100, "No files found")
         return
 
     total_files = len(image_files)
@@ -139,70 +99,105 @@ def apply_rotation_to_folder(config: Dict, logger: SimpleLogger):
         exiftool_path = config.get('exiftool_path')
         if not (exiftool_path and Path(exiftool_path).exists()):
             raise RuntimeError(f"ExifTool path is not configured or is invalid: '{exiftool_path}'")
-        logger.info(f"Processing {total_files} RAW files using direct subprocess calls...")
-    else:
-        logger.info(f"Processing {total_files} compressed files using piexif...")
 
     for i, img_path in enumerate(image_files):
-        # The call is now simpler, without the exiftool instance argument
         process_single_file_for_rotation(img_path, config, logger)
         if 'progress_callback' in config:
-            progress_text = "Rotating RAWs... %p%" if file_type == 'raw' else "Rotating JPGs... %p%"
+            progress_text = f"Rotating {file_type}... %p%"
             config['progress_callback'](int((i + 1) / total_files * 100), progress_text)
 
     logger.info("Rotation process finished.")
 
 
-# --- NO CHANGES BELOW THIS LINE ---
-
 def crop_image(img: Image.Image, crop_settings: Dict) -> Image.Image:
     if not crop_settings.get('zoom', False): return img
     w, h = img.size
-    left_coord = int(w * crop_settings.get('left', 0.0))
-    top_coord = int(h * crop_settings.get('top', 0.0))
-    right_coord = int(w * (1 - crop_settings.get('right', 0.0)))
-    bottom_coord = int(h * (1 - crop_settings.get('bottom', 0.0)))
-    if left_coord >= right_coord or top_coord >= bottom_coord:
-        print(f"Warning: Invalid crop settings. Skipping crop.")
+    left = int(w * crop_settings.get('left', 0.0))
+    top = int(h * crop_settings.get('top', 0.0))
+    right = int(w * (1 - crop_settings.get('right', 0.0)))
+    bottom = int(h * (1 - crop_settings.get('bottom', 0.0)))
+    if left >= right or top >= bottom:
+        print(f"Warning: Invalid crop settings {left, top, right, bottom}. Skipping crop.")
         return img
-    return img.crop((left_coord, top_coord, right_coord, bottom_coord))
+    return img.crop((left, top, right, bottom))
 
 def get_system_font(size=50) -> ImageFont.FreeTypeFont:
-    for font_name in ["Arial.ttf", "DejaVuSans.ttf", "Helvetica.ttc", "Verdana.ttf"]:
+    for font_name in ["arial.ttf", "DejaVuSans.ttf", "Helvetica.ttc"]:
         try: return ImageFont.truetype(font_name, size)
         except IOError: continue
     return ImageFont.load_default()
 
 def preprocess_image(image: Image.Image, label_text: str, crop_settings: Dict) -> Image.Image:
-    img = crop_image(image.copy(), crop_settings)
-    if crop_settings.get('grayscale', False): img = ImageOps.grayscale(img)
-    img, draw = img.convert('RGBA'), ImageDraw.Draw(img)
-    font = get_system_font(size=max(20, int(img.height / 20)))
-    bbox = draw.textbbox((0, 0), label_text, font=font)
-    text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    padding = text_h // 2
-    bg_x1, bg_y1 = (img.width - text_w) / 2 - padding, padding / 2
-    bg_x2, bg_y2 = (img.width + text_w) / 2 + padding, text_h + padding * 1.5
+    """
+    Applies all necessary preprocessing, with a correctly placed and sized label.
+    """
+    # 1. Apply cropping and filtering
+    img_cropped = crop_image(image.copy(), crop_settings)
+    img_processed = ImageOps.grayscale(img_cropped) if crop_settings.get('grayscale', False) else img_cropped
+
+    # 2. Add border
+    img_bordered = ImageOps.expand(img_processed, border=10, fill='black')
+
+    # 3. Prepare for drawing
+    img_final = img_bordered.convert('RGBA')
+    draw = ImageDraw.Draw(img_final)
+
+    # 4. Define font size relative to image content height
+    font_size = max(40, int(img_cropped.height / 12))
+    font = get_system_font(size=font_size)
+
+    # --- FIX: Use asymmetrical padding to shrink background from the top ---
+    # 5. Define different padding for top, bottom, and sides
+    side_padding = int(font_size * 0.25)
+    top_padding = int(font_size * 0.10)      # Minimal padding above text
+    bottom_padding = int(font_size * 0.25)   # Generous padding below text
+
+    # 6. Calculate text dimensions
+    try:
+        bbox = draw.textbbox((0, 0), label_text, font=font)
+        text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    except AttributeError:
+        text_w, text_h = draw.textsize(label_text, font=font)
+
+    # 7. Define the top of the entire label block, proportional to image height
+    block_top_y = int(img_final.height * 0.04)
+
+    # 8. Define final coordinates for the text and background
+    text_x = (img_final.width - text_w) // 2
+    text_y = block_top_y + top_padding
+
+    bg_x1 = text_x - side_padding
+    bg_y1 = block_top_y
+    bg_x2 = text_x + text_w + side_padding
+    bg_y2 = block_top_y + top_padding + text_h + bottom_padding # Total height is now smaller
+
+    # 9. Draw the background and text
     draw.rectangle([bg_x1, bg_y1, bg_x2, bg_y2], fill=(255, 255, 255, 128))
-    draw.text(((img.width - text_w) / 2, padding), label_text, fill='black', font=font)
-    return img.convert('RGB')
+    draw.text((text_x, text_y), label_text, fill='black', font=font)
+
+    # 10. Convert back to RGB
+    return img_final.convert('RGB')
+
 
 def merge_images(images: List[Image.Image], merged_img_height: int) -> Optional[Image.Image]:
     if not images: return None
     n = len(images)
-    if n == 0: return None
     cols = int(math.ceil(math.sqrt(n)))
+    if n == 0 or cols == 0: return None
     rows = int(math.ceil(n / float(cols)))
     if rows == 0: return None
-    if not hasattr(images[0], 'size') or not all(images[0].size): return None
+    
     ref_w, ref_h = images[0].size
     if ref_h == 0: return None
+    
     cell_h = merged_img_height // rows
     cell_w = int(cell_h * (ref_w / ref_h))
     if cell_w == 0 or cell_h == 0: return None
+    
     grid_img = Image.new('RGB', (cols * cell_w, rows * cell_h), 'white')
     for i, img in enumerate(images):
-        resized_img = img.resize((cell_w, cell_h), Image.LANCZOS)
+        resized_img = img.resize((cell_w, cell_h), Image.Resampling.LANCZOS)
         row, col = divmod(i, cols)
         grid_img.paste(resized_img, (col * cell_w, row * cell_h))
+        
     return grid_img
