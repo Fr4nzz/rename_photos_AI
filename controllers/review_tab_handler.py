@@ -1,6 +1,7 @@
 # ai-photo-processor/controllers/review_tab_handler.py
 
 import os
+import re
 import math
 import pandas as pd
 from pathlib import Path
@@ -23,14 +24,6 @@ QUALITY_TO_HEIGHT = {
     "Original": 0
 }
 
-SUFFIX_MODE_MAP = {
-    "Standard (d, v, d2, v2, ...)": "Standard",
-    "Wing Clips (v1, v2, v3, ...)": "Wing Clips",
-    "Custom": "Custom"
-}
-REVERSE_SUFFIX_MODE_MAP = {v: k for k, v in SUFFIX_MODE_MAP.items()}
-
-
 class ReviewTabHandler(QObject):
     """Controller for all logic related to the Review Results tab."""
 
@@ -49,17 +42,14 @@ class ReviewTabHandler(QObject):
 
     def connect_signals(self):
         self.ui.csv_dropdown.currentIndexChanged.connect(self.refresh_view)
-        self.ui.refresh_from_disk_button.clicked.connect(self.refresh_view)
+        self.ui.refresh_from_disk_button.clicked.connect(lambda: self.refresh_csv_dropdown(select_newest=True))
         self.ui.crop_review_checkbox.stateChanged.connect(self._handle_ui_change)
         self.ui.show_duplicates_checkbox.stateChanged.connect(self._handle_ui_change)
         
         self.ui.items_per_page_input.editingFinished.connect(self._handle_ui_change)
         self.ui.image_quality_dropdown.currentIndexChanged.connect(self._handle_ui_change)
         
-        self.ui.suffix_mode_dropdown.currentIndexChanged.connect(self._on_suffix_mode_changed)
-        self.ui.custom_suffix_input.editingFinished.connect(self._sync_settings_from_ui)
-
-        self.ui.save_changes_button.clicked.connect(self.save_manual_changes)
+        self.ui.save_changes_button.clicked.connect(self.create_checked_csv) 
         self.ui.recalc_names_button.clicked.connect(self.recalculate_names)
         self.ui.rename_files_button.clicked.connect(self.rename_files)
         self.ui.restore_names_button.clicked.connect(self.restore_file_names)
@@ -75,38 +65,19 @@ class ReviewTabHandler(QObject):
         quality_setting = self.app_state.settings.get('review_thumb_height', '720p')
         self.ui.image_quality_dropdown.setCurrentText(quality_setting)
 
-        suffix_mode_setting = self.app_state.settings.get('suffix_mode', 'Standard')
-        ui_text = REVERSE_SUFFIX_MODE_MAP.get(suffix_mode_setting, "Standard (d, v, d2, v2, ...)")
-        self.ui.suffix_mode_dropdown.setCurrentText(ui_text)
-        
-        custom_suffixes = self.app_state.settings.get('custom_suffixes', 'd,v')
-        self.ui.custom_suffix_input.setText(custom_suffixes)
-        self._on_suffix_mode_changed()
 
     def _sync_settings_from_ui(self):
         """Read values from the UI and update the app_state."""
-        s = self.app_state.settings
-        s['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
+        self.app_state.settings['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
         
         try:
             items_per_page = int(self.ui.items_per_page_input.text())
-            s['review_items_per_page'] = items_per_page if items_per_page > 0 else 1
+            self.app_state.settings['review_items_per_page'] = items_per_page if items_per_page > 0 else 1
         except (ValueError, TypeError):
-            s['review_items_per_page'] = 50
+            self.app_state.settings['review_items_per_page'] = 50
             self.ui.items_per_page_input.setText("50")
 
-        s['review_thumb_height'] = self.ui.image_quality_dropdown.currentText()
-        
-        selected_ui_text = self.ui.suffix_mode_dropdown.currentText()
-        s['suffix_mode'] = SUFFIX_MODE_MAP.get(selected_ui_text, 'Standard')
-        s['custom_suffixes'] = self.ui.custom_suffix_input.text()
-
-    def _on_suffix_mode_changed(self):
-        """Shows or hides the custom suffix input based on the dropdown selection."""
-        is_custom = self.ui.suffix_mode_dropdown.currentText() == "Custom"
-        self.ui.custom_suffix_label.setVisible(is_custom)
-        self.ui.custom_suffix_input.setVisible(is_custom)
-        self._sync_settings_from_ui()
+        self.app_state.settings['review_thumb_height'] = self.ui.image_quality_dropdown.currentText()
 
     def stop_worker(self):
         if self.image_load_thread and self.image_load_thread.isRunning():
@@ -118,7 +89,7 @@ class ReviewTabHandler(QObject):
         self._sync_settings_from_ui()
         self.refresh_view()
 
-    def refresh_csv_dropdown(self):
+    def refresh_csv_dropdown(self, select_newest: bool = False):
         self.ui.csv_dropdown.blockSignals(True)
         current_selection = self.ui.csv_dropdown.currentText()
         self.ui.csv_dropdown.clear()
@@ -131,7 +102,9 @@ class ReviewTabHandler(QObject):
             )
             if csv_files:
                 self.ui.csv_dropdown.addItems(csv_files)
-                if current_selection in csv_files:
+                if select_newest:
+                    self.ui.csv_dropdown.setCurrentIndex(0)
+                elif current_selection in csv_files:
                     self.ui.csv_dropdown.setCurrentText(current_selection)
 
         self.ui.csv_dropdown.blockSignals(False)
@@ -158,12 +131,7 @@ class ReviewTabHandler(QObject):
         csv_name = self.ui.csv_dropdown.currentText()
         if csv_name and os.path.exists(os.path.join(self.app_state.rename_files_dir, csv_name)):
             try:
-                temp_path = Path(self.app_state.rename_files_dir) / f"temp_{csv_name}"
-                load_path = temp_path if temp_path.exists() else Path(self.app_state.rename_files_dir) / csv_name
-                
-                csv_df = pd.read_csv(load_path, dtype=str).fillna('')
-                self.logger.info(f"Loaded data from '{load_path.name}' for review.")
-
+                csv_df = pd.read_csv(os.path.join(self.app_state.rename_files_dir, csv_name), dtype=str).fillna('')
                 for col in df_cols:
                     if col not in csv_df.columns: csv_df[col] = ''
             except Exception as e:
@@ -242,9 +210,8 @@ class ReviewTabHandler(QObject):
                 for _, row in group.iterrows():
                     total_count = id_counts_total.get(identifier, 0) if pd.notna(identifier) else 0
                     item_widget = ReviewItemWidget(row.name, row.to_dict(), main_col, total_count)
-                    # --- THIS IS THE FIX ---
-                    item_widget.data_changed.connect(lambda widget=item_widget: self._sync_df_and_autosave(widget))
-                    # ----------------------
+                    item_widget.data_changed.connect(lambda w=item_widget: self._sync_df_from_review_item(w))
+                    item_widget.data_changed.connect(self._handle_autosave)
                     self.ui.add_item_to_grid(grid_row, grid_col, item_widget)
                     
                     if img_path := Path(row['from']):
@@ -266,16 +233,13 @@ class ReviewTabHandler(QObject):
         except Exception as e:
             self.logger.error(f"Error populating review grid: {e}", exception=e)
 
-    def _sync_df_and_autosave(self, sender_widget: ReviewItemWidget):
-        """Updates the DataFrame from the widget AND triggers an auto-save."""
+    def _sync_df_from_review_item(self, sender_widget: ReviewItemWidget):
         data = sender_widget.get_data()
         idx = data.pop('df_index')
         for df in [self.app_state.current_df, self.filtered_df]:
              for col, value in data.items():
                 if col in df.columns and idx in df.index:
                     df.loc[idx, col] = value
-        
-        self._auto_save_changes()
                
     def start_image_load_worker(self, paths):
         crop_settings = {**self.app_state.settings['crop_settings'], 'zoom': self.ui.crop_review_checkbox.isChecked()}
@@ -297,62 +261,25 @@ class ReviewTabHandler(QObject):
         if widget := self.path_to_widget_map.get(path_str):
             widget.set_image(pixmap)
 
-    def _auto_save_changes(self):
-        """Saves the current DataFrame to a temporary file, overwriting it."""
-        if self.app_state.current_df.empty:
-            return
-        
-        original_csv = self.ui.csv_dropdown.currentText()
-        if not original_csv:
-            return
-
-        temp_save_path = Path(self.app_state.rename_files_dir) / f"temp_{original_csv}"
-        
-        try:
-            df_to_save = self.app_state.current_df.drop(columns=['status'], errors='ignore')
-            df_to_save.to_csv(temp_save_path, index=False)
-            self.logger.info(f"Auto-saved changes to {temp_save_path.name}")
-        except Exception as e:
-            self.logger.error(f"Auto-save failed for {temp_save_path.name}", exception=e)
-
-    def save_manual_changes(self):
-        """Saves the current state to a new, permanent, timestamped file."""
-        if self.app_state.current_df.empty:
-            return QMessageBox.warning(self.main_window, "No Data", "There is no data to save.")
-
-        original_csv = self.ui.csv_dropdown.currentText()
-        if not original_csv:
-            return QMessageBox.warning(self.main_window, "No File Selected", "Please select a base CSV file to save from.")
-
-        base_name = original_csv.replace('temp_', '').replace('.csv', '')
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        final_name = f"checked_{base_name}_{timestamp}.csv"
-        final_path = Path(self.app_state.rename_files_dir) / final_name
-
-        try:
-            df_to_save = self.app_state.current_df.drop(columns=['status'], errors='ignore')
-            df_to_save.to_csv(final_path, index=False)
-            
-            temp_path = Path(self.app_state.rename_files_dir) / f"temp_{original_csv}"
-            if temp_path.exists():
-                temp_path.unlink()
-                self.logger.info(f"Cleaned up temporary file: {temp_path.name}")
-
-            QMessageBox.information(self.main_window, "Success", f"Review saved as new file:\n{final_name}")
-            
-            self.refresh_csv_dropdown()
-            self.ui.csv_dropdown.setCurrentText(final_name)
-
-        except Exception as e:
-            self.logger.error("Failed during manual save.", exception=e)
-            QMessageBox.critical(self.main_window, "Error", f"Could not save changes: {e}")
-
+    # --- MODIFIED: This method now correctly performs a manual, "checked" save ---
     def recalculate_names(self):
-        if self.app_state.current_df.empty: return
-        self.app_state.current_df = calculate_final_names(self.app_state.current_df, self.app_state.settings)
-        self._auto_save_changes()
-        self.refresh_view()
-        QMessageBox.information(self.main_window, "Success", "'To' column recalculated and auto-saved to temp file.")
+        """
+        Recalculates the 'to' column and saves the result to a new, permanent
+        'checked' CSV file, then loads it.
+        """
+        if self.app_state.current_df.empty:
+            return
+
+        # 1. Perform the calculation on the current in-memory DataFrame
+        self.app_state.current_df = calculate_final_names(
+            self.app_state.current_df, self.app_state.settings['main_column']
+        )
+        
+        # 2. Delegate to the 'create_checked_csv' method to handle saving and reloading.
+        # This automatically saves to a new timestamped file and refreshes the UI to show it.
+        self.create_checked_csv(
+            success_message="'To' column recalculated and saved to a new 'checked' file."
+        )
 
     def rename_files(self):
         if self.app_state.current_df.empty or 'to' not in self.app_state.current_df.columns:
@@ -401,9 +328,8 @@ class ReviewTabHandler(QObject):
             pd.DataFrame(log_entries).to_csv(log_path, mode='a', header=not log_path.exists(), index=False)
         
         self.app_state.current_df = df
-        self.save_manual_changes() 
+        self.create_checked_csv("Rename complete. Saved state to new 'checked' file.")
         self.refresh_view()
-        QMessageBox.information(self.main_window, "Rename Complete", f"Renamed {renamed_count} files.\n{error_count} errors occurred.\nNew state saved.")
         
     def restore_file_names(self):
         log_path = Path(self.app_state.rename_files_dir) / "rename_log.csv"
@@ -435,6 +361,74 @@ class ReviewTabHandler(QObject):
         except Exception as e:
             self.logger.error("Failed during restore operation.", exception=e)
             QMessageBox.critical(self.main_window, "Error", f"An error occurred during restore: {e}")
+
+    def _get_base_csv_name(self, filename: str) -> str:
+        """Strips prefixes and timestamps to get a clean base filename."""
+        if not filename:
+            return "review_state"
+
+        base_name = filename
+        if base_name.startswith("autosave_"):
+            base_name = base_name[len("autosave_"):]
+        elif base_name.startswith("checked_"):
+            base_name = base_name[len("checked_"):]
+
+        base_name, _ = os.path.splitext(base_name)
+        base_name = re.sub(r'_\d{8}_\d{6}$', '', base_name, 1)
+
+        return base_name
+
+    def _handle_autosave(self):
+        """Saves the current DataFrame state to a temporary autosave file."""
+        if self.app_state.current_df.empty:
+            return
+
+        loaded_csv = self.ui.csv_dropdown.currentText()
+        if not loaded_csv:
+            return
+
+        base_name = self._get_base_csv_name(loaded_csv)
+        autosave_filename = f"autosave_{base_name}.csv"
+
+        self._save_df_to_file(autosave_filename)
+        self.logger.info(f"Autosaved changes to {autosave_filename}")
+
+    def create_checked_csv(self, success_message=None):
+        """Saves the current state to a new, timestamped 'checked' file."""
+        if self.app_state.current_df.empty:
+            return QMessageBox.warning(self.main_window, "No Data", "There is no data to save.")
+
+        loaded_csv = self.ui.csv_dropdown.currentText()
+        base_name = self._get_base_csv_name(loaded_csv)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        new_filename = f"checked_{base_name}_{timestamp}.csv"
+
+        try:
+            self._save_df_to_file(new_filename)
+            self.logger.info(f"Created new checked file: {new_filename}")
+
+            self.refresh_csv_dropdown()
+            new_index = self.ui.csv_dropdown.findText(new_filename)
+            if new_index > -1:
+                self.ui.csv_dropdown.setCurrentIndex(new_index)
+            
+            msg = success_message or f"Changes saved to new file:\n{new_filename}"
+            QMessageBox.information(self.main_window, "Success", msg)
+
+        except Exception as e:
+            self.logger.error(f"Failed to create checked CSV '{new_filename}'", exception=e)
+            QMessageBox.critical(self.main_window, "Error", f"Could not save changes: {e}")
+
+    def _save_df_to_file(self, filename: str):
+        """Saves the current DataFrame to a specific file."""
+        if self.app_state.current_df.empty:
+            raise ValueError("Cannot save an empty DataFrame.")
+
+        save_path = Path(self.app_state.rename_files_dir) / filename
+        
+        df_to_save = self.app_state.current_df.drop(columns=['status'], errors='ignore')
+        df_to_save.to_csv(save_path, index=False)
+        self.logger.info(f"DataFrame state saved to {save_path.name}")
 
     def go_to_next_page(self):
         if self.current_page < self.total_pages - 1:
