@@ -355,72 +355,98 @@ class ReviewTabHandler(QObject):
     def rename_files(self):
         """
         Renames files on disk based on the 'to' column and logs the changes
-        in 'rename_log.csv'.
+        in 'rename_log.csv'. This version correctly handles file name conflicts.
         """
         if self.app_state.current_df.empty or 'to' not in self.app_state.current_df.columns:
             QMessageBox.warning(self.main_window, "No Data", "No data loaded or 'to' column is missing. Please 'Recalculate Final Names' first.")
             return
         
-        if QMessageBox.question(self.main_window, "Confirm Rename", "This will rename files on your disk based on the 'to' column. Are you sure?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.No:
+        if QMessageBox.question(self.main_window, "Confirm Rename", "This will rename files on your disk. Are you sure?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.No:
             return
-       
-        self.logger.info("--- Starting File Rename Process ---")
-        log_entries, renamed_count, error_count = [], 0, 0
-        df = self.app_state.current_df
 
-        # Filter for rows that actually need renaming
+        self.logger.info("--- Starting File Rename Process ---")
+        log_entries, error_count, renamed_count = [], 0, 0
+        df = self.app_state.current_df
+        
+        # 1. PLAN: Create a list of all rename operations that need to happen.
+        rename_plan = []
         rename_df = df[(df['to'].notna()) & (df['to'] != '') & (df['skip'] != 'x')].copy()
 
-        for idx, row in rename_df.iterrows():
-            # The source is ALWAYS the 'current_path' from the reconciled view
+        for _, row in rename_df.iterrows():
             src_path = Path(row['current_path'])
-            dst_name = row['to']
-            dst_path = src_path.parent / dst_name
+            dst_path = src_path.parent / row['to']
 
             if not src_path.exists():
-                self.logger.warn(f"Skipping rename. Source not found: {src_path.name}"); continue
-            if src_path == dst_path: continue # No change needed
-            if dst_path.exists():
-                self.logger.error(f"Cannot rename {src_path.name}, destination {dst_path.name} already exists."); error_count += 1; continue
+                self.logger.warn(f"Skipping plan. Source not found: {src_path.name}")
+                continue
+            if src_path == dst_path:
+                continue
 
-            try:
-                # The original path is ALWAYS what's in the 'from' column
-                original_path_str = row['from']
-                
-                # Rename the main (compressed) file
-                src_path.rename(dst_path)
-                self.logger.info(f"Renamed: '{src_path.name}' -> '{dst_path.name}'")
-                log_entries.append({'original_path': original_path_str, 'new_path': str(dst_path)})
-                renamed_count += 1
-                
-                # --- NEW: Handle RAW counterparts ---
-                original_base_name = Path(original_path_str).stem
-                new_base_name = dst_path.stem
-                
-                for raw_file in src_path.parent.glob(f"{Path(src_path).stem}.*"):
-                     if raw_file.suffix.lower() in SUPPORTED_RAW_EXTENSIONS:
-                        raw_dst_path = raw_file.with_name(f"{new_base_name}{raw_file.suffix}")
-                        original_raw_path = raw_file.with_name(f"{original_base_name}{raw_file.suffix}")
-                        raw_file.rename(raw_dst_path)
-                        self.logger.info(f"Renamed RAW: '{raw_file.name}' -> '{raw_dst_path.name}'")
-                        log_entries.append({'original_path': str(original_raw_path), 'new_path': str(raw_dst_path)})
-                        break # Assume only one RAW file per compressed file
+            # Add primary file (e.g., JPG) to the plan
+            rename_plan.append({'src': src_path, 'dst': dst_path, 'orig': row['from']})
+            
+            # Find and add RAW counterpart to the plan
+            raw_src_path = None
+            for ext in SUPPORTED_RAW_EXTENSIONS:
+                for suffix in [ext.lower(), ext.upper()]:
+                    if (p := src_path.with_suffix(suffix)).exists():
+                        raw_src_path = p
+                        break
+                if raw_src_path: break
+            
+            if raw_src_path:
+                raw_dst_path = raw_src_path.with_name(f"{dst_path.stem}{raw_src_path.suffix}")
+                original_raw_path = Path(row['from']).with_suffix(raw_src_path.suffix)
+                rename_plan.append({'src': raw_src_path, 'dst': raw_dst_path, 'orig': str(original_raw_path)})
 
-            except Exception as e:
-                self.logger.error(f"Could not rename {src_path.name} or its counterpart", exception=e); error_count += 1
-       
+        # 2. EXECUTE: Iteratively perform renames, handling conflicts.
+        while rename_plan:
+            # Separate operations that can be done now from those that are blocked
+            runnable = [op for op in rename_plan if not op['dst'].exists()]
+            blocked = [op for op in rename_plan if op['dst'].exists()]
+            
+            if not runnable and blocked:
+                # Deadlock detected. Break the cycle by renaming one file to a temporary name.
+                op_to_break = blocked[0]
+                temp_name = f"{op_to_break['src'].name}.tmp_rename"
+                temp_path = op_to_break['src'].parent / temp_name
+                
+                self.logger.warn(f"Deadlock detected. Temporarily renaming '{op_to_break['src'].name}' to '{temp_path.name}'")
+                op_to_break['src'].rename(temp_path)
+                op_to_break['src'] = temp_path # Update the plan to use the temp path as the source now
+                
+                # The plan for the next loop is all blocked ops, one of which is now modified
+                rename_plan = blocked
+                continue # Restart the loop; the broken cycle should now be runnable
+
+            if not runnable and not blocked:
+                # All done
+                break
+
+            # Execute all non-conflicting renames for this pass
+            for op in runnable:
+                try:
+                    op['src'].rename(op['dst'])
+                    self.logger.info(f"Renamed: '{op['src'].name}' -> '{op['dst'].name}'")
+                    log_entries.append({'original_path': op['orig'], 'new_path': str(op['dst'])})
+                    renamed_count += 1
+                except Exception as e:
+                    self.logger.error(f"Could not rename {op['src'].name}", exception=e)
+                    error_count += 1
+            
+            # The next set of operations to consider is the currently blocked ones
+            rename_plan = blocked
+        
+        # 3. FINALIZE: Log results and update UI
         if log_entries:
             log_path = Path(self.app_state.rename_files_dir) / "rename_log.csv"
             new_log_df = pd.DataFrame(log_entries)
-            # Append to existing log or create new one
             new_log_df.to_csv(log_path, mode='a', header=not log_path.exists(), index=False)
         
-        # After renaming, clear the 'to' column in the DataFrame for the next state
         df.loc[rename_df.index, 'to'] = ''
         self.app_state.current_df = df
         
         self.create_checked_csv(f"Rename complete: {renamed_count} files renamed, {error_count} errors. Saved state to new 'checked' file.")
-        # The refresh_view will automatically pick up the new names from disk
         self.refresh_view()
         
     def restore_file_names(self):
