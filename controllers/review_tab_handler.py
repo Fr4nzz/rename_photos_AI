@@ -393,7 +393,7 @@ class ReviewTabHandler(QObject):
                 log_entries.append({'original_path': original_path_str, 'new_path': str(dst_path)})
                 renamed_count += 1
                 
-                # Handle RAW counterparts
+                # --- NEW: Handle RAW counterparts ---
                 original_base_name = Path(original_path_str).stem
                 new_base_name = dst_path.stem
                 
