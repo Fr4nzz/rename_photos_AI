@@ -68,7 +68,7 @@ class ReviewTabHandler(QObject):
         quality_setting = self.app_state.settings.get('review_thumb_height', '720p')
         self.ui.image_quality_dropdown.setCurrentText(quality_setting)
 
-        suffix_mode = self.app_state.settings.get('suffix_mode', 'Standard (d, v, d2, v2, ...)')
+        suffix_mode = self.app_state.settings.get('suffix_mode', 'Standard')
         self.ui.suffix_mode_dropdown.setCurrentText(suffix_mode)
 
         custom_suffixes = self.app_state.settings.get('custom_suffixes', 'd,v')
@@ -117,24 +117,32 @@ class ReviewTabHandler(QObject):
         current_selection = self.ui.csv_dropdown.currentText()
         self.ui.csv_dropdown.clear()
         
-        if self.app_state.rename_files_dir and os.path.exists(self.app_state.rename_files_dir):
-            csv_files = sorted(
-                [f for f in os.listdir(self.app_state.rename_files_dir) if f.endswith('.csv') and not f.startswith('rename_log')],
-                key=lambda f: os.path.getmtime(os.path.join(self.app_state.rename_files_dir, f)),
-                reverse=True
-            )
-            if csv_files:
-                self.ui.csv_dropdown.addItems(csv_files)
-                if select_newest:
-                    self.ui.csv_dropdown.setCurrentIndex(0)
-                elif current_selection in csv_files:
-                    self.ui.csv_dropdown.setCurrentText(current_selection)
+        rename_dir = self.app_state.rename_files_dir
+        if rename_dir and os.path.exists(rename_dir):
+            try:
+                # Filter out the rename log file from the dropdown
+                csv_files = sorted(
+                    [f for f in os.listdir(rename_dir) if f.endswith('.csv') and not f.startswith('rename_log')],
+                    key=lambda f: os.path.getmtime(os.path.join(rename_dir, f)),
+                    reverse=True
+                )
+                if csv_files:
+                    self.ui.csv_dropdown.addItems(csv_files)
+                    if select_newest and self.ui.csv_dropdown.count() > 0:
+                        self.ui.csv_dropdown.setCurrentIndex(0)
+                    elif current_selection in csv_files:
+                        self.ui.csv_dropdown.setCurrentText(current_selection)
+            except Exception as e:
+                self.logger.error(f"Failed to list CSV files in {rename_dir}", exception=e)
 
         self.ui.csv_dropdown.blockSignals(False)
         self.refresh_view()
 
     def refresh_view(self):
-        """Reconciles data and sets up the view for the first page."""
+        """
+        The core data reconciliation logic. It links files on disk to their data
+        in the selected CSV using the central rename_log.csv as a ledger.
+        """
         self.logger.info("Refreshing Review Results view...")
         self.stop_worker()
 
@@ -147,33 +155,67 @@ class ReviewTabHandler(QObject):
             self.ui.set_grid_message("No compressed image files found.")
             return
 
-        main_col = self.app_state.settings['main_column']
-        df_cols = ['from', 'to', 'skip', 'co', 'status', main_col]
-        
-        csv_df = pd.DataFrame()
-        csv_name = self.ui.csv_dropdown.currentText()
-        if csv_name and os.path.exists(os.path.join(self.app_state.rename_files_dir, csv_name)):
+        # Load the rename log to map current names back to original names
+        log_path = Path(self.app_state.rename_files_dir) / "rename_log.csv"
+        rename_log_map = {}
+        if log_path.exists():
             try:
-                csv_df = pd.read_csv(os.path.join(self.app_state.rename_files_dir, csv_name), dtype=str).fillna('')
-                for col in df_cols:
-                    if col not in csv_df.columns: csv_df[col] = ''
+                log_df = pd.read_csv(log_path)
+                # Create a map from new_path -> original_path for quick lookups
+                rename_log_map = pd.Series(log_df.original_path.values, index=log_df.new_path).to_dict()
             except Exception as e:
-                self.logger.error(f"Could not load CSV: {csv_name}", exception=e)
+                self.logger.error(f"Could not read or parse {log_path.name}", exception=e)
 
+        # Load the selected data CSV
+        csv_name = self.ui.csv_dropdown.currentText()
+        csv_df = pd.DataFrame()
+        if csv_name:
+            csv_path = os.path.join(self.app_state.rename_files_dir, csv_name)
+            if os.path.exists(csv_path):
+                try:
+                    csv_df = pd.read_csv(csv_path, dtype=str).fillna('')
+                except Exception as e:
+                    self.logger.error(f"Could not load selected CSV: {csv_name}", exception=e)
+        
+        # Define the expected columns.
+        main_col = self.app_state.settings.get('main_column', 'CAM')
+        expected_cols = ['from', 'to', 'skip', 'co', main_col, 'n', 'suffix']
+
+        # Reconcile data
         reconciled_data = []
-        for file_path in disk_files:
-            file_path_str = str(file_path)
-            new_row = {col: '' for col in df_cols}
-            new_row.update({'from': file_path_str, 'status': 'New'})
+        seen_original_paths = set()
+
+        for current_path in disk_files:
+            current_path_str = str(current_path)
+            # Determine the original path using the log file
+            original_path = rename_log_map.get(current_path_str, current_path_str)
+            seen_original_paths.add(original_path)
+            
+            # Find the corresponding data row in the CSV using the original 'from' path
+            data_row = {}
+            status = "New" # Default status if not found in CSV
             if not csv_df.empty:
-                match = csv_df[csv_df['from'] == file_path_str]
+                match = csv_df[csv_df['from'] == original_path]
                 if not match.empty:
-                    new_row.update(match.iloc[0].to_dict()); new_row['status'] = 'Original'
-                else:
-                    match = csv_df[csv_df['to'] == file_path.name]
-                    if not match.empty:
-                        new_row.update(match.iloc[0].to_dict()); new_row['from'] = file_path_str; new_row['status'] = 'Renamed'
-            reconciled_data.append(new_row)
+                    data_row = match.iloc[0].to_dict()
+                    status = "Renamed" if current_path_str != original_path else "Original"
+
+            # Build the final row for the main DataFrame
+            final_row = {'current_path': current_path_str, 'status': status}
+            for col in expected_cols:
+                final_row[col] = data_row.get(col, '')
+            final_row['from'] = original_path # Ensure 'from' is always the original path
+            
+            reconciled_data.append(final_row)
+        
+        # Add rows for files that are in the CSV but not on disk (e.g., deleted)
+        if not csv_df.empty:
+            missing_files_df = csv_df[~csv_df['from'].isin(seen_original_paths)]
+            for _, row in missing_files_df.iterrows():
+                final_row = row.to_dict()
+                final_row['current_path'] = "File not found"
+                final_row['status'] = "Missing"
+                reconciled_data.append(final_row)
 
         self.app_state.current_df = pd.DataFrame(reconciled_data)
         if 'photo_ID' not in self.app_state.current_df.columns or self.app_state.current_df['photo_ID'].isnull().any():
@@ -189,14 +231,14 @@ class ReviewTabHandler(QObject):
             self.filtered_df, self.total_pages, self.current_page = pd.DataFrame(), 1, 0
             return
 
-        display_df = df
+        display_df = df[df['status'] != 'Missing'] # Don't show missing files unless specifically asked
         if self.ui.show_duplicates_checkbox.isChecked():
             main_col = self.app_state.settings['main_column']
             if main_col in df.columns:
                 valid_ids = df.loc[df[main_col].notna() & (df[main_col] != ''), main_col]
                 id_counts = valid_ids.value_counts()
                 mismatched_ids = id_counts[id_counts != 2].index
-                display_df = df[df[main_col].isin(mismatched_ids)]
+                display_df = display_df[display_df[main_col].isin(mismatched_ids)]
 
         self.filtered_df = display_df.reset_index(drop=True)
         items_per_page = self.app_state.settings.get('review_items_per_page', 50)
@@ -232,12 +274,14 @@ class ReviewTabHandler(QObject):
             for identifier, group in page_df.groupby(main_col, sort=False, dropna=False):
                 for _, row in group.iterrows():
                     total_count = id_counts_total.get(identifier, 0) if pd.notna(identifier) else 0
+                    # Note: We now pass the 'current_path' for display and loading
                     item_widget = ReviewItemWidget(row.name, row.to_dict(), main_col, total_count)
                     item_widget.data_changed.connect(lambda w=item_widget: self._sync_df_from_review_item(w))
                     item_widget.data_changed.connect(self._handle_autosave)
                     self.ui.add_item_to_grid(grid_row, grid_col, item_widget)
                     
-                    if img_path := Path(row['from']):
+                    if img_path_str := row.get('current_path'):
+                        img_path = Path(img_path_str)
                         if img_path.exists():
                             self.path_to_widget_map[str(img_path)] = item_widget
                             item_widget.image_label.setFilePath(str(img_path))
@@ -247,7 +291,7 @@ class ReviewTabHandler(QObject):
                     grid_col += 1
                     if grid_col >= 2: grid_col, grid_row = 0, grid_row + 1
                 
-                if grid_col == 1: self.ui.add_item_to_grid(grid_row, 1, QWidget())
+                if grid_col == 1: self.ui.add_item_to_grid(grid_row, 1, QWidget()) # Fill empty cell
                 if grid_col != 0: grid_col, grid_row = 0, grid_row + 1
             
             if image_paths_to_load:
@@ -259,9 +303,10 @@ class ReviewTabHandler(QObject):
     def _sync_df_from_review_item(self, sender_widget: ReviewItemWidget):
         data = sender_widget.get_data()
         idx = data.pop('df_index')
+        # Sync with both DataFrames to keep UI filters consistent until next refresh
         for df in [self.app_state.current_df, self.filtered_df]:
              for col, value in data.items():
-                if col in df.columns and idx in df.index:
+                if col in df.columns and idx < len(df):
                     df.loc[idx, col] = value
                
     def start_image_load_worker(self, paths):
@@ -302,82 +347,106 @@ class ReviewTabHandler(QObject):
             settings['custom_suffixes']
         )
         
+        # After calculating names, save them to a new 'checked' file and refresh
         self.create_checked_csv(
             success_message="'To' column recalculated and saved to a new 'checked' file."
         )
 
     def rename_files(self):
+        """
+        Renames files on disk based on the 'to' column and logs the changes
+        in 'rename_log.csv'.
+        """
         if self.app_state.current_df.empty or 'to' not in self.app_state.current_df.columns:
-            return QMessageBox.warning(self.main_window, "No Data", "No data loaded or 'to' column is missing.")
-        if QMessageBox.question(self.main_window, "Confirm Rename", "This will rename files on your disk. Are you sure?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.No:
+            QMessageBox.warning(self.main_window, "No Data", "No data loaded or 'to' column is missing. Please 'Recalculate Final Names' first.")
+            return
+        
+        if QMessageBox.question(self.main_window, "Confirm Rename", "This will rename files on your disk based on the 'to' column. Are you sure?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.No:
             return
        
         self.logger.info("--- Starting File Rename Process ---")
         log_entries, renamed_count, error_count = [], 0, 0
         df = self.app_state.current_df
 
-        for idx, row in df.iterrows():
-            if row.get('skip') == 'x' or pd.isna(row.get('to')) or not row.get('to'): continue
-            
-            src_path, dst_name = Path(row['from']), row['to']
+        # Filter for rows that actually need renaming
+        rename_df = df[(df['to'].notna()) & (df['to'] != '') & (df['skip'] != 'x')].copy()
+
+        for idx, row in rename_df.iterrows():
+            # The source is ALWAYS the 'current_path' from the reconciled view
+            src_path = Path(row['current_path'])
+            dst_name = row['to']
             dst_path = src_path.parent / dst_name
-            if src_path == dst_path: continue
 
             if not src_path.exists():
-                self.logger.warn(f"Skipping. Source not found: {src_path.name}"); continue
-            
+                self.logger.warn(f"Skipping rename. Source not found: {src_path.name}"); continue
+            if src_path == dst_path: continue # No change needed
+            if dst_path.exists():
+                self.logger.error(f"Cannot rename {src_path.name}, destination {dst_path.name} already exists."); error_count += 1; continue
+
             try:
+                # The original path is ALWAYS what's in the 'from' column
+                original_path_str = row['from']
+                
+                # Rename the main (compressed) file
                 src_path.rename(dst_path)
                 self.logger.info(f"Renamed: '{src_path.name}' -> '{dst_path.name}'")
-                df.at[idx, 'from'] = str(dst_path) 
-                df.at[idx, 'to'] = '' 
-                log_entries.append({'original_path': str(src_path), 'new_path': str(dst_path)})
+                log_entries.append({'original_path': original_path_str, 'new_path': str(dst_path)})
                 renamed_count += 1
-
-                original_base_name = src_path.stem
+                
+                # Handle RAW counterparts
+                original_base_name = Path(original_path_str).stem
                 new_base_name = dst_path.stem
-                for raw_file in Path(src_path.parent).glob(f"{original_base_name}.*"):
-                    if raw_file.suffix.lower() in SUPPORTED_RAW_EXTENSIONS:
+                
+                for raw_file in src_path.parent.glob(f"{Path(src_path).stem}.*"):
+                     if raw_file.suffix.lower() in SUPPORTED_RAW_EXTENSIONS:
                         raw_dst_path = raw_file.with_name(f"{new_base_name}{raw_file.suffix}")
+                        original_raw_path = raw_file.with_name(f"{original_base_name}{raw_file.suffix}")
                         raw_file.rename(raw_dst_path)
                         self.logger.info(f"Renamed RAW: '{raw_file.name}' -> '{raw_dst_path.name}'")
-                        log_entries.append({'original_path': str(raw_file), 'new_path': str(raw_dst_path)})
-                        renamed_count += 1
-                        break
+                        log_entries.append({'original_path': str(original_raw_path), 'new_path': str(raw_dst_path)})
+                        break # Assume only one RAW file per compressed file
 
             except Exception as e:
                 self.logger.error(f"Could not rename {src_path.name} or its counterpart", exception=e); error_count += 1
        
         if log_entries:
             log_path = Path(self.app_state.rename_files_dir) / "rename_log.csv"
-            pd.DataFrame(log_entries).to_csv(log_path, mode='a', header=not log_path.exists(), index=False)
+            new_log_df = pd.DataFrame(log_entries)
+            # Append to existing log or create new one
+            new_log_df.to_csv(log_path, mode='a', header=not log_path.exists(), index=False)
         
+        # After renaming, clear the 'to' column in the DataFrame for the next state
+        df.loc[rename_df.index, 'to'] = ''
         self.app_state.current_df = df
-        self.create_checked_csv("Rename complete. Saved state to new 'checked' file.")
+        
+        self.create_checked_csv(f"Rename complete: {renamed_count} files renamed, {error_count} errors. Saved state to new 'checked' file.")
+        # The refresh_view will automatically pick up the new names from disk
         self.refresh_view()
         
     def restore_file_names(self):
         log_path = Path(self.app_state.rename_files_dir) / "rename_log.csv"
-        if not log_path.exists(): return QMessageBox.warning(self.main_window, "Not Found", "rename_log.csv not found.")
-        if QMessageBox.question(self.main_window, "Confirm Restore", "Restore filenames based on the log?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.No: return
+        if not log_path.exists(): return QMessageBox.warning(self.main_window, "Not Found", "rename_log.csv not found. Nothing to restore.")
+        if QMessageBox.question(self.main_window, "Confirm Restore", "This will restore ALL filenames recorded in the log file. This action archives the current log. Are you sure?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.No: return
         
         try:
             log_df = pd.read_csv(log_path)
             restored_count, error_count = 0, 0
             
+            # Iterate backwards to avoid conflicts if a file was renamed multiple times
             for _, row in log_df.iloc[::-1].iterrows():
                 src_path, dst_path = Path(row['new_path']), Path(row['original_path'])
                 if not src_path.exists(): continue
                 try:
                     if dst_path.exists():
-                         self.logger.error(f"Cannot restore {src_path.name}, destination {dst_path.name} already exists.")
+                         self.logger.error(f"Cannot restore '{src_path.name}', destination '{dst_path.name}' already exists.")
                          error_count += 1; continue
                     src_path.rename(dst_path)
                     restored_count += 1
                 except Exception as e: 
-                    self.logger.error(f"Could not restore {src_path.name}", exception=e); error_count += 1
+                    self.logger.error(f"Could not restore '{src_path.name}'", exception=e); error_count += 1
             
             if restored_count > 0:
+                # Archive the log file so it's not used again
                 archive_name = f"rename_log_{datetime.now():%Y%m%d_%H%M%S}.csv.restored"
                 log_path.rename(log_path.with_name(archive_name))
             
@@ -390,33 +459,32 @@ class ReviewTabHandler(QObject):
     def _get_base_csv_name(self, filename: str) -> str:
         """Strips prefixes and timestamps to get a clean base filename."""
         if not filename:
-            return "review_state"
+            # If no file is loaded, create a name based on the input folder
+            folder_name = Path(self.app_state.input_directory).name
+            return f"{folder_name}_review" if folder_name else "review_state"
 
         base_name = filename
-        if base_name.startswith("autosave_"):
-            base_name = base_name[len("autosave_"):]
-        elif base_name.startswith("checked_"):
-            base_name = base_name[len("checked_"):]
+        if base_name.startswith("autosave_"): base_name = base_name[len("autosave_"):]
+        elif base_name.startswith("checked_"): base_name = base_name[len("checked_"):]
 
         base_name, _ = os.path.splitext(base_name)
-        base_name = re.sub(r'_\d{8}_\d{6}', '', base_name, 1)
-
+        base_name = re.sub(r'_\d{8}_\d{6}', '', base_name, 1) # Remove timestamp
         return base_name
 
     def _handle_autosave(self):
         """Saves the current DataFrame state to a temporary autosave file."""
-        if self.app_state.current_df.empty:
-            return
+        if self.app_state.current_df.empty: return
 
         loaded_csv = self.ui.csv_dropdown.currentText()
-        if not loaded_csv:
-            return
-
+        # Even if no CSV is loaded, we can autosave the current state
         base_name = self._get_base_csv_name(loaded_csv)
         autosave_filename = f"autosave_{base_name}.csv"
 
-        self._save_df_to_file(autosave_filename)
-        self.logger.info(f"Autosaved changes to {autosave_filename}")
+        try:
+            self._save_df_to_file(autosave_filename)
+            self.logger.info(f"Autosaved changes to {autosave_filename}")
+        except Exception as e:
+            self.logger.warn(f"Autosave failed for {autosave_filename}", exception=e)
 
     def create_checked_csv(self, success_message=None):
         """Saves the current state to a new, timestamped 'checked' file."""
@@ -432,6 +500,7 @@ class ReviewTabHandler(QObject):
             self._save_df_to_file(new_filename)
             self.logger.info(f"Created new checked file: {new_filename}")
 
+            # Refresh the dropdown and select the newly created file
             self.refresh_csv_dropdown()
             new_index = self.ui.csv_dropdown.findText(new_filename)
             if new_index > -1:
@@ -445,13 +514,14 @@ class ReviewTabHandler(QObject):
             QMessageBox.critical(self.main_window, "Error", f"Could not save changes: {e}")
 
     def _save_df_to_file(self, filename: str):
-        """Saves the current DataFrame to a specific file."""
+        """Saves the current DataFrame to a specific file, dropping transient columns."""
         if self.app_state.current_df.empty:
             raise ValueError("Cannot save an empty DataFrame.")
 
         save_path = Path(self.app_state.rename_files_dir) / filename
         
-        df_to_save = self.app_state.current_df.drop(columns=['status'], errors='ignore')
+        # Drop columns that are determined at runtime to keep CSVs clean
+        df_to_save = self.app_state.current_df.drop(columns=['status', 'current_path'], errors='ignore')
         df_to_save.to_csv(save_path, index=False)
         self.logger.info(f"DataFrame state saved to {save_path.name}")
 

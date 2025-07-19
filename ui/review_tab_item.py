@@ -14,23 +14,28 @@ class ReviewItemWidget(QGroupBox):
     data_changed = pyqtSignal()
 
     def __init__(self, df_index: int, item_data: dict, main_column: str, count: int, parent=None):
-        super().__init__(os.path.basename(item_data.get('from', 'N/A')), parent)
+        # --- MODIFIED: Use 'current_path' for the title to show the current filename ---
+        super().__init__(os.path.basename(item_data.get('current_path', 'N/A')), parent)
         self.df_index = df_index
         self.main_column = main_column
         self.fields = {}
         self._setup_ui(item_data)
         
-        if count != 2 and item_data.get(main_column): # Only show warning if there's an identifier
+        # Display a warning if the count of items with this ID is not 2
+        if count != 2 and item_data.get(main_column):
             self.set_warning(f"Warning: Appears {count} times in total.")
         else:
             self.clear_warning()
         
+        # Display the runtime status of the file
         status = item_data.get('status', '')
         if status == 'Renamed':
             self.set_status("Already Renamed", "color: #FF8C00;") # Orange
         elif status == 'New':
             self.set_status("New File", "color: #32CD32;") # LimeGreen
-        else:
+        elif status == 'Missing':
+            self.set_status("File Missing", "color: #F08080;") # LightCoral
+        else: # 'Original' status
             self.status_label.setVisible(False)
 
 
@@ -57,9 +62,12 @@ class ReviewItemWidget(QGroupBox):
         self.image_label.setStyleSheet("background-color:#333; color:white;")
         main_layout.addWidget(self.image_label, 1)
         
+        # The 'from' column (original path) is now just for data, not display
         self._add_field_row(f"{self.main_column}:", 'main_column', item_data.get(self.main_column, ''))
         self._add_field_row("To:", 'to', item_data.get('to', ''))
         if 'co' in item_data: self._add_field_row("Crossed Out:", 'co', item_data.get('co', ''))
+        if 'n' in item_data: self._add_field_row("Notes:", 'n', item_data.get('n', ''))
+
         if 'skip' in item_data:
             self.fields['skip'] = QCheckBox("Skip this file")
             self.fields['skip'].setChecked(item_data.get('skip', '') == 'x')
@@ -95,5 +103,9 @@ class ReviewItemWidget(QGroupBox):
         for key, widget in self.fields.items():
             if isinstance(widget, QLineEdit): data[key] = widget.text().strip()
             elif isinstance(widget, QCheckBox): data[key] = 'x' if widget.isChecked() else ''
-        if 'main_column' in data: data[self.main_column] = data.pop('main_column')
+        
+        # Special handling for the main column to use the correct key
+        if 'main_column' in self.fields:
+             data[self.main_column] = data.pop('main_column')
+
         return data
