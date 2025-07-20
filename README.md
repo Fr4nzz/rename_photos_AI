@@ -29,11 +29,32 @@ The AI Photo Processor is a desktop application designed to streamline the proce
   - **Rename & Log**: Execute the renaming for both compressed files and their corresponding RAW pairs. All operations are logged.
   - **Restore Original Names**: A one-click "Restore" button uses the log file to revert all renamed files back to their original names.
 
+## Download Standalone App
+
+Ready-to-use standalone applications are available for both Windows and macOS, with no installation required. Just download, unzip, and run!
+
+[**Download Standalone Apps**](https://drive.google.com/drive/folders/1LnEkWZvFuysoqhRLQzDt3aqLw_tX2wW7?usp=sharing)
+
+*   **Windows**: `(New_version)_Windows_Rename_Photos_AI_v2.zip`
+*   **macOS**: `Rename_Photos_AI_macOS.zip`
+
+The prebuilt `.zip` file for Windows includes ExifTool v13.32 (downloaded from the official [ExifTool website](https://exiftool.org/)) so you can start processing RAW images right away.
+
+The contents of the Windows zip file are:
+```
+(New_version)_Windows_Rename_Photos_AI_v2/
+│
+├── AIPhotoProcessor.exe
+├── exiftool.exe
+└── exiftool_files/
+├── ... (files required by exiftool)
+```
+
 ## Prerequisites
 
-- **Python**: Python 3.9 or newer.
-- **ExifTool**: Required for rotating RAW image files (.CR2, .ORF, etc.). Download it from the official ExifTool website and ensure its location is added to your system's PATH or specified within the app.
-- **Google Gemini API Key**: You need at least one API key, which you can get from Google AI Studio.
+*   **Google Gemini API Key**: You need at least one API key to use the AI features. You can get your key from [Google AI Studio](https://aistudio.google.com/app/apikey).
+*   **Python (for source code users)**: If you are running the application from the source code, you will need Python 3.9 or newer.
+*   **ExifTool (for source code users, included in prebuilt)**: Required for rotating RAW image files (.CR2, .ORF, etc.). Download it from the official [ExifTool website](https://exiftool.org/) and ensure its location is added to your system's PATH or specified within the app. (Note: ExifTool is already included in the standalone Windows version).
 
 ## Installation
 
@@ -79,4 +100,4 @@ python main.py
 2. The most recent CSV data file will be loaded automatically.
 3. Review the extracted data and make any corrections in the text fields. Changes are autosaved.
 4. When you are satisfied with the data, click "Recalculate Final Names" to generate the new filenames in the 'to' column. This will create a new 'checked' version of your CSV.
-5. Finally, click "Rename Files" to apply the new names to your image files on disk. 
+5. Finally, click "Rename Files" to apply the new names to your image files on disk.
