@@ -1,6 +1,7 @@
 # ai-photo-processor/app_state.py
 
 import os
+import sys  # <--- IMPORT ADDED
 import shutil
 import json
 import pandas as pd
@@ -60,16 +61,28 @@ class AppState:
             'use_exif': True, 'preview_raw': False, 'review_crop_enabled': True,
             'review_items_per_page': 50,
             'review_thumb_height': '720p',
-            'suffix_mode': 'Standard',  # New setting
-            'custom_suffixes': 'd,v',  # New setting
+            'suffix_mode': 'Standard',
+            'custom_suffixes': 'd,v',
             'crop_settings': {
                 'top': 0.1, 'bottom': 0.0, 'left': 0.0, 'right': 0.5,
                 'zoom': True, 'grayscale': True
             }
         }
 
-        script_dir = Path(__file__).resolve().parent
-        self._config_path = script_dir / CONFIG_DIR_NAME
+        # --- MODIFIED BLOCK START ---
+        # Determine the base path for config files, works for both script and bundled .exe
+        if getattr(sys, 'frozen', False):
+            # Running as a bundled executable
+            base_path = Path(sys.executable).parent
+            self.logger.info(f"Running as a bundled app. Base path: {base_path}")
+        else:
+            # Running as a script
+            base_path = Path(__file__).resolve().parent
+            self.logger.info(f"Running as a script. Base path: {base_path}")
+
+        self._config_path = base_path / CONFIG_DIR_NAME
+        # --- MODIFIED BLOCK END ---
+        
         ensure_directory_exists(self._config_path)
 
         self._load_configuration_from_disk()
@@ -87,11 +100,11 @@ class AppState:
                         d[k] = v
                 return d
             self.settings = recursive_update(self.settings, saved_settings)
-            self.logger.info(f"Loaded settings from {SETTINGS_FILE}")
+            self.logger.info(f"Loaded settings from {settings_path}")
         except FileNotFoundError:
-            self.logger.info(f"{SETTINGS_FILE} not found. Using default settings.")
+            self.logger.info(f"{settings_path} not found. Using default settings.")
         except (json.JSONDecodeError, TypeError) as e:
-            self.logger.warn(f"Could not parse {SETTINGS_FILE}. Using default settings. Error: {e}")
+            self.logger.warn(f"Could not parse {settings_path}. Using default settings. Error: {e}")
 
         keys_path = self._config_path / API_KEYS_FILE
         if keys_path.exists():
@@ -109,9 +122,9 @@ class AppState:
         try:
             with open(settings_path, 'w', encoding='utf-8') as f:
                 json.dump(self.settings, f, indent=4)
-            self.logger.info(f"Settings saved to {settings_path.name}")
+            self.logger.info(f"Settings saved to {settings_path}")
         except Exception as e:
-            self.logger.error(f"Failed to save settings to {settings_path.name}", exception=e)
+            self.logger.error(f"Failed to save settings to {settings_path}", exception=e)
 
     def save_api_keys(self):
         path = self._config_path / API_KEYS_FILE
