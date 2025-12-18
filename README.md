@@ -6,31 +6,20 @@ The AI Photo Processor is a desktop application designed to streamline the proce
 
 ## Key Features
 
-### Automated Data Extraction
-- **Gemini Vision Integration**: Uses Google's AI (via the official `google-genai` SDK) to perform Optical Character Recognition (OCR) on your images, extracting specimen IDs, notes, and other data based on a customizable prompt.
-- **Smart Model Selection**: The model dropdown automatically filters to show only compatible vision models (Gemini 2.5+), sorted with Flash models first for free-tier compatibility. Choose between faster (Gemini Flash) or more capable (Gemini Pro) models.
-- **Batch Processing**: Process entire folders of images in manageable batches, with progress displayed in real-time.
-- **Multi-API Key Support**: Enter multiple Gemini API keys. The application will automatically rotate through them if one hits a rate limit, ensuring long-running jobs can complete without interruption.
+### AI-Powered Data Extraction
+- **Gemini Vision OCR**: Extract specimen IDs, notes, and other data using Google's Gemini API (`google-genai` SDK) with customizable prompts
+- **Smart Model Selection**: Auto-filters to vision-capable models (2.5+), Flash models first for free-tier compatibility
+- **Batch Processing**: Process folders in batches with real-time progress and multi-API key rotation for rate limit handling
 
-### Powerful Image Processing Workflow
-- **Live Previews**: See exactly how your images are processed before sending them to the API with live previews for rotation, cropping, and batch merging.
-- **Advanced Rotation**: Apply rotation (0°, 90°, 180°, 270°) to entire folders. It safely modifies EXIF orientation tags for all common image types, including:
-  - **JPEG** (.jpg, .jpeg) - using piexif for fast native processing
-  - **HEIC/HEIF** (.heic, .heif) - full support including EXIF reading via pillow-heif and writing via exiftool
-  - **RAW formats** (.CR2, .ORF, .TIF) - requires exiftool
-- **Customizable Pre-processing**:
-  - **Cropping**: Visually define a crop area to focus the AI on the relevant part of your images.
-  - **Grayscale Filter**: Convert images to grayscale to potentially improve OCR accuracy.
+### Image Processing
+- **Live Previews**: Preview rotation, cropping, and batch merging before sending to API
+- **EXIF-Safe Rotation**: Modify orientation tags (not pixels) for JPEG (piexif), HEIC/HEIF (pillow-heif + exiftool), and RAW formats (exiftool)
+- **Pre-processing Options**: Crop to focus area, grayscale filter for improved OCR
 
-### Efficient Review & Renaming Interface
-- **Smart Data Review**: Displays images grouped by their extracted ID, making it easy to verify pairs and spot errors. The interface highlights items that don't have a matching pair.
-- **Pair Verification**: Easily identify missing or duplicate wing pairs (dorsal/ventral).
-- **In-Line Editing**: Directly edit all data in text fields next to each image. Changes are autosaved to a temporary file to prevent data loss.
-- **Pagination & Quality Control**: For very large folders, the review tab is paginated for fast performance. You can also adjust the thumbnail quality to balance detail and memory usage.
-- **Safe Renaming**:
-  - **Calculate Final Names**: Automatically generate new filenames based on the corrected IDs and a defined suffix pattern.
-  - **Rename & Log**: Execute the renaming for both compressed files and their corresponding RAW pairs. All operations are logged.
-  - **Restore Original Names**: A one-click "Restore" button uses the log file to revert all renamed files back to their original names.
+### Review & Rename
+- **Smart Review Grid**: Images grouped by ID with pair verification and mismatch highlighting
+- **In-Line Editing**: Edit data directly with autosave; paginated view with adjustable thumbnail quality
+- **Safe Renaming**: Generate filenames from IDs, rename with RAW pairing, full undo via logged restore
 
 ## Download Standalone App
 

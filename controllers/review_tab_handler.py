@@ -8,10 +8,11 @@ from pathlib import Path
 from datetime import datetime
 
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QMainWindow, QWidget
-from PyQt5.QtCore import QThread, QObject
+from PyQt5.QtCore import QThread
 from PyQt5.QtGui import QPixmap, QImage
 
 from app_state import AppState
+from controllers.base_handler import BaseTabHandler
 from ui.review_tab import ReviewResultsTab
 from ui.review_tab_item import ReviewItemWidget
 from workers import ImageLoadWorker
@@ -25,15 +26,11 @@ QUALITY_TO_HEIGHT = {
     "Original": 0
 }
 
-class ReviewTabHandler(QObject):
-    """Controller for all logic related to the Review Results tab."""
+class ReviewTabHandler(BaseTabHandler):
 
     def __init__(self, ui: ReviewResultsTab, app_state: AppState, logger: SimpleLogger, main_window: QMainWindow):
-        super().__init__()
-        self.ui = ui
-        self.app_state = app_state
-        self.logger = logger
-        self.main_window = main_window
+        super().__init__(ui, app_state, logger, main_window)
+        # ReviewTabHandler uses different naming for worker variables
         self.image_load_worker = None
         self.image_load_thread = None
         self.path_to_widget_map = {}
@@ -78,37 +75,30 @@ class ReviewTabHandler(QObject):
         self._update_suffix_widgets_visibility()
 
     def _sync_settings_from_ui(self):
-        """Read values from the UI and update the app_state."""
         self.app_state.settings['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
-
         items_per_page = safe_int(self.ui.items_per_page_input.text(), default=50)
         self.app_state.settings['review_items_per_page'] = max(1, items_per_page)
-
         self.app_state.settings['review_thumb_height'] = self.ui.image_quality_dropdown.currentText()
         self.app_state.settings['suffix_mode'] = self.ui.suffix_mode_dropdown.currentText()
         self.app_state.settings['custom_suffixes'] = self.ui.custom_suffix_input.text()
 
     def stop_worker(self):
-        """Safely stops the image load worker thread with timeout handling."""
+        """Stop image load worker (uses different var names than base class)."""
         if self.image_load_thread and self.image_load_thread.isRunning():
             self.image_load_worker.stop()
             self.image_load_thread.quit()
-            # Wait up to 3 seconds for graceful shutdown
             if not self.image_load_thread.wait(3000):
                 self.logger.warn("Image load thread did not stop gracefully, forcing termination.")
                 self.image_load_thread.terminate()
-                self.image_load_thread.wait(1000)  # Brief wait after terminate
-            # Clear references
+                self.image_load_thread.wait(1000)
             self.image_load_thread = None
             self.image_load_worker = None
     
     def _handle_suffix_mode_change(self):
-        """Syncs settings and updates widget visibility when the suffix mode changes."""
         self._sync_settings_from_ui()
         self._update_suffix_widgets_visibility()
 
     def _update_suffix_widgets_visibility(self):
-        """Shows or hides the custom suffix input based on the dropdown selection."""
         is_custom_mode = (self.ui.suffix_mode_dropdown.currentText() == "Custom")
         self.ui.custom_suffix_label.setVisible(is_custom_mode)
         self.ui.custom_suffix_input.setVisible(is_custom_mode)
@@ -230,7 +220,6 @@ class ReviewTabHandler(QObject):
         self._populate_review_grid()
 
     def _apply_filters_and_update_pages(self):
-        """Applies UI filters to the main DataFrame and resets pagination."""
         df = self.app_state.current_df
         if df.empty:
             self.filtered_df, self.total_pages, self.current_page = pd.DataFrame(), 1, 0
@@ -252,7 +241,6 @@ class ReviewTabHandler(QObject):
         self.current_page = 0
 
     def _populate_review_grid(self):
-        """Populates the grid with items for the CURRENT page."""
         try:
             self.stop_worker()
             self.ui.clear_grid()

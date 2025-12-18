@@ -7,10 +7,11 @@ from pathlib import Path
 from PIL import Image
 
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QMainWindow
-from PyQt5.QtCore import Qt, QUrl, QThread, QObject
+from PyQt5.QtCore import Qt, QUrl, QThread
 from PyQt5.QtGui import QPixmap, QImage, QDesktopServices
 
 from app_state import AppState, DEFAULT_PROMPT
+from controllers.base_handler import BaseTabHandler
 from ui.process_tab import ProcessImagesTab
 from workers import RotationWorker, GeminiWorker
 from utils.file_management import get_image_files, SUPPORTED_RAW_EXTENSIONS
@@ -21,17 +22,10 @@ from utils.helpers import safe_int, safe_float
 from utils.logger import SimpleLogger
 
 
-class ProcessTabHandler(QObject):
-    """Controller for all logic related to the Process Images tab."""
+class ProcessTabHandler(BaseTabHandler):
 
     def __init__(self, ui: ProcessImagesTab, app_state: AppState, logger: SimpleLogger, main_window: QMainWindow):
-        super().__init__()
-        self.ui = ui
-        self.app_state = app_state
-        self.logger = logger
-        self.main_window = main_window
-        self.worker_thread = None
-        self.current_worker = None
+        super().__init__(ui, app_state, logger, main_window)
 
     def connect_signals(self):
         self.ui.browse_button.clicked.connect(self.select_directory)
@@ -62,7 +56,6 @@ class ProcessTabHandler(QObject):
             label.clicked.connect(self.on_preview_label_clicked)
 
     def populate_initial_ui(self):
-        """Populates all UI elements with values from the application state."""
         path = self.app_state.input_directory
         self.ui.dir_path_label.setText(path or "(No folder selected)")
         self.ui.dir_path_label.setFilePath(path)
@@ -136,7 +129,6 @@ class ProcessTabHandler(QObject):
         QMessageBox.information(self.main_window, "Success", "Settings have been saved.")
 
     def restore_default_prompt(self):
-        """Restores the default prompt and saves the settings."""
         self.app_state.settings['prompt_text'] = DEFAULT_PROMPT
         self.ui.prompt_text_edit.setPlainText(DEFAULT_PROMPT)
         self.save_settings()
@@ -268,8 +260,6 @@ class ProcessTabHandler(QObject):
         self.worker_thread.start()
         self.set_ui_processing_state(True)
 
-    def stop_worker(self):
-        if self.current_worker: self.current_worker.stop()
 
     def set_ui_processing_state(self, is_processing: bool):
         self.ui.start_processing_button.setEnabled(not is_processing)
@@ -295,19 +285,6 @@ class ProcessTabHandler(QObject):
         self._cleanup_worker_thread()
         self.update_progress_bar(0, "Error")
         self.populate_continue_dropdown()  # Refresh options after error
-
-    def _cleanup_worker_thread(self):
-        """Safely cleans up the worker thread with timeout handling."""
-        if self.worker_thread:
-            self.worker_thread.quit()
-            # Wait up to 5 seconds for graceful shutdown
-            if not self.worker_thread.wait(5000):
-                self.logger.warn("Worker thread did not stop gracefully, forcing termination.")
-                self.worker_thread.terminate()
-                self.worker_thread.wait(1000)  # Brief wait after terminate
-        # Clear references
-        self.worker_thread = None
-        self.current_worker = None
 
     def update_progress_bar(self, value: int, text_format: str):
         self.ui.progress_bar.setFormat(text_format)
@@ -405,7 +382,6 @@ class ProcessTabHandler(QObject):
             self.ui.combined_preview_label.setFilePath("")
 
     def populate_continue_dropdown(self):
-        """Scans for partial output files and populates the continue dropdown."""
         self.ui.continue_dropdown.clear()
         self.ui.continue_dropdown.addItem("Start Over", "")
 
@@ -432,11 +408,7 @@ class ProcessTabHandler(QObject):
             self.logger.warn("Could not populate continue dropdown, rename_files directory not found.")
 
     def update_models_dropdown(self):
-        """Fetches available Gemini models and populates the dropdown.
-
-        Filters to show only useful multimodal text models (gemini-2.5+).
-        Sorts with Flash models BEFORE Pro (free-tier friendly).
-        """
+        """Fetch Gemini models (2.5+), Flash before Pro."""
         self.ui.model_dropdown.clear()
 
         if not self.app_state.api_keys:

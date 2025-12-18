@@ -23,67 +23,33 @@ JPEG_EXTENSIONS = {'.jpg', '.jpeg'}
 
 
 def _get_heic_orientation(img_path: Path) -> int:
-    """
-    Reads EXIF orientation from HEIC/HEIF files using pillow-heif.
-
-    Returns:
-        The EXIF orientation tag value (1-8), or 1 if not found.
-    """
+    """Read EXIF orientation from HEIC files via pillow-heif."""
     try:
         import pillow_heif
-
-        heif_file = pillow_heif.open_heif(str(img_path))
-
-        # Look for EXIF metadata in the heif_file.info
-        metadata_list = heif_file.info.get('metadata', [])
-        for metadata in metadata_list:
-            if metadata.get('type') == 'Exif':
-                exif_data = metadata.get('data', b'')
-
-                # EXIF data may have "Exif\x00\x00" header that piexif doesn't expect
-                # Strip it if present
-                if exif_data.startswith(b'Exif\x00\x00'):
-                    exif_data = exif_data[6:]
-
-                # Now try to parse with piexif
-                if exif_data:
-                    try:
-                        exif_dict = piexif.load(exif_data)
-                        orientation = exif_dict.get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
-                        return orientation
-                    except (piexif.InvalidImageDataError, ValueError, KeyError):
-                        pass
-
-        # Fallback: check if pillow-heif exposed orientation directly
-        # Some versions put it in info dict
-        if 'exif' in heif_file.info:
-            try:
-                exif_dict = piexif.load(heif_file.info['exif'])
-                return exif_dict.get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
-            except (piexif.InvalidImageDataError, ValueError, KeyError):
-                pass
-
+        heif = pillow_heif.open_heif(str(img_path))
+        for meta in heif.info.get('metadata', []):
+            if meta.get('type') == 'Exif':
+                data = meta.get('data', b'')
+                if data.startswith(b'Exif\x00\x00'):
+                    data = data[6:]
+                if data:
+                    return piexif.load(data).get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
+        if 'exif' in heif.info:
+            return piexif.load(heif.info['exif']).get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
     except Exception:
         pass
-
-    return 1  # Default: no rotation
+    return 1
 
 
 def _get_orientation_via_exiftool(img_path: Path, exiftool_path: str) -> int:
-    """
-    Reads EXIF orientation using exiftool subprocess.
-    Works for RAW, HEIC, and any format exiftool supports.
-
-    Returns:
-        The EXIF orientation tag value (1-8), or 1 if not found.
-    """
+    """Read EXIF orientation via exiftool (works for RAW, HEIC, etc.)."""
     try:
-        command = [exiftool_path, "-n", "-Orientation", str(img_path)]
-        result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=10)
-        if result.returncode == 0 and result.stdout:
-            match = re.search(r':\s*(\d+)', result.stdout)
-            if match:
-                return int(match.group(1))
+        result = subprocess.run(
+            [exiftool_path, "-n", "-Orientation", str(img_path)],
+            capture_output=True, text=True, check=False, timeout=10
+        )
+        if result.returncode == 0 and (match := re.search(r':\s*(\d+)', result.stdout)):
+            return int(match.group(1))
     except (subprocess.TimeoutExpired, ValueError, OSError):
         pass
     return 1
@@ -104,9 +70,7 @@ def fix_orientation(img: Image.Image) -> Image.Image:
     return img.transpose(orientation_map[orientation]) if orientation in orientation_map else img
 
 def decode_raw_image(image_path: Path, use_exif: bool) -> Optional[Image.Image]:
-    """
-    Decodes a RAW file into a viewable PIL Image, respecting the 'use_exif' flag.
-    """
+    """Decode RAW file to PIL Image. If use_exif=False, ignores camera orientation."""
     try:
         with rawpy.imread(str(image_path))as raw:
             flip_override = 0 if not use_exif else None
@@ -117,53 +81,28 @@ def decode_raw_image(image_path: Path, use_exif: bool) -> Optional[Image.Image]:
         return None
 
 def get_angle_from_exif(img_path: Path, file_type: str, exiftool_path: Optional[str] = None) -> int:
-    """
-    Reads the EXIF orientation from an image and returns the equivalent angle.
-
-    Routes to the appropriate method based on file extension:
-    - HEIC/HEIF: Uses pillow-heif, falls back to exiftool
-    - JPEG: Uses piexif (fast)
-    - RAW: Uses exiftool
-    - Other: Falls back to exiftool if available
-
-    Args:
-        img_path: Path to the image file.
-        file_type: Either 'raw' or 'compressed' (used for fallback logic).
-        exiftool_path: Optional path to exiftool executable.
-
-    Returns:
-        The rotation angle in degrees (0, 90, 180, or 270).
-    """
+    """Get rotation angle (0/90/180/270) from EXIF. Routes by extension: HEIC→pillow-heif, JPEG→piexif, RAW→exiftool."""
     orientation_tag = 1
     suffix = img_path.suffix.lower()
 
     try:
         if suffix in HEIC_EXTENSIONS:
-            # HEIC/HEIF: Try pillow-heif first, fall back to exiftool
             orientation_tag = _get_heic_orientation(img_path)
             if orientation_tag == 1 and exiftool_path:
-                # Fallback to exiftool if pillow-heif didn't find orientation
                 orientation_tag = _get_orientation_via_exiftool(img_path, exiftool_path)
-
         elif suffix in JPEG_EXTENSIONS:
-            # JPEG: Use piexif (fast and reliable for JPEG)
             exif_dict = piexif.load(str(img_path))
             orientation_tag = exif_dict.get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
-
         elif suffix in SUPPORTED_RAW_EXTENSIONS or file_type == 'raw':
-            # RAW files: Must use exiftool
             if exiftool_path:
                 orientation_tag = _get_orientation_via_exiftool(img_path, exiftool_path)
-
         else:
-            # Other formats (PNG, etc.): Try piexif first, fall back to exiftool
             try:
                 exif_dict = piexif.load(str(img_path))
                 orientation_tag = exif_dict.get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
             except (piexif.InvalidImageDataError, ValueError):
                 if exiftool_path:
                     orientation_tag = _get_orientation_via_exiftool(img_path, exiftool_path)
-
     except Exception:
         pass
 
@@ -171,15 +110,7 @@ def get_angle_from_exif(img_path: Path, file_type: str, exiftool_path: Optional[
 
 
 def process_single_file_for_rotation(img_path: Path, config: Dict, logger: SimpleLogger):
-    """
-    Updates the EXIF orientation tag for a single image file.
-
-    Routes to the appropriate write method based on file extension:
-    - RAW files: Uses exiftool
-    - HEIC/HEIF: Uses exiftool (piexif can't write HEIC)
-    - JPEG: Uses piexif (fast)
-    - Other: Tries piexif, falls back to exiftool
-    """
+    """Write EXIF orientation tag. Uses exiftool for RAW/HEIC, piexif for JPEG."""
     try:
         current_angle = get_angle_from_exif(img_path, config['file_type'], config.get('exiftool_path')) if config['use_exif'] else 0
         final_angle = (current_angle + config['rotation_angle']) % 360
@@ -260,54 +191,36 @@ def get_system_font(size=50) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 def preprocess_image(image: Image.Image, label_text: str, crop_settings: Dict) -> Image.Image:
-    """
-    Applies all necessary preprocessing, with a correctly placed and sized label.
-    """
-    # 1. Apply cropping and filtering
+    """Apply crop/grayscale, add border, and overlay label text."""
     img_cropped = crop_image(image.copy(), crop_settings)
     img_processed = ImageOps.grayscale(img_cropped) if crop_settings.get('grayscale', False) else img_cropped
-
-    # 2. Add border
     img_bordered = ImageOps.expand(img_processed, border=10, fill='black')
 
-    # 3. Prepare for drawing
     img_final = img_bordered.convert('RGBA')
     draw = ImageDraw.Draw(img_final)
 
-    # 4. Define font size relative to image content height
     font_size = max(40, int(img_cropped.height / 12))
     font = get_system_font(size=font_size)
 
-    # --- FIX: Use asymmetrical padding to shrink background from the top ---
-    # 5. Define different padding for top, bottom, and sides
-    side_padding = int(font_size * 0.25)
-    top_padding = int(font_size * 0.10)      # Minimal padding above text
-    bottom_padding = int(font_size * 0.25)   # Generous padding below text
+    # Asymmetrical padding: minimal top, generous bottom
+    side_padding, top_padding, bottom_padding = int(font_size * 0.25), int(font_size * 0.10), int(font_size * 0.25)
 
-    # 6. Calculate text dimensions
     try:
         bbox = draw.textbbox((0, 0), label_text, font=font)
         text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     except AttributeError:
         text_w, text_h = draw.textsize(label_text, font=font)
 
-    # 7. Define the top of the entire label block, proportional to image height
     block_top_y = int(img_final.height * 0.04)
-
-    # 8. Define final coordinates for the text and background
     text_x = (img_final.width - text_w) // 2
     text_y = block_top_y + top_padding
 
-    bg_x1 = text_x - side_padding
-    bg_y1 = block_top_y
-    bg_x2 = text_x + text_w + side_padding
-    bg_y2 = block_top_y + top_padding + text_h + bottom_padding # Total height is now smaller
+    bg_x1, bg_y1 = text_x - side_padding, block_top_y
+    bg_x2, bg_y2 = text_x + text_w + side_padding, block_top_y + top_padding + text_h + bottom_padding
 
-    # 9. Draw the background and text
     draw.rectangle([bg_x1, bg_y1, bg_x2, bg_y2], fill=(255, 255, 255, 128))
     draw.text((text_x, text_y), label_text, fill='black', font=font)
 
-    # 10. Convert back to RGB
     return img_final.convert('RGB')
 
 

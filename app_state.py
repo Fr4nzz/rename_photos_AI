@@ -42,7 +42,6 @@ DEFAULT_PROMPT = """Extract CAM (CAM07xxxx) and notes (n) from the image.
 """
 
 class AppState:
-    """Manages the application's entire state, settings, and configuration persistence."""
 
     def __init__(self, logger: SimpleLogger):
         self.logger = logger
@@ -142,13 +141,7 @@ class AppState:
         with open(path, 'w', encoding='utf-8') as f: f.write(directory)
 
     def _find_exiftool(self) -> Optional[str]:
-        """
-        Searches for exiftool in multiple locations, in order of priority:
-        1. Bundled with PyInstaller (sys._MEIPASS)
-        2. Next to the executable
-        3. System PATH
-        4. Common Windows installation locations
-        """
+        """Search for exiftool: bundled → app dir → PATH → common Windows paths."""
         exe_name = 'exiftool.exe' if sys.platform == 'win32' else 'exiftool'
         locations_checked = []
 
