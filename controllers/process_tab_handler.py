@@ -17,6 +17,7 @@ from utils.file_management import get_image_files, SUPPORTED_RAW_EXTENSIONS
 from utils.image_processing import (
     preprocess_image, merge_images, fix_orientation, decode_raw_image
 )
+from utils.helpers import safe_int, safe_float
 from utils.logger import SimpleLogger
 
 
@@ -142,8 +143,8 @@ class ProcessTabHandler(QObject):
 
     def _sync_settings_from_ui(self):
         s, ui = self.app_state.settings, self.ui
-        s['batch_size'] = int(ui.batch_size_input.text()) if ui.batch_size_input.text().isdigit() else 9
-        s['merged_img_height'] = int(ui.merged_img_height_input.text()) if ui.merged_img_height_input.text().isdigit() else 1080
+        s['batch_size'] = safe_int(ui.batch_size_input.text(), default=9)
+        s['merged_img_height'] = safe_int(ui.merged_img_height_input.text(), default=1080)
         s['main_column'] = ui.main_column_input.text() or 'CAM'
         s['model_name'] = ui.model_dropdown.currentText()
         s['prompt_text'] = ui.prompt_text_edit.toPlainText()
@@ -151,15 +152,15 @@ class ProcessTabHandler(QObject):
         s['rotation_angle'] = ui.rotation_dropdown.currentData(Qt.UserRole)
         s['use_exif'] = ui.use_exif_checkbox.isChecked()
         s['preview_raw'] = ui.preview_raw_checkbox.isChecked()
-        try:
-            cs = s['crop_settings']
-            cs['zoom'] = ui.zoom_checkbox.isChecked()
-            cs['grayscale'] = ui.grayscale_checkbox.isChecked()
-            cs['top'] = float(ui.crop_top_input.text())
-            cs['bottom'] = float(ui.crop_bottom_input.text())
-            cs['left'] = float(ui.crop_left_input.text())
-            cs['right'] = float(ui.crop_right_input.text())
-        except (ValueError, TypeError): self.logger.warn("Invalid crop value entered.")
+
+        # Update crop settings - safe_float handles empty/invalid input gracefully
+        cs = s['crop_settings']
+        cs['zoom'] = ui.zoom_checkbox.isChecked()
+        cs['grayscale'] = ui.grayscale_checkbox.isChecked()
+        cs['top'] = safe_float(ui.crop_top_input.text(), default=cs.get('top', 0.0))
+        cs['bottom'] = safe_float(ui.crop_bottom_input.text(), default=cs.get('bottom', 0.0))
+        cs['left'] = safe_float(ui.crop_left_input.text(), default=cs.get('left', 0.0))
+        cs['right'] = safe_float(ui.crop_right_input.text(), default=cs.get('right', 0.0))
 
     def on_preview_mode_changed(self):
         self.refresh_file_dependent_ui()

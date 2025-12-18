@@ -17,6 +17,7 @@ from ui.review_tab_item import ReviewItemWidget
 from workers import ImageLoadWorker
 from utils.name_calculator import calculate_final_names
 from utils.file_management import get_image_files, SUPPORTED_RAW_EXTENSIONS
+from utils.helpers import safe_int
 from utils.logger import SimpleLogger
 
 QUALITY_TO_HEIGHT = {
@@ -79,13 +80,9 @@ class ReviewTabHandler(QObject):
     def _sync_settings_from_ui(self):
         """Read values from the UI and update the app_state."""
         self.app_state.settings['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
-        
-        try:
-            items_per_page = int(self.ui.items_per_page_input.text())
-            self.app_state.settings['review_items_per_page'] = items_per_page if items_per_page > 0 else 1
-        except (ValueError, TypeError):
-            self.app_state.settings['review_items_per_page'] = 50
-            self.ui.items_per_page_input.setText("50")
+
+        items_per_page = safe_int(self.ui.items_per_page_input.text(), default=50)
+        self.app_state.settings['review_items_per_page'] = max(1, items_per_page)
 
         self.app_state.settings['review_thumb_height'] = self.ui.image_quality_dropdown.currentText()
         self.app_state.settings['suffix_mode'] = self.ui.suffix_mode_dropdown.currentText()
@@ -118,7 +115,7 @@ class ReviewTabHandler(QObject):
         self.ui.csv_dropdown.clear()
         
         rename_dir = self.app_state.rename_files_dir
-        if rename_dir and os.path.exists(rename_dir):
+        if rename_dir and Path(rename_dir).is_dir():
             try:
                 # Filter out the rename log file from the dropdown
                 csv_files = sorted(
