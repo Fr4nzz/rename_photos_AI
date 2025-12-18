@@ -10,12 +10,84 @@ from typing import List, Dict, Tuple, Optional
 
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 
-from .file_management import get_image_files
+from .file_management import get_image_files, SUPPORTED_RAW_EXTENSIONS
 from .logger import SimpleLogger
 
 # Constants
 ORIENTATION_TO_ANGLE = { 1: 0, 2: 0, 3: 180, 4: 180, 5: 90, 6: 270, 7: 270, 8: 90 }
 ANGLE_TO_ORIENTATION = {0: 1, 90: 8, 180: 3, 270: 6}
+
+# File extension sets for EXIF handling routing
+HEIC_EXTENSIONS = {'.heic', '.heif'}
+JPEG_EXTENSIONS = {'.jpg', '.jpeg'}
+
+
+def _get_heic_orientation(img_path: Path) -> int:
+    """
+    Reads EXIF orientation from HEIC/HEIF files using pillow-heif.
+
+    Returns:
+        The EXIF orientation tag value (1-8), or 1 if not found.
+    """
+    try:
+        import pillow_heif
+
+        heif_file = pillow_heif.open_heif(str(img_path))
+
+        # Look for EXIF metadata in the heif_file.info
+        metadata_list = heif_file.info.get('metadata', [])
+        for metadata in metadata_list:
+            if metadata.get('type') == 'Exif':
+                exif_data = metadata.get('data', b'')
+
+                # EXIF data may have "Exif\x00\x00" header that piexif doesn't expect
+                # Strip it if present
+                if exif_data.startswith(b'Exif\x00\x00'):
+                    exif_data = exif_data[6:]
+
+                # Now try to parse with piexif
+                if exif_data:
+                    try:
+                        exif_dict = piexif.load(exif_data)
+                        orientation = exif_dict.get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
+                        return orientation
+                    except (piexif.InvalidImageDataError, ValueError, KeyError):
+                        pass
+
+        # Fallback: check if pillow-heif exposed orientation directly
+        # Some versions put it in info dict
+        if 'exif' in heif_file.info:
+            try:
+                exif_dict = piexif.load(heif_file.info['exif'])
+                return exif_dict.get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
+            except (piexif.InvalidImageDataError, ValueError, KeyError):
+                pass
+
+    except Exception:
+        pass
+
+    return 1  # Default: no rotation
+
+
+def _get_orientation_via_exiftool(img_path: Path, exiftool_path: str) -> int:
+    """
+    Reads EXIF orientation using exiftool subprocess.
+    Works for RAW, HEIC, and any format exiftool supports.
+
+    Returns:
+        The EXIF orientation tag value (1-8), or 1 if not found.
+    """
+    try:
+        command = [exiftool_path, "-n", "-Orientation", str(img_path)]
+        result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=10)
+        if result.returncode == 0 and result.stdout:
+            match = re.search(r':\s*(\d+)', result.stdout)
+            if match:
+                return int(match.group(1))
+    except (subprocess.TimeoutExpired, ValueError, OSError):
+        pass
+    return 1
+
 
 def fix_orientation(img: Image.Image) -> Image.Image:
     """Rotates a PIL Image to respect its EXIF orientation tag for viewing."""
@@ -45,24 +117,69 @@ def decode_raw_image(image_path: Path, use_exif: bool) -> Optional[Image.Image]:
         return None
 
 def get_angle_from_exif(img_path: Path, file_type: str, exiftool_path: Optional[str] = None) -> int:
+    """
+    Reads the EXIF orientation from an image and returns the equivalent angle.
+
+    Routes to the appropriate method based on file extension:
+    - HEIC/HEIF: Uses pillow-heif, falls back to exiftool
+    - JPEG: Uses piexif (fast)
+    - RAW: Uses exiftool
+    - Other: Falls back to exiftool if available
+
+    Args:
+        img_path: Path to the image file.
+        file_type: Either 'raw' or 'compressed' (used for fallback logic).
+        exiftool_path: Optional path to exiftool executable.
+
+    Returns:
+        The rotation angle in degrees (0, 90, 180, or 270).
+    """
     orientation_tag = 1
+    suffix = img_path.suffix.lower()
+
     try:
-        if file_type == 'raw':
-            if not exiftool_path: return 0
-            command = [exiftool_path, "-n", "-Orientation", str(img_path)]
-            result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=10)
-            if result.returncode == 0 and result.stdout:
-                match = re.search(r':\s*(\d+)', result.stdout)
-                if match: orientation_tag = int(match.group(1))
-        else: # 'compressed'
+        if suffix in HEIC_EXTENSIONS:
+            # HEIC/HEIF: Try pillow-heif first, fall back to exiftool
+            orientation_tag = _get_heic_orientation(img_path)
+            if orientation_tag == 1 and exiftool_path:
+                # Fallback to exiftool if pillow-heif didn't find orientation
+                orientation_tag = _get_orientation_via_exiftool(img_path, exiftool_path)
+
+        elif suffix in JPEG_EXTENSIONS:
+            # JPEG: Use piexif (fast and reliable for JPEG)
             exif_dict = piexif.load(str(img_path))
             orientation_tag = exif_dict.get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
-    except (subprocess.TimeoutExpired, ValueError, TypeError, piexif.InvalidImageDataError, Exception):
+
+        elif suffix in SUPPORTED_RAW_EXTENSIONS or file_type == 'raw':
+            # RAW files: Must use exiftool
+            if exiftool_path:
+                orientation_tag = _get_orientation_via_exiftool(img_path, exiftool_path)
+
+        else:
+            # Other formats (PNG, etc.): Try piexif first, fall back to exiftool
+            try:
+                exif_dict = piexif.load(str(img_path))
+                orientation_tag = exif_dict.get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
+            except (piexif.InvalidImageDataError, ValueError):
+                if exiftool_path:
+                    orientation_tag = _get_orientation_via_exiftool(img_path, exiftool_path)
+
+    except Exception:
         pass
+
     return ORIENTATION_TO_ANGLE.get(orientation_tag, 0)
 
 
 def process_single_file_for_rotation(img_path: Path, config: Dict, logger: SimpleLogger):
+    """
+    Updates the EXIF orientation tag for a single image file.
+
+    Routes to the appropriate write method based on file extension:
+    - RAW files: Uses exiftool
+    - HEIC/HEIF: Uses exiftool (piexif can't write HEIC)
+    - JPEG: Uses piexif (fast)
+    - Other: Tries piexif, falls back to exiftool
+    """
     try:
         current_angle = get_angle_from_exif(img_path, config['file_type'], config.get('exiftool_path')) if config['use_exif'] else 0
         final_angle = (current_angle + config['rotation_angle']) % 360
@@ -70,12 +187,27 @@ def process_single_file_for_rotation(img_path: Path, config: Dict, logger: Simpl
         mode = "using EXIF" if config['use_exif'] else "ignoring EXIF"
         logger.info(f"Rotating {img_path.name}: angle={current_angle}°+{config['rotation_angle']}°, new_tag={final_orientation_tag} ({mode})")
 
-        if config['file_type'] == 'raw':
-            command = [config.get('exiftool_path'), f"-Orientation={final_orientation_tag}", "-overwrite_original", "-n", str(img_path)]
+        suffix = img_path.suffix.lower()
+        exiftool_path = config.get('exiftool_path')
+
+        # Determine which method to use for writing EXIF
+        use_exiftool = (
+            config['file_type'] == 'raw' or
+            suffix in SUPPORTED_RAW_EXTENSIONS or
+            suffix in HEIC_EXTENSIONS  # HEIC requires exiftool - piexif can't write HEIC
+        )
+
+        if use_exiftool:
+            if not exiftool_path:
+                logger.error(f"ExifTool required for {img_path.name} but path not configured.")
+                return
+
+            command = [exiftool_path, f"-Orientation={final_orientation_tag}", "-overwrite_original", "-n", str(img_path)]
             result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=15)
             if result.returncode != 0:
                 logger.error(f"ExifTool failed for {img_path.name}. Stderr: {result.stderr.strip()}")
         else:
+            # JPEG and other formats that piexif supports
             exif_dict = piexif.load(str(img_path))
             exif_dict['0th'][piexif.ImageIFD.Orientation] = final_orientation_tag
             piexif.insert(piexif.dump(exif_dict), str(img_path))
