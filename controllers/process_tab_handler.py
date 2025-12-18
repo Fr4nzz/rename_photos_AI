@@ -33,15 +33,17 @@ class ProcessTabHandler(BaseTabHandler):
         self.ui.exiftool_browse_button.clicked.connect(self.select_exiftool_path)
         self.ui.preview_image_dropdown.currentIndexChanged.connect(self.update_previews)
         self.ui.preview_raw_checkbox.stateChanged.connect(self.on_preview_mode_changed)
-        self.ui.rotation_dropdown.currentIndexChanged.connect(self.update_previews)
+        self.ui.rotation_dropdown.currentIndexChanged.connect(self.update_all_previews)
         self.ui.use_exif_checkbox.stateChanged.connect(self.update_previews)
         self.ui.apply_rotation_button.clicked.connect(self.start_rotation)
         self.ui.batch_preview_dropdown.currentIndexChanged.connect(self.update_batch_preview)
-        for widget in [self.ui.zoom_checkbox, self.ui.grayscale_checkbox]:
-            widget.stateChanged.connect(self.update_previews)
-        for widget in [
-            self.ui.crop_top_input, self.ui.crop_bottom_input, self.ui.crop_left_input, self.ui.crop_right_input]:
-            widget.editingFinished.connect(self.update_previews)
+        # Crop/filter checkboxes update both individual and batch previews
+        for widget in [self.ui.zoom_checkbox, self.ui.grayscale_checkbox, self.ui.prerotate_checkbox]:
+            widget.stateChanged.connect(self.update_all_previews)
+        # Crop inputs update both individual and batch previews
+        for widget in [self.ui.crop_top_input, self.ui.crop_bottom_input,
+                       self.ui.crop_left_input, self.ui.crop_right_input]:
+            widget.editingFinished.connect(self.update_all_previews)
         for widget in [self.ui.batch_size_input, self.ui.merged_img_height_input]:
              widget.editingFinished.connect(self.update_batch_preview)
         self.ui.main_column_input.editingFinished.connect(self._sync_settings_from_ui)
@@ -78,6 +80,7 @@ class ProcessTabHandler(BaseTabHandler):
         cs = self.app_state.settings['crop_settings']
         self.ui.zoom_checkbox.setChecked(cs['zoom'])
         self.ui.grayscale_checkbox.setChecked(cs['grayscale'])
+        self.ui.prerotate_checkbox.setChecked(cs.get('prerotate', False))
         self.ui.crop_top_input.setText(str(cs['top']))
         self.ui.crop_bottom_input.setText(str(cs['bottom']))
         self.ui.crop_left_input.setText(str(cs['left']))
@@ -149,6 +152,7 @@ class ProcessTabHandler(BaseTabHandler):
         cs = s['crop_settings']
         cs['zoom'] = ui.zoom_checkbox.isChecked()
         cs['grayscale'] = ui.grayscale_checkbox.isChecked()
+        cs['prerotate'] = ui.prerotate_checkbox.isChecked()
         cs['top'] = safe_float(ui.crop_top_input.text(), default=cs.get('top', 0.0))
         cs['bottom'] = safe_float(ui.crop_bottom_input.text(), default=cs.get('bottom', 0.0))
         cs['left'] = safe_float(ui.crop_left_input.text(), default=cs.get('left', 0.0))
@@ -156,6 +160,11 @@ class ProcessTabHandler(BaseTabHandler):
 
     def on_preview_mode_changed(self):
         self.refresh_file_dependent_ui()
+
+    def update_all_previews(self):
+        """Update both individual previews and batch preview."""
+        self.update_previews()
+        self.update_batch_preview()
 
     def refresh_file_dependent_ui(self):
         self._sync_settings_from_ui()
@@ -306,10 +315,10 @@ class ProcessTabHandler(BaseTabHandler):
         if not (selected_file := self.ui.preview_image_dropdown.currentText()): return
         img_path = Path(self.app_state.input_directory) / selected_file
         if not img_path.exists(): return
-        
+
         s = self.app_state.settings
         base_img_previews, exif_corrected_img = None, None
-        
+
         try:
             if img_path.suffix.lower() in SUPPORTED_RAW_EXTENSIONS:
                 base_img_previews = decode_raw_image(img_path, use_exif=s['use_exif'])
@@ -318,12 +327,17 @@ class ProcessTabHandler(BaseTabHandler):
                 unrotated_pil = Image.open(img_path)
                 exif_corrected_img = fix_orientation(unrotated_pil.copy())
                 base_img_previews = exif_corrected_img if s['use_exif'] else unrotated_pil
-            
+
             if not base_img_previews:
                 raise IOError("Failed to load base image for preview.")
-            
+
             rotated_image = base_img_previews.rotate(s['rotation_angle'], expand=True)
-            processed_image = preprocess_image(exif_corrected_img, "1", s['crop_settings'])
+
+            # For "Processed (for Gemini)" preview: apply prerotation if enabled
+            img_for_gemini = exif_corrected_img
+            if s['crop_settings'].get('prerotate', False):
+                img_for_gemini = exif_corrected_img.rotate(s['rotation_angle'], expand=True)
+            processed_image = preprocess_image(img_for_gemini, "1", s['crop_settings'])
 
             for label, img, path in [
                 (self.ui.original_preview_label, base_img_previews, str(img_path)),
@@ -361,12 +375,19 @@ class ProcessTabHandler(BaseTabHandler):
         if self.ui.batch_preview_dropdown.count() == 0: return
         
         start_idx = self.ui.batch_preview_dropdown.currentIndex() * batch_size
+        prerotate = s['crop_settings'].get('prerotate', False)
+        rotation_angle = s['rotation_angle']
+
         images_to_merge = []
         for i, p in enumerate(jpg_files[start_idx : start_idx + batch_size]):
             try:
                 img = Image.open(p)
                 exif_corrected_img = fix_orientation(img)
-                processed_img = preprocess_image(exif_corrected_img, str(start_idx + i + 1), s['crop_settings'])
+                # Apply prerotation if enabled
+                img_for_gemini = exif_corrected_img
+                if prerotate:
+                    img_for_gemini = exif_corrected_img.rotate(rotation_angle, expand=True)
+                processed_img = preprocess_image(img_for_gemini, str(start_idx + i + 1), s['crop_settings'])
                 images_to_merge.append(processed_img)
             except Exception as e:
                 self.logger.error(f"Failed to process image for batch preview: {p.name}", exception=e)

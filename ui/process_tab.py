@@ -67,12 +67,18 @@ class ProcessImagesTab(QWidget):
         crop_layout = QFormLayout(crop_group)
         self.zoom_checkbox = QCheckBox("Enable Cropping")
         self.grayscale_checkbox = QCheckBox("Convert to Grayscale")
+        self.prerotate_checkbox = QCheckBox("Pre-rotate images for Gemini")
+        self.prerotate_checkbox.setToolTip(
+            "If checked, images will be rotated by the selected angle before merging for Gemini.\n"
+            "If unchecked (default), images use their EXIF orientation without modification."
+        )
         self.crop_top_input = QLineEdit()
         self.crop_bottom_input = QLineEdit()
         self.crop_left_input = QLineEdit()
         self.crop_right_input = QLineEdit()
         crop_layout.addRow(self.zoom_checkbox)
         crop_layout.addRow(self.grayscale_checkbox)
+        crop_layout.addRow(self.prerotate_checkbox)
         crop_layout.addRow("Top %:", self.crop_top_input)
         crop_layout.addRow("Bottom %:", self.crop_bottom_input)
         crop_layout.addRow("Left %:", self.crop_left_input)

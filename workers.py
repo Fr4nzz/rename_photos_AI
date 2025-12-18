@@ -75,7 +75,16 @@ class GeminiWorker(QObject):
                 batch_df = self.df.iloc[start_idx : start_idx + batch_size]
                 self.logger.info(f"--- Starting Batch {batch_num}/{self.total_batches} ---")
 
-                images = [preprocess_image(fix_orientation(Image.open(row['from'])), str(row['photo_ID']), self.config['crop_settings']) for _, row in batch_df.iterrows()]
+                # Check if prerotation is enabled
+                prerotate = self.config['crop_settings'].get('prerotate', False)
+                rotation_angle = self.config.get('rotation_angle', 0)
+
+                images = []
+                for _, row in batch_df.iterrows():
+                    img = fix_orientation(Image.open(row['from']))
+                    if prerotate:
+                        img = img.rotate(rotation_angle, expand=True)
+                    images.append(preprocess_image(img, str(row['photo_ID']), self.config['crop_settings']))
                 
                 if not (merged_img := merge_images(images, self.config['merged_img_height'])):
                     self.logger.warn(f"Skipping batch {batch_num} due to failure in merging images.")

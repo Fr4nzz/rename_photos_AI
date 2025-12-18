@@ -64,7 +64,7 @@ class AppState:
             'custom_suffixes': 'd,v',
             'crop_settings': {
                 'top': 0.1, 'bottom': 0.0, 'left': 0.0, 'right': 0.5,
-                'zoom': True, 'grayscale': True
+                'zoom': True, 'grayscale': True, 'prerotate': False
             }
         }
 
