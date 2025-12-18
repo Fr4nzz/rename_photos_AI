@@ -1,7 +1,6 @@
 # ai-photo-processor/controllers/process_tab_handler.py
 
 import os
-import google.generativeai as genai
 import pandas as pd
 import re
 from pathlib import Path
@@ -425,49 +424,98 @@ class ProcessTabHandler(QObject):
             self.logger.warn("Could not populate continue dropdown, rename_files directory not found.")
 
     def update_models_dropdown(self):
+        """Fetches available Gemini models and populates the dropdown.
+
+        Filters to show only useful multimodal text models (gemini-2.5+).
+        Sorts with Flash models BEFORE Pro (free-tier friendly).
+        """
         self.ui.model_dropdown.clear()
+
         if not self.app_state.api_keys:
             self.ui.model_dropdown.addItem("No API Key Set")
             return
-        try:
-            genai.configure(api_key=self.app_state.api_keys[0])
 
-            MIN_MODEL_VERSION = 2.5
+        try:
+            from google import genai
+
+            client = genai.Client(api_key=self.app_state.api_keys[0])
+
+            # Patterns to exclude (non-text-generation models)
+            EXCLUDED_PATTERNS = [
+                '-tts', '-image', '-audio', '-video', 'embedding',
+                'aqa', 'bisheng', 'learnlm', 'imagen', 'veo'
+            ]
+
             usable_models = []
 
-            for m in genai.list_models():
-                model_name = m.name.split('/')[-1]
-                version_match = re.search(r'(\d+\.\d+)', model_name)
-                version = float(version_match.group(1)) if version_match else 0.0
+            for model in client.models.list():
+                # Get model name, strip "models/" prefix if present
+                model_name = model.name
+                if '/' in model_name:
+                    model_name = model_name.split('/')[-1]
 
-                if ('generateContent' in m.supported_generation_methods and
-                    'gemini' in model_name and
-                    version >= MIN_MODEL_VERSION):
-                    usable_models.append(model_name)
+                model_lower = model_name.lower()
 
-            def hierarchical_sort_key(model_name):
-                version_match = re.search(r'(\d+\.\d+)', model_name)
-                version = float(version_match.group(1)) if version_match else 0.0
-                is_stable = 'preview' not in model_name
-                tier = 2 if 'pro' in model_name else (1 if 'flash' in model_name else 0)
-                return (version, is_stable, tier)
+                # Skip non-Gemini models
+                if 'gemini' not in model_lower:
+                    continue
 
-            vision_models = sorted(usable_models, key=hierarchical_sort_key, reverse=True)
+                # Skip excluded patterns
+                if any(pattern in model_lower for pattern in EXCLUDED_PATTERNS):
+                    continue
 
-            if vision_models:
-                self.app_state.available_models = vision_models
-                self.ui.model_dropdown.addItems(vision_models)
+                # Parse version - handles "gemini-2.5-flash" and "gemini-3-flash"
+                version_match = re.search(r'gemini-(\d+)(?:\.(\d+))?', model_lower)
+                if not version_match:
+                    continue
 
+                major = int(version_match.group(1))
+                minor = int(version_match.group(2)) if version_match.group(2) else 0
+
+                # Filter: version >= 2.5
+                if major < 2 or (major == 2 and minor < 5):
+                    continue
+
+                usable_models.append({
+                    'name': model_name,
+                    'major': major,
+                    'minor': minor,
+                    'is_preview': 'preview' in model_lower,
+                    'is_flash': 'flash' in model_lower,
+                    'is_pro': 'pro' in model_lower,
+                })
+
+            # Sort priority (highest first):
+            # 1. Higher version (3.x before 2.x)
+            # 2. Flash BEFORE Pro (free tier friendly - Pro often not available on free tier)
+            # 3. Stable before preview (but both should work)
+            usable_models.sort(
+                key=lambda m: (
+                    m['major'],           # Higher major version first
+                    m['minor'],           # Higher minor version first
+                    m['is_flash'],        # Flash BEFORE Pro (True sorts after False, so flash=True goes first with reverse)
+                    not m['is_preview'],  # Stable before preview
+                ),
+                reverse=True
+            )
+
+            # Populate dropdown
+            if usable_models:
+                model_names = [m['name'] for m in usable_models]
+                self.app_state.available_models = model_names
+                self.ui.model_dropdown.addItems(model_names)
+
+                # Try to restore saved model, otherwise use first (best) option
                 saved_model = self.app_state.settings.get('model_name')
-                if saved_model and saved_model in vision_models:
+                if saved_model and saved_model in model_names:
                     self.ui.model_dropdown.setCurrentText(saved_model)
                 else:
-                    new_best_model = vision_models[0]
-                    self.app_state.settings['model_name'] = new_best_model
-                    self.ui.model_dropdown.setCurrentText(new_best_model)
-                    self.logger.info(f"Default model was invalid. Set new default to: {new_best_model}")
+                    # Default to first model (should be gemini-3-flash or gemini-3-flash-preview)
+                    self.ui.model_dropdown.setCurrentIndex(0)
+                    self.app_state.settings['model_name'] = model_names[0]
+                    self.logger.info(f"Default model set to: {model_names[0]}")
             else:
-                self.ui.model_dropdown.addItem(f"No models found >= v{MIN_MODEL_VERSION}")
+                self.ui.model_dropdown.addItem("No compatible models found")
 
         except Exception as e:
             self.logger.error("Failed to fetch Gemini models", exception=e)
