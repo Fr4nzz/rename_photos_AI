@@ -7,14 +7,17 @@ The AI Photo Processor is a desktop application designed to streamline the proce
 ## Key Features
 
 ### Automated Data Extraction
-- **Gemini Vision Integration**: Uses Google's AI to perform Optical Character Recognition (OCR) on your images, extracting specimen IDs, notes, and other data based on a customizable prompt.
-- **Model Selection**: Choose between faster (Gemini Flash) or more accurate (Gemini Pro) models.
+- **Gemini Vision Integration**: Uses Google's AI (via the official `google-genai` SDK) to perform Optical Character Recognition (OCR) on your images, extracting specimen IDs, notes, and other data based on a customizable prompt.
+- **Smart Model Selection**: The model dropdown automatically filters to show only compatible vision models (Gemini 2.5+), sorted with Flash models first for free-tier compatibility. Choose between faster (Gemini Flash) or more capable (Gemini Pro) models.
 - **Batch Processing**: Process entire folders of images in manageable batches, with progress displayed in real-time.
 - **Multi-API Key Support**: Enter multiple Gemini API keys. The application will automatically rotate through them if one hits a rate limit, ensuring long-running jobs can complete without interruption.
 
 ### Powerful Image Processing Workflow
 - **Live Previews**: See exactly how your images are processed before sending them to the API with live previews for rotation, cropping, and batch merging.
-- **Advanced Rotation**: Apply rotation (0°, 90°, 180°, 270°) to entire folders. It safely modifies EXIF orientation tags for all common image types, including RAW formats like .CR2, .ORF, and .TIF (requires exiftool).
+- **Advanced Rotation**: Apply rotation (0°, 90°, 180°, 270°) to entire folders. It safely modifies EXIF orientation tags for all common image types, including:
+  - **JPEG** (.jpg, .jpeg) - using piexif for fast native processing
+  - **HEIC/HEIF** (.heic, .heif) - full support including EXIF reading via pillow-heif and writing via exiftool
+  - **RAW formats** (.CR2, .ORF, .TIF) - requires exiftool
 - **Customizable Pre-processing**:
   - **Cropping**: Visually define a crop area to focus the AI on the relevant part of your images.
   - **Grayscale Filter**: Convert images to grayscale to potentially improve OCR accuracy.
@@ -54,7 +57,7 @@ The contents of the Windows zip file are:
 
 *   **Google Gemini API Key**: You need at least one API key to use the AI features. You can get your key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 *   **Python (for source code users)**: If you are running the application from the source code, you will need Python 3.9 or newer.
-*   **ExifTool (for source code users, included in prebuilt)**: Required for rotating RAW image files (.CR2, .ORF, etc.). Download it from the official [ExifTool website](https://exiftool.org/) and ensure its location is added to your system's PATH or specified within the app. (Note: ExifTool is already included in the standalone Windows version).
+*   **ExifTool (for source code users, bundled in prebuilt)**: Required for rotating RAW and HEIC image files. Download it from the official [ExifTool website](https://exiftool.org/) and ensure its location is added to your system's PATH or specified within the app. (Note: ExifTool is bundled in the standalone Windows version and will be automatically detected).
 
 ## Installation
 

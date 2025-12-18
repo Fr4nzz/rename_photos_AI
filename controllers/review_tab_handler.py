@@ -89,10 +89,18 @@ class ReviewTabHandler(QObject):
         self.app_state.settings['custom_suffixes'] = self.ui.custom_suffix_input.text()
 
     def stop_worker(self):
+        """Safely stops the image load worker thread with timeout handling."""
         if self.image_load_thread and self.image_load_thread.isRunning():
             self.image_load_worker.stop()
             self.image_load_thread.quit()
-            self.image_load_thread.wait()
+            # Wait up to 3 seconds for graceful shutdown
+            if not self.image_load_thread.wait(3000):
+                self.logger.warn("Image load thread did not stop gracefully, forcing termination.")
+                self.image_load_thread.terminate()
+                self.image_load_thread.wait(1000)  # Brief wait after terminate
+            # Clear references
+            self.image_load_thread = None
+            self.image_load_worker = None
     
     def _handle_suffix_mode_change(self):
         """Syncs settings and updates widget visibility when the suffix mode changes."""

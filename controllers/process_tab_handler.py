@@ -285,22 +285,29 @@ class ProcessTabHandler(QObject):
     def on_worker_finished(self):
         QMessageBox.information(self.main_window, "Complete", "The process has finished.")
         self.set_ui_processing_state(False)
-        if self.worker_thread: 
-            self.worker_thread.quit()
-            self.worker_thread.wait()
-        self.worker_thread, self.current_worker = None, None
+        self._cleanup_worker_thread()
         self.update_progress_bar(0, "%p%")
-        self.populate_continue_dropdown() # Refresh options after run
+        self.populate_continue_dropdown()  # Refresh options after run
 
     def on_worker_error(self, message: str):
         QMessageBox.critical(self.main_window, "Error", message)
         self.set_ui_processing_state(False)
-        if self.worker_thread: 
-            self.worker_thread.quit()
-            self.worker_thread.wait()
-        self.worker_thread, self.current_worker = None, None
+        self._cleanup_worker_thread()
         self.update_progress_bar(0, "Error")
-        self.populate_continue_dropdown() # Refresh options after error
+        self.populate_continue_dropdown()  # Refresh options after error
+
+    def _cleanup_worker_thread(self):
+        """Safely cleans up the worker thread with timeout handling."""
+        if self.worker_thread:
+            self.worker_thread.quit()
+            # Wait up to 5 seconds for graceful shutdown
+            if not self.worker_thread.wait(5000):
+                self.logger.warn("Worker thread did not stop gracefully, forcing termination.")
+                self.worker_thread.terminate()
+                self.worker_thread.wait(1000)  # Brief wait after terminate
+        # Clear references
+        self.worker_thread = None
+        self.current_worker = None
 
     def update_progress_bar(self, value: int, text_format: str):
         self.ui.progress_bar.setFormat(text_format)

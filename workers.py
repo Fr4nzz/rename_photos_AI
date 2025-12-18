@@ -5,7 +5,7 @@ import re
 import time
 import pandas as pd
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from PyQt5.QtCore import QObject, pyqtSignal
 from PIL import Image
@@ -26,9 +26,10 @@ class RotationWorker(QObject):
         super().__init__()
         self.config, self.logger, self.is_stopped = config, logger, False
 
-    def stop(self): self.is_stopped = True
+    def stop(self) -> None:
+        self.is_stopped = True
 
-    def run(self):
+    def run(self) -> None:
         try:
             self.config['progress_callback'] = self.progress.emit
             apply_rotation_to_folder(self.config, self.logger)
@@ -38,6 +39,7 @@ class RotationWorker(QObject):
         finally:
             if not self.is_stopped:
                 self.finished.emit()
+
 
 class GeminiWorker(QObject):
     finished, error = pyqtSignal(), pyqtSignal(str)
@@ -51,11 +53,11 @@ class GeminiWorker(QObject):
         self.start_batch = start_batch
         self.total_batches = total_batches
 
-    def stop(self):
+    def stop(self) -> None:
         self.is_stopped = True
         self.logger.info("Stop signal received by GeminiWorker.")
 
-    def run(self):
+    def run(self) -> None:
         try:
             handler = GeminiHandler(self.config['api_keys'], self.config['model_name'], self.logger)
             batch_size = self.config['batch_size']
@@ -102,7 +104,7 @@ class GeminiWorker(QObject):
             if not self.is_stopped:
                 self.finished.emit()
 
-    def _parse_and_update_df(self, response_text: str):
+    def _parse_and_update_df(self, response_text: str) -> None:
         if not (match := re.search(r'```json\s*([\s\S]+?)\s*```', response_text, re.I)):
             self.logger.warn(f"Could not find JSON block in Gemini response."); return
         try:
@@ -131,9 +133,10 @@ class ImageLoadWorker(QObject):
         self.thumb_height = thumb_height
         self.is_stopped = False
 
-    def stop(self): self.is_stopped = True
+    def stop(self) -> None:
+        self.is_stopped = True
 
-    def run(self):
+    def run(self) -> None:
         for path in self.image_paths:
             if self.is_stopped: break
             try:
