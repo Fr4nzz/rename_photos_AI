@@ -1,13 +1,32 @@
 # /build.spec
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
+from pathlib import Path
+
 block_cipher = None
 
+# --- Detect and bundle exiftool files (Windows) ---
+exiftool_datas = []
+if sys.platform == 'win32':
+    # Check for exiftool.exe in current directory
+    if Path('exiftool.exe').exists():
+        exiftool_datas.append(('exiftool.exe', '.'))
+        print("[build.spec] Found exiftool.exe - will bundle")
+
+    # Check for exiftool_files directory (required by exiftool on Windows)
+    if Path('exiftool_files').exists():
+        exiftool_datas.append(('exiftool_files', 'exiftool_files'))
+        print("[build.spec] Found exiftool_files/ - will bundle")
+
+    if not exiftool_datas:
+        print("[build.spec] WARNING: exiftool.exe not found. Place it next to build.spec to bundle.")
+
 a = Analysis(
-    ['main.py'],  # <-- UPDATED: Entry point is now main.py
+    ['main.py'],  # Entry point
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=exiftool_datas,  # Include exiftool if found
     hiddenimports=[
         'pandas',
         'numpy',
@@ -42,24 +61,24 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='AIPhotoProcessor', # Executable name
+    name='AIPhotoProcessor',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    console=True,  # Keep console for logging; can set to False for cleaner UX
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='screenshots/app_icon.jpeg', # <-- UPDATED: Path to your icon
+    icon='screenshots/app_icon.jpeg',
 )
 
 # --- macOS Specific Bundle Configuration ---
 app = BUNDLE(
     exe,
-    name='AI Photo Processor.app', # <-- UPDATED: App bundle name
-    icon='screenshots/app_icon.jpeg', # <-- UPDATED: Path to your icon
-    bundle_identifier='com.ai.photoprocessor', # You can customize this
+    name='AI Photo Processor.app',
+    icon='screenshots/app_icon.jpeg',
+    bundle_identifier='com.ai.photoprocessor',
 )

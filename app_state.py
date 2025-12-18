@@ -142,7 +142,57 @@ class AppState:
         with open(path, 'w', encoding='utf-8') as f: f.write(directory)
 
     def _find_exiftool(self) -> Optional[str]:
-        path = shutil.which('exiftool')
-        if not path:
-             self.logger.warn("'exiftool' not found in system PATH. RAW file rotation may be disabled.")
-        return path
+        """
+        Searches for exiftool in multiple locations, in order of priority:
+        1. Bundled with PyInstaller (sys._MEIPASS)
+        2. Next to the executable
+        3. System PATH
+        4. Common Windows installation locations
+        """
+        exe_name = 'exiftool.exe' if sys.platform == 'win32' else 'exiftool'
+        locations_checked = []
+
+        # 1. Check PyInstaller bundled location
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            bundled_path = Path(sys._MEIPASS) / exe_name
+            locations_checked.append(f"Bundled: {bundled_path}")
+            if bundled_path.is_file():
+                self.logger.info(f"Found exiftool (bundled): {bundled_path}")
+                return str(bundled_path)
+
+        # 2. Check next to executable (for portable/legacy installs)
+        if getattr(sys, 'frozen', False):
+            exe_dir_path = Path(sys.executable).parent / exe_name
+        else:
+            exe_dir_path = Path(__file__).resolve().parent / exe_name
+        locations_checked.append(f"App dir: {exe_dir_path}")
+        if exe_dir_path.is_file():
+            self.logger.info(f"Found exiftool (app directory): {exe_dir_path}")
+            return str(exe_dir_path)
+
+        # 3. Check system PATH
+        system_path = shutil.which('exiftool')
+        locations_checked.append("System PATH")
+        if system_path:
+            self.logger.info(f"Found exiftool (system PATH): {system_path}")
+            return system_path
+
+        # 4. Check common Windows installation locations
+        if sys.platform == 'win32':
+            common_locations = [
+                Path(os.environ.get('LOCALAPPDATA', '')) / 'exiftool' / exe_name,
+                Path('C:/Program Files/exiftool') / exe_name,
+                Path('C:/Program Files (x86)/exiftool') / exe_name,
+            ]
+            for loc in common_locations:
+                locations_checked.append(f"Common: {loc}")
+                if loc.is_file():
+                    self.logger.info(f"Found exiftool (common location): {loc}")
+                    return str(loc)
+
+        # Not found
+        self.logger.warn(
+            f"'exiftool' not found. RAW/HEIC rotation may be limited. "
+            f"Checked: {', '.join(locations_checked)}"
+        )
+        return None
