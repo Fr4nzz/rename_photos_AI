@@ -492,7 +492,7 @@ class ReviewTabHandler(BaseTabHandler):
         return base_name
 
     def _handle_autosave(self):
-        """Saves the current DataFrame state to a temporary autosave file."""
+        """Saves the current DataFrame state to a temporary autosave file and selects it."""
         if self.app_state.current_df.empty: return
 
         loaded_csv = self.ui.csv_dropdown.currentText()
@@ -503,6 +503,17 @@ class ReviewTabHandler(BaseTabHandler):
         try:
             self._save_df_to_file(autosave_filename)
             self.logger.info(f"Autosaved changes to {autosave_filename}")
+
+            # Select the autosave file so subsequent refreshes use it
+            self.ui.csv_dropdown.blockSignals(True)
+            existing_idx = self.ui.csv_dropdown.findText(autosave_filename)
+            if existing_idx < 0:
+                # Add autosave at the top of the dropdown
+                self.ui.csv_dropdown.insertItem(0, autosave_filename)
+                existing_idx = 0
+            self.ui.csv_dropdown.setCurrentIndex(existing_idx)
+            self.ui.csv_dropdown.blockSignals(False)
+
         except Exception as e:
             self.logger.warn(f"Autosave failed for {autosave_filename}", exception=e)
 
