@@ -166,9 +166,47 @@ class ProcessTabHandler(BaseTabHandler):
         self.refresh_file_dependent_ui()
 
     def update_all_previews(self):
-        """Update both individual previews and batch preview."""
-        self.update_previews()
-        self.update_batch_preview()
+        """Update both individual previews and batch preview in a single worker."""
+        self._sync_settings_from_ui()
+
+        # Get individual image path
+        img_path = None
+        if selected_file := self.ui.preview_image_dropdown.currentText():
+            img_path = Path(self.app_state.input_directory) / selected_file
+            if img_path.exists():
+                for label in [self.ui.original_preview_label, self.ui.rotated_preview_label, self.ui.processed_preview_label]:
+                    label.setText("Loading...")
+                    label.setFilePath("")
+            else:
+                img_path = None
+
+        # Get batch files and update dropdown
+        jpg_files = get_image_files(self.app_state.input_directory, 'compressed')
+        batch_start_idx = 0
+
+        if jpg_files:
+            s = self.app_state.settings
+            batch_size = s['batch_size']
+            if batch_size > 0:
+                num_batches = (len(jpg_files) + batch_size - 1) // batch_size
+                current_idx = self.ui.batch_preview_dropdown.currentIndex()
+                self.ui.batch_preview_dropdown.blockSignals(True)
+                self.ui.batch_preview_dropdown.clear()
+                if num_batches > 0:
+                    self.ui.batch_preview_dropdown.addItems([f"Batch {i+1}" for i in range(num_batches)])
+                    if 0 <= current_idx < num_batches:
+                        self.ui.batch_preview_dropdown.setCurrentIndex(current_idx)
+                self.ui.batch_preview_dropdown.blockSignals(False)
+
+                if self.ui.batch_preview_dropdown.count() > 0:
+                    batch_start_idx = self.ui.batch_preview_dropdown.currentIndex() * batch_size
+                    self.ui.combined_preview_label.clear()
+                    self.ui.combined_preview_label.setText("Loading...")
+                    self.ui.combined_preview_label.setFilePath("")
+
+        # Start single worker for both
+        if img_path or jpg_files:
+            self._start_preview_worker(img_path, jpg_files, batch_start_idx)
 
     def refresh_file_dependent_ui(self):
         self._sync_settings_from_ui()
@@ -180,9 +218,8 @@ class ProcessTabHandler(BaseTabHandler):
         self.ui.preview_image_dropdown.clear()
         if image_files: self.ui.preview_image_dropdown.addItems([p.name for p in image_files])
         self.ui.preview_image_dropdown.blockSignals(False)
-        if image_files: 
-            self.update_previews()
-            self.update_batch_preview()
+        if image_files:
+            self.update_all_previews()
         else: self.clear_all_previews()
 
     def clear_all_previews(self):
