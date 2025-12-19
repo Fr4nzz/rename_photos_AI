@@ -465,8 +465,11 @@ class ProcessTabHandler(BaseTabHandler):
 
     def _on_preview_finished(self):
         """Clean up after preview worker finishes."""
-        self.logger.info("[DEBUG] _on_preview_finished called")
-        self._stop_preview_worker()
+        # Note: Do NOT call _stop_preview_worker() here!
+        # If a new worker was started while this one was running,
+        # _stop_preview_worker would kill the new worker instead.
+        # Cleanup happens in _start_preview_worker when a new worker starts.
+        self.logger.info("[DEBUG] _on_preview_finished called (no-op)")
 
     def populate_continue_dropdown(self):
         self.ui.continue_dropdown.clear()
