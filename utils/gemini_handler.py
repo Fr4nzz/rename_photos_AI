@@ -2,6 +2,7 @@
 
 import time
 from google import genai
+from google.genai import types
 from google.genai.errors import APIError
 from PIL import Image
 from typing import List, Tuple, Optional
@@ -54,12 +55,57 @@ class GeminiHandler:
                 # Build contents list: prompt first, then all images
                 contents = [prompt_text] + images
 
-                response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=contents
+                # Configure thinking for supported models (2.5+)
+                config = types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(
+                        thinking_budget=-1,  # Dynamic thinking (model decides)
+                        include_thoughts=True
+                    )
                 )
 
-                return response.text, True
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=config
+                )
+
+                # Extract and log response parts
+                answer_text = ""
+                thinking_text = ""
+
+                if response.candidates and response.candidates[0].content:
+                    for part in response.candidates[0].content.parts:
+                        if not part.text:
+                            continue
+                        if getattr(part, 'thought', False):
+                            thinking_text += part.text
+                        else:
+                            answer_text += part.text
+
+                # Log thinking summary if available
+                if thinking_text:
+                    # Truncate thinking for log readability
+                    thinking_preview = thinking_text[:500] + "..." if len(thinking_text) > 500 else thinking_text
+                    self.logger.info(f"Gemini thinking: {thinking_preview}")
+
+                # Log token usage if available
+                if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                    usage = response.usage_metadata
+                    tokens_info = []
+                    if hasattr(usage, 'prompt_token_count'):
+                        tokens_info.append(f"prompt={usage.prompt_token_count}")
+                    if hasattr(usage, 'thoughts_token_count') and usage.thoughts_token_count:
+                        tokens_info.append(f"thinking={usage.thoughts_token_count}")
+                    if hasattr(usage, 'candidates_token_count'):
+                        tokens_info.append(f"output={usage.candidates_token_count}")
+                    if tokens_info:
+                        self.logger.info(f"Token usage: {', '.join(tokens_info)}")
+
+                # Log the response (truncated for readability)
+                response_preview = answer_text[:300] + "..." if len(answer_text) > 300 else answer_text
+                self.logger.info(f"Gemini response: {response_preview}")
+
+                return answer_text, True
 
             except APIError as e:
                 last_error = e
