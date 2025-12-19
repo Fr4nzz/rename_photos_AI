@@ -54,7 +54,7 @@ class AppState:
         self.available_models: List[str] = []
 
         self.settings: Dict[str, Any] = {
-            'batch_size': 9, 'merged_img_height': 1080, 'main_column': 'CAM',
+            'images_per_prompt': 10, 'batch_size': 9, 'merged_img_height': 1080, 'main_column': 'CAM',
             'model_name': '', 'prompt_text': DEFAULT_PROMPT,
             'exiftool_path': self._find_exiftool(), 'rotation_angle': 180,
             'use_exif': True, 'preview_raw': False, 'review_crop_enabled': True,

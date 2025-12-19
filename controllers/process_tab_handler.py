@@ -44,7 +44,7 @@ class ProcessTabHandler(BaseTabHandler):
         for widget in [self.ui.crop_top_input, self.ui.crop_bottom_input,
                        self.ui.crop_left_input, self.ui.crop_right_input]:
             widget.editingFinished.connect(self.update_all_previews)
-        for widget in [self.ui.batch_size_input, self.ui.merged_img_height_input]:
+        for widget in [self.ui.images_per_prompt_input, self.ui.batch_size_input, self.ui.merged_img_height_input]:
              widget.editingFinished.connect(self.update_batch_preview)
         self.ui.main_column_input.editingFinished.connect(self._sync_settings_from_ui)
         self.ui.model_dropdown.currentIndexChanged.connect(self._sync_settings_from_ui)
@@ -86,6 +86,7 @@ class ProcessTabHandler(BaseTabHandler):
         self.ui.crop_left_input.setText(str(cs['left']))
         self.ui.crop_right_input.setText(str(cs['right']))
         
+        self.ui.images_per_prompt_input.setText(str(self.app_state.settings.get('images_per_prompt', 10)))
         self.ui.batch_size_input.setText(str(self.app_state.settings['batch_size']))
         self.ui.merged_img_height_input.setText(str(self.app_state.settings['merged_img_height']))
         self.ui.main_column_input.setText(str(self.app_state.settings['main_column']))
@@ -138,6 +139,7 @@ class ProcessTabHandler(BaseTabHandler):
 
     def _sync_settings_from_ui(self):
         s, ui = self.app_state.settings, self.ui
+        s['images_per_prompt'] = safe_int(ui.images_per_prompt_input.text(), default=10)
         s['batch_size'] = safe_int(ui.batch_size_input.text(), default=9)
         s['merged_img_height'] = safe_int(ui.merged_img_height_input.text(), default=1080)
         s['main_column'] = ui.main_column_input.text() or 'CAM'

@@ -61,51 +61,72 @@ class GeminiWorker(QObject):
         try:
             handler = GeminiHandler(self.config['api_keys'], self.config['model_name'], self.logger)
             batch_size = self.config['batch_size']
-            
-            # If total_batches was not provided, calculate it now
+            images_per_prompt = self.config.get('images_per_prompt', 10)
+            photos_per_api_call = images_per_prompt * batch_size
+
+            # Calculate total API calls needed
+            total_photos = len(self.df)
             if self.total_batches == 0:
-                self.total_batches = (len(self.df) + batch_size - 1) // batch_size
-            
-            # Start loop from the specified start_batch
-            for i in range(self.start_batch - 1, self.total_batches):
+                self.total_batches = (total_photos + photos_per_api_call - 1) // photos_per_api_call
+
+            prerotate = self.config['crop_settings'].get('prerotate', False)
+            rotation_angle = self.config.get('rotation_angle', 0)
+
+            for api_call_idx in range(self.start_batch - 1, self.total_batches):
                 if self.is_stopped:
                     self.logger.warn("Processing stopped by user."); break
-                
-                batch_num, start_idx = i + 1, i * batch_size
-                batch_df = self.df.iloc[start_idx : start_idx + batch_size]
-                self.logger.info(f"--- Starting Batch {batch_num}/{self.total_batches} ---")
 
-                # Check if prerotation is enabled
-                prerotate = self.config['crop_settings'].get('prerotate', False)
-                rotation_angle = self.config.get('rotation_angle', 0)
+                api_call_num = api_call_idx + 1
+                api_call_start = api_call_idx * photos_per_api_call
+                api_call_end = min(api_call_start + photos_per_api_call, total_photos)
+                api_call_df = self.df.iloc[api_call_start:api_call_end]
 
-                images = []
-                for _, row in batch_df.iterrows():
-                    img = fix_orientation(Image.open(row['from']))
-                    if prerotate:
-                        img = img.rotate(rotation_angle, expand=True)
-                    images.append(preprocess_image(img, str(row['photo_ID']), self.config['crop_settings']))
-                
-                if not (merged_img := merge_images(images, self.config['merged_img_height'])):
-                    self.logger.warn(f"Skipping batch {batch_num} due to failure in merging images.")
+                self.logger.info(f"--- API Call {api_call_num}/{self.total_batches}: photos {api_call_start + 1}-{api_call_end} ---")
+
+                # Create multiple merged images for this API call
+                merged_images = []
+                label_ranges = []
+
+                for img_idx in range(images_per_prompt):
+                    batch_start = api_call_start + (img_idx * batch_size)
+                    batch_end = min(batch_start + batch_size, api_call_end)
+                    if batch_start >= api_call_end:
+                        break
+
+                    batch_df = self.df.iloc[batch_start:batch_end]
+                    first_label = batch_start + 1
+                    last_label = batch_end
+
+                    images = []
+                    for _, row in batch_df.iterrows():
+                        img = fix_orientation(Image.open(row['from']))
+                        if prerotate:
+                            img = img.rotate(rotation_angle, expand=True)
+                        images.append(preprocess_image(img, str(row['photo_ID']), self.config['crop_settings']))
+
+                    if merged_img := merge_images(images, self.config['merged_img_height']):
+                        merged_images.append(merged_img)
+                        label_ranges.append((first_label, last_label))
+
+                if not merged_images:
+                    self.logger.warn(f"Skipping API call {api_call_num}: no images merged.")
                     continue
 
-                temp_img_path = Path(self.temp_dir) / f"temp_batch_{batch_num}.jpg"
-                merged_img.save(temp_img_path)
-                
-                prompt = self.config['prompt_text'] + f"\n\nAnalyze images labeled {start_idx + 1} to {start_idx + len(images)}."
-                
-                start_time = time.perf_counter()
-                response_text, success = handler.send_request(prompt, str(temp_img_path))
-                
-                if not success:
-                    self.error.emit(f"API call failed for batch {batch_num}: {response_text}"); break
+                # Build prompt with label ranges for all merged images
+                label_desc = ", ".join([f"Image {i+1}: labels {r[0]}-{r[1]}" for i, r in enumerate(label_ranges)])
+                prompt = self.config['prompt_text'] + f"\n\nAnalyze {len(merged_images)} images. {label_desc}."
 
-                self.logger.info(f"Gemini response received in {time.perf_counter() - start_time:.2f}s. Response: {response_text.replace(chr(10), ' ')}")
+                start_time = time.perf_counter()
+                response_text, success = handler.send_request(prompt, merged_images)
+
+                if not success:
+                    self.error.emit(f"API call {api_call_num} failed: {response_text}"); break
+
+                self.logger.info(f"Gemini response in {time.perf_counter() - start_time:.2f}s. Response: {response_text.replace(chr(10), ' ')}")
                 self._parse_and_update_df(response_text)
-                
-                self.progress.emit(int(batch_num / self.total_batches * 100), f"Batch {batch_num}/{self.total_batches} - %p%")
-                self.batch_completed.emit(self.df.copy(), batch_num, self.total_batches)
+
+                self.progress.emit(int(api_call_num / self.total_batches * 100), f"API Call {api_call_num}/{self.total_batches} - %p%")
+                self.batch_completed.emit(self.df.copy(), api_call_num, self.total_batches)
         except Exception as e:
             self.error.emit(f"An unexpected error occurred in GeminiWorker: {e}")
             self.logger.error("GeminiWorker run failed.", exception=e)

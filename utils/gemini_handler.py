@@ -35,13 +35,13 @@ class GeminiHandler:
         self.logger.info(f"Switching to API key #{self.current_key_index + 1}")
         self._configure_client()
 
-    def send_request(self, prompt_text: str, image_path: str) -> Tuple[str, bool]:
+    def send_request(self, prompt_text: str, images: List[Image.Image]) -> Tuple[str, bool]:
         """
-        Sends a request to the Gemini API with the given prompt and image.
+        Sends a request to the Gemini API with the given prompt and images.
 
         Args:
             prompt_text: The text prompt to send to the model.
-            image_path: Path to the image file to include in the request.
+            images: List of PIL Image objects to include in the request.
 
         Returns:
             A tuple of (response_text, success_bool).
@@ -49,15 +49,14 @@ class GeminiHandler:
         last_error = None
         for attempt in range(self.max_retries):
             try:
-                self.logger.info(f"Sending API request (Attempt {attempt + 1}/{self.max_retries}, Key #{self.current_key_index + 1})...")
+                self.logger.info(f"Sending API request with {len(images)} images (Attempt {attempt + 1}/{self.max_retries}, Key #{self.current_key_index + 1})...")
 
-                # Open the image - the new SDK accepts PIL Images directly
-                img = Image.open(image_path)
+                # Build contents list: prompt first, then all images
+                contents = [prompt_text] + images
 
-                # Use generate_content instead of chat
                 response = self.client.models.generate_content(
                     model=self.model_name,
-                    contents=[prompt_text, img]
+                    contents=contents
                 )
 
                 return response.text, True
