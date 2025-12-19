@@ -199,8 +199,11 @@ class PreviewWorker(QObject):
             self.finished.emit()
 
     def _render_individual_previews(self):
-        img_path = Path(self.config.get('image_path', ''))
-        if not img_path.exists():
+        image_path_str = self.config.get('image_path', '')
+        if not image_path_str:
+            return
+        img_path = Path(image_path_str)
+        if not img_path.is_file():
             return
 
         s = self.config
@@ -268,7 +271,10 @@ class PreviewWorker(QObject):
             return
 
         if merged := merge_images(images_to_merge, s.get('merged_img_height', 1080)):
-            temp_path = Path(s.get('temp_dir', '')) / "temp_merged_preview.jpg"
+            temp_dir = s.get('temp_dir', '')
+            if not temp_dir:
+                return
+            temp_path = Path(temp_dir) / "temp_merged_preview.jpg"
             merged.save(temp_path, quality=90)
 
             merged_rgb = merged.convert('RGB')
