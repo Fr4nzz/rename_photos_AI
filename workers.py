@@ -189,6 +189,7 @@ class PreviewWorker(QObject):
         self.is_stopped = True
 
     def run(self) -> None:
+        self.logger.info(f"[DEBUG] PreviewWorker.run() started. image_path={self.config.get('image_path', '')!r}")
         try:
             self._render_individual_previews()
             if not self.is_stopped:
@@ -196,20 +197,25 @@ class PreviewWorker(QObject):
         except Exception as e:
             self.logger.error("Preview rendering failed.", exception=e)
         finally:
+            self.logger.info("[DEBUG] PreviewWorker.run() finished, emitting finished signal")
             self.finished.emit()
 
     def _render_individual_previews(self):
         image_path_str = self.config.get('image_path', '')
+        self.logger.info(f"[DEBUG] _render_individual_previews() called. image_path_str={image_path_str!r}")
         if not image_path_str:
+            self.logger.info("[DEBUG] _render_individual_previews() early return: empty path")
             return
         img_path = Path(image_path_str)
         if not img_path.is_file():
+            self.logger.info(f"[DEBUG] _render_individual_previews() early return: not a file. exists={img_path.exists()}, is_dir={img_path.is_dir()}")
             return
 
         s = self.config
         raw_extensions = {'.cr2', '.orf', '.tif', '.tiff', '.nef', '.arw', '.dng', '.raf'}
 
         try:
+            self.logger.info(f"[DEBUG] Loading image: {img_path.name}, suffix={img_path.suffix.lower()}")
             if img_path.suffix.lower() in raw_extensions:
                 base_img = decode_raw_image(img_path, use_exif=s.get('use_exif', True))
                 exif_corrected = decode_raw_image(img_path, use_exif=True)
@@ -219,15 +225,20 @@ class PreviewWorker(QObject):
                 base_img = exif_corrected if s.get('use_exif', True) else unrotated
 
             if not base_img:
+                self.logger.info("[DEBUG] _render_individual_previews() early return: base_img is None")
                 return
+
+            self.logger.info(f"[DEBUG] Image loaded. size={base_img.size}, mode={base_img.mode}")
 
             # Original preview
             if not self.is_stopped:
+                self.logger.info("[DEBUG] Emitting 'original' preview signal")
                 self._emit_preview('original', base_img, str(img_path))
 
             # Rotated preview
             if not self.is_stopped:
                 rotated = base_img.rotate(s.get('rotation_angle', 0), expand=True)
+                self.logger.info("[DEBUG] Emitting 'rotated' preview signal")
                 self._emit_preview('rotated', rotated, str(img_path))
 
             # Processed preview
@@ -236,6 +247,7 @@ class PreviewWorker(QObject):
                 if s.get('crop_settings', {}).get('prerotate', False):
                     img_for_gemini = exif_corrected.rotate(s.get('rotation_angle', 0), expand=True)
                 processed = preprocess_image(img_for_gemini, "1", s.get('crop_settings', {}))
+                self.logger.info("[DEBUG] Emitting 'processed' preview signal")
                 self._emit_preview('processed', processed, str(img_path))
 
         except Exception as e:

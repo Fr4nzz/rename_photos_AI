@@ -408,6 +408,7 @@ class ProcessTabHandler(BaseTabHandler):
 
     def _start_preview_worker(self, img_path=None, jpg_files=None, batch_start_idx=0):
         """Start the preview worker thread."""
+        self.logger.info(f"[DEBUG] _start_preview_worker called. img_path={img_path}, jpg_files_count={len(jpg_files) if jpg_files else 0}")
         self._stop_preview_worker()
 
         s = self.app_state.settings
@@ -422,6 +423,7 @@ class ProcessTabHandler(BaseTabHandler):
             'merged_img_height': s.get('merged_img_height', 1080),
             'temp_dir': self.app_state.rename_files_dir or '',
         }
+        self.logger.info(f"[DEBUG] Worker config: image_path={config['image_path']!r}")
 
         self.preview_worker = PreviewWorker(config, self.logger)
         self.preview_thread = QThread()
@@ -432,10 +434,12 @@ class ProcessTabHandler(BaseTabHandler):
         self.preview_worker.finished.connect(self._on_preview_finished)
         self.preview_thread.started.connect(self.preview_worker.run)
 
+        self.logger.info("[DEBUG] Starting preview thread...")
         self.preview_thread.start()
 
     def _on_preview_ready(self, preview_type: str, img_bytes: bytes, width: int, height: int, file_path: str):
         """Handle individual preview ready signal."""
+        self.logger.info(f"[DEBUG] _on_preview_ready received: type={preview_type}, size={width}x{height}, bytes_len={len(img_bytes)}")
         q_img = QImage(img_bytes, width, height, 3 * width, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(q_img)
 
@@ -445,11 +449,15 @@ class ProcessTabHandler(BaseTabHandler):
             'processed': self.ui.processed_preview_label,
         }
         if label := label_map.get(preview_type):
+            self.logger.info(f"[DEBUG] Setting pixmap on {preview_type} label, pixmap.isNull()={pixmap.isNull()}")
             label.setPixmap(pixmap)
             label.setFilePath(file_path)
+        else:
+            self.logger.warn(f"[DEBUG] Unknown preview type: {preview_type}")
 
     def _on_batch_preview_ready(self, img_bytes: bytes, width: int, height: int, file_path: str):
         """Handle batch preview ready signal."""
+        self.logger.info(f"[DEBUG] _on_batch_preview_ready received: size={width}x{height}")
         q_img = QImage(img_bytes, width, height, 3 * width, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(q_img)
         self.ui.combined_preview_label.setPixmap(pixmap)
@@ -457,6 +465,7 @@ class ProcessTabHandler(BaseTabHandler):
 
     def _on_preview_finished(self):
         """Clean up after preview worker finishes."""
+        self.logger.info("[DEBUG] _on_preview_finished called")
         self._stop_preview_worker()
 
     def populate_continue_dropdown(self):
