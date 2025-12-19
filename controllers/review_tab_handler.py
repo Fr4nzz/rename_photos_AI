@@ -234,7 +234,8 @@ class ReviewTabHandler(BaseTabHandler):
                 mismatched_ids = id_counts[id_counts != 2].index
                 display_df = display_df[display_df[main_col].isin(mismatched_ids)]
 
-        self.filtered_df = display_df.reset_index(drop=True)
+        # Keep original index so we can map back to current_df when syncing changes
+        self.filtered_df = display_df.copy()
         items_per_page = self.app_state.settings.get('review_items_per_page', 50)
         self.total_pages = math.ceil(len(self.filtered_df) / items_per_page) if items_per_page > 0 else 1
         self.total_pages = max(1, self.total_pages)
