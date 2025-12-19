@@ -13,7 +13,7 @@ from PyQt5.QtGui import QPixmap, QImage, QDesktopServices
 from app_state import AppState, DEFAULT_PROMPT
 from controllers.base_handler import BaseTabHandler
 from ui.process_tab import ProcessImagesTab
-from workers import RotationWorker, GeminiWorker
+from workers import RotationWorker, GeminiWorker, PreviewWorker
 from utils.file_management import get_image_files, SUPPORTED_RAW_EXTENSIONS
 from utils.image_processing import (
     preprocess_image, merge_images, fix_orientation, decode_raw_image
@@ -26,6 +26,8 @@ class ProcessTabHandler(BaseTabHandler):
 
     def __init__(self, ui: ProcessImagesTab, app_state: AppState, logger: SimpleLogger, main_window: QMainWindow):
         super().__init__(ui, app_state, logger, main_window)
+        self.preview_worker = None
+        self.preview_thread = None
 
     def connect_signals(self):
         self.ui.browse_button.clicked.connect(self.select_directory)
@@ -318,54 +320,27 @@ class ProcessTabHandler(BaseTabHandler):
         img_path = Path(self.app_state.input_directory) / selected_file
         if not img_path.exists(): return
 
-        s = self.app_state.settings
-        base_img_previews, exif_corrected_img = None, None
+        # Show loading state
+        for label in [self.ui.original_preview_label, self.ui.rotated_preview_label, self.ui.processed_preview_label]:
+            label.setText("Loading...")
+            label.setFilePath("")
 
-        try:
-            if img_path.suffix.lower() in SUPPORTED_RAW_EXTENSIONS:
-                base_img_previews = decode_raw_image(img_path, use_exif=s['use_exif'])
-                exif_corrected_img = decode_raw_image(img_path, use_exif=True)
-            else: # Compressed
-                unrotated_pil = Image.open(img_path)
-                exif_corrected_img = fix_orientation(unrotated_pil.copy())
-                base_img_previews = exif_corrected_img if s['use_exif'] else unrotated_pil
-
-            if not base_img_previews:
-                raise IOError("Failed to load base image for preview.")
-
-            rotated_image = base_img_previews.rotate(s['rotation_angle'], expand=True)
-
-            # For "Processed (for Gemini)" preview: apply prerotation if enabled
-            img_for_gemini = exif_corrected_img
-            if s['crop_settings'].get('prerotate', False):
-                img_for_gemini = exif_corrected_img.rotate(s['rotation_angle'], expand=True)
-            processed_image = preprocess_image(img_for_gemini, "1", s['crop_settings'])
-
-            for label, img, path in [
-                (self.ui.original_preview_label, base_img_previews, str(img_path)),
-                (self.ui.rotated_preview_label, rotated_image, str(img_path)),
-                (self.ui.processed_preview_label, processed_image, str(img_path))
-            ]:
-                label.setPixmap(self.pil_to_qpixmap(img))
-                label.setFilePath(path)
-        except Exception as e:
-            self.logger.error(f"Error generating preview for {img_path.name}", exception=e)
-            for label in [self.ui.original_preview_label, self.ui.rotated_preview_label, self.ui.processed_preview_label]:
-                label.setText("Preview Error")
-                label.setFilePath("")
+        self._start_preview_worker(img_path)
 
     def update_batch_preview(self):
         self._sync_settings_from_ui()
-        if not (jpg_files := get_image_files(self.app_state.input_directory, 'compressed')):
+        jpg_files = get_image_files(self.app_state.input_directory, 'compressed')
+        if not jpg_files:
             self.ui.combined_preview_label.clear()
             self.ui.combined_preview_label.setText("No Images")
             return
-        
+
         s = self.app_state.settings
         batch_size = s['batch_size']
-        if batch_size <= 0: return # Avoid division by zero
+        if batch_size <= 0: return
+
         num_batches = (len(jpg_files) + batch_size - 1) // batch_size
-        
+
         current_idx = self.ui.batch_preview_dropdown.currentIndex()
         self.ui.batch_preview_dropdown.blockSignals(True)
         self.ui.batch_preview_dropdown.clear()
@@ -373,36 +348,79 @@ class ProcessTabHandler(BaseTabHandler):
             self.ui.batch_preview_dropdown.addItems([f"Batch {i+1}" for i in range(num_batches)])
             if 0 <= current_idx < num_batches: self.ui.batch_preview_dropdown.setCurrentIndex(current_idx)
         self.ui.batch_preview_dropdown.blockSignals(False)
-        
+
         if self.ui.batch_preview_dropdown.count() == 0: return
-        
+
+        # Show loading state and start worker
+        self.ui.combined_preview_label.clear()
+        self.ui.combined_preview_label.setText("Loading...")
+        self.ui.combined_preview_label.setFilePath("")
+
         start_idx = self.ui.batch_preview_dropdown.currentIndex() * batch_size
-        prerotate = s['crop_settings'].get('prerotate', False)
-        rotation_angle = s['rotation_angle']
+        self._start_preview_worker(None, jpg_files, start_idx)
 
-        images_to_merge = []
-        for i, p in enumerate(jpg_files[start_idx : start_idx + batch_size]):
-            try:
-                img = Image.open(p)
-                exif_corrected_img = fix_orientation(img)
-                # Apply prerotation if enabled
-                img_for_gemini = exif_corrected_img
-                if prerotate:
-                    img_for_gemini = exif_corrected_img.rotate(rotation_angle, expand=True)
-                processed_img = preprocess_image(img_for_gemini, str(start_idx + i + 1), s['crop_settings'])
-                images_to_merge.append(processed_img)
-            except Exception as e:
-                self.logger.error(f"Failed to process image for batch preview: {p.name}", exception=e)
+    def _stop_preview_worker(self):
+        """Stop any running preview worker."""
+        if self.preview_worker:
+            self.preview_worker.stop()
+        if self.preview_thread and self.preview_thread.isRunning():
+            self.preview_thread.quit()
+            self.preview_thread.wait(1000)
+        self.preview_worker = None
+        self.preview_thread = None
 
-        if merged := merge_images(images_to_merge, s['merged_img_height']):
-            temp_path = Path(self.app_state.rename_files_dir) / "temp_merged_preview.jpg"
-            merged.save(temp_path, quality=90)
-            self.ui.combined_preview_label.setPixmap(self.pil_to_qpixmap(merged))
-            self.ui.combined_preview_label.setFilePath(str(temp_path))
-        else:
-            self.ui.combined_preview_label.clear()
-            self.ui.combined_preview_label.setText("Batch Preview")
-            self.ui.combined_preview_label.setFilePath("")
+    def _start_preview_worker(self, img_path=None, jpg_files=None, batch_start_idx=0):
+        """Start the preview worker thread."""
+        self._stop_preview_worker()
+
+        s = self.app_state.settings
+        config = {
+            'image_path': str(img_path) if img_path else '',
+            'jpg_files': jpg_files or [],
+            'batch_start_idx': batch_start_idx,
+            'use_exif': s.get('use_exif', True),
+            'rotation_angle': s.get('rotation_angle', 0),
+            'crop_settings': s.get('crop_settings', {}),
+            'batch_size': s.get('batch_size', 9),
+            'merged_img_height': s.get('merged_img_height', 1080),
+            'temp_dir': self.app_state.rename_files_dir or '',
+        }
+
+        self.preview_worker = PreviewWorker(config, self.logger)
+        self.preview_thread = QThread()
+        self.preview_worker.moveToThread(self.preview_thread)
+
+        self.preview_worker.preview_ready.connect(self._on_preview_ready)
+        self.preview_worker.batch_preview_ready.connect(self._on_batch_preview_ready)
+        self.preview_worker.finished.connect(self._on_preview_finished)
+        self.preview_thread.started.connect(self.preview_worker.run)
+
+        self.preview_thread.start()
+
+    def _on_preview_ready(self, preview_type: str, img_bytes: bytes, width: int, height: int, file_path: str):
+        """Handle individual preview ready signal."""
+        q_img = QImage(img_bytes, width, height, 3 * width, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(q_img)
+
+        label_map = {
+            'original': self.ui.original_preview_label,
+            'rotated': self.ui.rotated_preview_label,
+            'processed': self.ui.processed_preview_label,
+        }
+        if label := label_map.get(preview_type):
+            label.setPixmap(pixmap)
+            label.setFilePath(file_path)
+
+    def _on_batch_preview_ready(self, img_bytes: bytes, width: int, height: int, file_path: str):
+        """Handle batch preview ready signal."""
+        q_img = QImage(img_bytes, width, height, 3 * width, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(q_img)
+        self.ui.combined_preview_label.setPixmap(pixmap)
+        self.ui.combined_preview_label.setFilePath(file_path)
+
+    def _on_preview_finished(self):
+        """Clean up after preview worker finishes."""
+        self._stop_preview_worker()
 
     def populate_continue_dropdown(self):
         self.ui.continue_dropdown.clear()

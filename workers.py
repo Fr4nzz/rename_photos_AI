@@ -64,10 +64,18 @@ class GeminiWorker(QObject):
             images_per_prompt = self.config.get('images_per_prompt', 10)
             photos_per_api_call = images_per_prompt * batch_size
 
-            # Calculate total API calls needed
             total_photos = len(self.df)
             if self.total_batches == 0:
                 self.total_batches = (total_photos + photos_per_api_call - 1) // photos_per_api_call
+
+            # Calculate total steps for granular progress:
+            # Each API call has: images_per_prompt merge steps + 1 API response step
+            remaining_api_calls = self.total_batches - (self.start_batch - 1)
+            # Estimate merged images per API call (may vary for last call)
+            total_merge_steps = remaining_api_calls * images_per_prompt
+            total_api_steps = remaining_api_calls
+            total_steps = total_merge_steps + total_api_steps
+            current_step = 0
 
             prerotate = self.config['crop_settings'].get('prerotate', False)
             rotation_angle = self.config.get('rotation_angle', 0)
@@ -79,15 +87,15 @@ class GeminiWorker(QObject):
                 api_call_num = api_call_idx + 1
                 api_call_start = api_call_idx * photos_per_api_call
                 api_call_end = min(api_call_start + photos_per_api_call, total_photos)
-                api_call_df = self.df.iloc[api_call_start:api_call_end]
 
                 self.logger.info(f"--- API Call {api_call_num}/{self.total_batches}: photos {api_call_start + 1}-{api_call_end} ---")
 
-                # Create multiple merged images for this API call
                 merged_images = []
                 label_ranges = []
 
                 for img_idx in range(images_per_prompt):
+                    if self.is_stopped: break
+
                     batch_start = api_call_start + (img_idx * batch_size)
                     batch_end = min(batch_start + batch_size, api_call_end)
                     if batch_start >= api_call_end:
@@ -108,11 +116,20 @@ class GeminiWorker(QObject):
                         merged_images.append(merged_img)
                         label_ranges.append((first_label, last_label))
 
+                    # Update progress after each merged image
+                    current_step += 1
+                    pct = int(current_step / total_steps * 100)
+                    self.progress.emit(pct, f"Merging image {img_idx + 1}/{images_per_prompt} for API call {api_call_num} - {pct}%")
+
+                if self.is_stopped: break
+
                 if not merged_images:
                     self.logger.warn(f"Skipping API call {api_call_num}: no images merged.")
                     continue
 
-                # Build prompt with label ranges for all merged images
+                # Update progress: sending to API
+                self.progress.emit(int(current_step / total_steps * 100), f"Sending {len(merged_images)} images to Gemini...")
+
                 label_desc = ", ".join([f"Image {i+1}: labels {r[0]}-{r[1]}" for i, r in enumerate(label_ranges)])
                 prompt = self.config['prompt_text'] + f"\n\nAnalyze {len(merged_images)} images. {label_desc}."
 
@@ -122,11 +139,15 @@ class GeminiWorker(QObject):
                 if not success:
                     self.error.emit(f"API call {api_call_num} failed: {response_text}"); break
 
-                self.logger.info(f"Gemini response in {time.perf_counter() - start_time:.2f}s. Response: {response_text.replace(chr(10), ' ')}")
-                self._parse_and_update_df(response_text)
+                # Update progress after API response
+                current_step += 1
+                pct = int(current_step / total_steps * 100)
+                self.logger.info(f"Gemini response in {time.perf_counter() - start_time:.2f}s.")
+                self.progress.emit(pct, f"API Call {api_call_num}/{self.total_batches} complete - {pct}%")
 
-                self.progress.emit(int(api_call_num / self.total_batches * 100), f"API Call {api_call_num}/{self.total_batches} - %p%")
+                self._parse_and_update_df(response_text)
                 self.batch_completed.emit(self.df.copy(), api_call_num, self.total_batches)
+
         except Exception as e:
             self.error.emit(f"An unexpected error occurred in GeminiWorker: {e}")
             self.logger.error("GeminiWorker run failed.", exception=e)
@@ -150,6 +171,115 @@ class GeminiWorker(QObject):
                     self.logger.warn(f"Could not process item '{photo_id_str}' from JSON. Error: {e}")
         except json.JSONDecodeError as e:
             self.logger.error(f"Could not parse JSON from Gemini response.", exception=e)
+
+class PreviewWorker(QObject):
+    """Worker for rendering image previews in a background thread."""
+    # Signals: (preview_type, image_bytes, width, height, file_path)
+    preview_ready = pyqtSignal(str, bytes, int, int, str)
+    batch_preview_ready = pyqtSignal(bytes, int, int, str)
+    finished = pyqtSignal()
+
+    def __init__(self, config: Dict[str, Any], logger: SimpleLogger):
+        super().__init__()
+        self.config = config
+        self.logger = logger
+        self.is_stopped = False
+
+    def stop(self) -> None:
+        self.is_stopped = True
+
+    def run(self) -> None:
+        try:
+            self._render_individual_previews()
+            if not self.is_stopped:
+                self._render_batch_preview()
+        except Exception as e:
+            self.logger.error("Preview rendering failed.", exception=e)
+        finally:
+            self.finished.emit()
+
+    def _render_individual_previews(self):
+        img_path = Path(self.config.get('image_path', ''))
+        if not img_path.exists():
+            return
+
+        s = self.config
+        raw_extensions = {'.cr2', '.orf', '.tif', '.tiff', '.nef', '.arw', '.dng', '.raf'}
+
+        try:
+            if img_path.suffix.lower() in raw_extensions:
+                base_img = decode_raw_image(img_path, use_exif=s.get('use_exif', True))
+                exif_corrected = decode_raw_image(img_path, use_exif=True)
+            else:
+                unrotated = Image.open(img_path)
+                exif_corrected = fix_orientation(unrotated.copy())
+                base_img = exif_corrected if s.get('use_exif', True) else unrotated
+
+            if not base_img:
+                return
+
+            # Original preview
+            if not self.is_stopped:
+                self._emit_preview('original', base_img, str(img_path))
+
+            # Rotated preview
+            if not self.is_stopped:
+                rotated = base_img.rotate(s.get('rotation_angle', 0), expand=True)
+                self._emit_preview('rotated', rotated, str(img_path))
+
+            # Processed preview
+            if not self.is_stopped:
+                img_for_gemini = exif_corrected
+                if s.get('crop_settings', {}).get('prerotate', False):
+                    img_for_gemini = exif_corrected.rotate(s.get('rotation_angle', 0), expand=True)
+                processed = preprocess_image(img_for_gemini, "1", s.get('crop_settings', {}))
+                self._emit_preview('processed', processed, str(img_path))
+
+        except Exception as e:
+            self.logger.error(f"Error rendering preview for {img_path.name}", exception=e)
+
+    def _render_batch_preview(self):
+        jpg_files = self.config.get('jpg_files', [])
+        if not jpg_files:
+            return
+
+        s = self.config
+        batch_size = s.get('batch_size', 9)
+        start_idx = s.get('batch_start_idx', 0)
+        prerotate = s.get('crop_settings', {}).get('prerotate', False)
+        rotation_angle = s.get('rotation_angle', 0)
+
+        images_to_merge = []
+        for i, p in enumerate(jpg_files[start_idx:start_idx + batch_size]):
+            if self.is_stopped:
+                return
+            try:
+                img = Image.open(p)
+                exif_corrected = fix_orientation(img)
+                img_for_gemini = exif_corrected
+                if prerotate:
+                    img_for_gemini = exif_corrected.rotate(rotation_angle, expand=True)
+                processed = preprocess_image(img_for_gemini, str(start_idx + i + 1), s.get('crop_settings', {}))
+                images_to_merge.append(processed)
+            except Exception as e:
+                self.logger.error(f"Failed to process image for batch: {p.name}", exception=e)
+
+        if self.is_stopped or not images_to_merge:
+            return
+
+        if merged := merge_images(images_to_merge, s.get('merged_img_height', 1080)):
+            temp_path = Path(s.get('temp_dir', '')) / "temp_merged_preview.jpg"
+            merged.save(temp_path, quality=90)
+
+            merged_rgb = merged.convert('RGB')
+            img_bytes = merged_rgb.tobytes("raw", "RGB")
+            self.batch_preview_ready.emit(img_bytes, merged_rgb.width, merged_rgb.height, str(temp_path))
+
+    def _emit_preview(self, preview_type: str, img: Image.Image, path: str):
+        img_rgb = img.convert('RGB') if img.mode != 'RGB' else img
+        img_bytes = img_rgb.tobytes("raw", "RGB")
+        self.preview_ready.emit(preview_type, img_bytes, img_rgb.width, img_rgb.height, path)
+
 
 class ImageLoadWorker(QObject):
     image_loaded = pyqtSignal(str, bytes, int, int)
