@@ -65,6 +65,17 @@ def is_bundled() -> bool:
     return getattr(sys, 'frozen', False)
 
 
+def get_base_path() -> Path:
+    """Get the base path for application resources.
+
+    For bundled apps: returns the temp extraction directory (sys._MEIPASS)
+    For development: returns the directory containing the main script
+    """
+    if is_bundled():
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent
+
+
 class AppState:
 
     def __init__(self, logger: SimpleLogger):

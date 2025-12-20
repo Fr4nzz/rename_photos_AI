@@ -120,27 +120,34 @@ else:
     print("[build.spec] Linux build - icon embedding not applicable")
 
 
-# --- Detect and bundle exiftool files (Windows) ---
-exiftool_datas = []
+# --- Bundle data files ---
+bundled_datas = []
+
+# Bundle icons folder (for taskbar icon)
+if ICONS_DIR.exists():
+    bundled_datas.append((str(ICONS_DIR), 'icons'))
+    print(f"[build.spec] Found {ICONS_DIR}/ - will bundle for taskbar icon")
+
+# Detect and bundle exiftool files (Windows only)
 if sys.platform == 'win32':
     # Check for exiftool.exe in current directory
     if Path('exiftool.exe').exists():
-        exiftool_datas.append(('exiftool.exe', '.'))
+        bundled_datas.append(('exiftool.exe', '.'))
         print("[build.spec] Found exiftool.exe - will bundle")
 
     # Check for exiftool_files directory (required by exiftool on Windows)
     if Path('exiftool_files').exists():
-        exiftool_datas.append(('exiftool_files', 'exiftool_files'))
+        bundled_datas.append(('exiftool_files', 'exiftool_files'))
         print("[build.spec] Found exiftool_files/ - will bundle")
 
-    if not exiftool_datas:
+    if not any('exiftool' in str(d) for d in bundled_datas):
         print("[build.spec] WARNING: exiftool.exe not found. Place it next to build.spec to bundle.")
 
 a = Analysis(
     ['main.py'],  # Entry point
     pathex=[],
     binaries=[],
-    datas=exiftool_datas,  # Include exiftool if found
+    datas=bundled_datas,  # Include icons, exiftool, etc.
     hiddenimports=[
         'pandas',
         'numpy',

@@ -1,14 +1,33 @@
 # ai-photo-processor/main_window.py
 
+from pathlib import Path
 from PyQt5.QtWidgets import QMainWindow, QTabWidget, QMessageBox
+from PyQt5.QtGui import QIcon
 
-from app_state import AppState, is_bundled
+from app_state import AppState, is_bundled, get_base_path
 from ui.process_tab import ProcessImagesTab
 from ui.review_tab import ReviewResultsTab
 from ui.api_keys_tab import ApiKeysTab
 from controllers.process_tab_handler import ProcessTabHandler
 from controllers.review_tab_handler import ReviewTabHandler
 from utils.logger import SimpleLogger
+
+
+def get_app_icon() -> QIcon:
+    """Get the application icon from the icons folder."""
+    base_path = get_base_path()
+    # Try different icon locations
+    icon_paths = [
+        base_path / 'icons' / 'app.ico',
+        base_path / 'app.ico',
+        Path('icons') / 'app.ico',
+        Path('app.ico'),
+    ]
+    for icon_path in icon_paths:
+        if icon_path.exists():
+            return QIcon(str(icon_path))
+    return QIcon()  # Empty icon if not found
+
 
 class MainWindow(QMainWindow):
     """
@@ -20,6 +39,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("AI Photo Processor")
         self.setGeometry(100, 100, 1600, 900)
+
+        # Set window icon (shows in taskbar)
+        self.setWindowIcon(get_app_icon())
 
         # 1. Initialize Core Components
         self.logger = SimpleLogger()
