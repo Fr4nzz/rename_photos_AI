@@ -141,6 +141,9 @@ class ProcessTabHandler(BaseTabHandler):
         self.save_settings()
 
     def _sync_settings_from_ui(self):
+        import traceback
+        print(f"[DEBUG] _sync_settings_from_ui called, zoom_checkbox.isChecked()={self.ui.zoom_checkbox.isChecked()}")
+        print(f"[DEBUG] Call stack:\n{''.join(traceback.format_stack()[-5:-1])}")
         s, ui = self.app_state.settings, self.ui
         s['images_per_prompt'] = safe_int(ui.images_per_prompt_input.text(), default=DEFAULTS['images_per_prompt'])
         s['batch_size'] = safe_int(ui.batch_size_input.text(), default=DEFAULTS['batch_size'])
