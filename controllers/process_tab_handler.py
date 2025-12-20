@@ -141,7 +141,7 @@ class ProcessTabHandler(BaseTabHandler):
 
     def _sync_settings_from_ui(self):
         s, ui = self.app_state.settings, self.ui
-        s['images_per_prompt'] = safe_int(ui.images_per_prompt_input.text(), default=10)
+        s['images_per_prompt'] = safe_int(ui.images_per_prompt_input.text(), default=5)
         s['batch_size'] = safe_int(ui.batch_size_input.text(), default=9)
         s['merged_img_height'] = safe_int(ui.merged_img_height_input.text(), default=1080)
         s['main_column'] = ui.main_column_input.text() or 'CAM'
