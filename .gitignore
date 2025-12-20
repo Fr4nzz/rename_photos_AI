@@ -17,12 +17,12 @@
 # No ignorar README.md
 !README.md
 
-# No ignorar carpeta de screenshots
-!screenshots/
-!screenshots/*
-
 # No ignorar build.spec
 !build.spec
 
-# Ignorar carpeta dist
-dist/ 
+# No ignorar app icon
+!app.ico
+
+# Ignorar carpeta dist y build
+dist/
+build/ 

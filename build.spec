@@ -6,6 +6,20 @@ from pathlib import Path
 
 block_cipher = None
 
+# --- Detect icon file ---
+# Windows: .ico, macOS: .icns (fall back to .ico if .icns not available)
+if sys.platform == 'win32':
+    icon_file = 'app.ico' if Path('app.ico').exists() else None
+elif sys.platform == 'darwin':
+    icon_file = 'app.icns' if Path('app.icns').exists() else ('app.ico' if Path('app.ico').exists() else None)
+else:
+    icon_file = None
+
+if icon_file:
+    print(f"[build.spec] Using icon: {icon_file}")
+else:
+    print("[build.spec] WARNING: No icon file found (app.ico or app.icns)")
+
 # --- Detect and bundle exiftool files (Windows) ---
 exiftool_datas = []
 if sys.platform == 'win32':
@@ -72,13 +86,13 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='screenshots/app_icon.jpeg',
+    icon=icon_file,
 )
 
 # --- macOS Specific Bundle Configuration ---
 app = BUNDLE(
     exe,
     name='AI Photo Processor.app',
-    icon='screenshots/app_icon.jpeg',
+    icon=icon_file,
     bundle_identifier='com.ai.photoprocessor',
 )
