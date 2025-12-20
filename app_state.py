@@ -136,8 +136,10 @@ class AppState:
                 return d
             self.settings = recursive_update(self.settings, saved_settings)
             self.logger.info(f"Loaded settings from {settings_path}")
+            print(f"[DEBUG] After loading: crop_settings['zoom'] = {self.settings['crop_settings']['zoom']}")
         except FileNotFoundError:
             self.logger.info(f"{settings_path} not found. Using default settings.")
+            print(f"[DEBUG] No settings file, default crop_settings['zoom'] = {self.settings['crop_settings']['zoom']}")
         except (json.JSONDecodeError, TypeError) as e:
             self.logger.warn(f"Could not parse {settings_path}. Using default settings. Error: {e}")
 

@@ -80,6 +80,7 @@ class ProcessTabHandler(BaseTabHandler):
         self.ui.preview_raw_checkbox.setChecked(self.app_state.settings['preview_raw'])
         
         cs = self.app_state.settings['crop_settings']
+        print(f"[DEBUG] populate_initial_ui: cs['zoom'] = {cs['zoom']}")
         self.ui.zoom_checkbox.setChecked(cs['zoom'])
         self.ui.grayscale_checkbox.setChecked(cs['grayscale'])
         self.ui.prerotate_checkbox.setChecked(cs.get('prerotate', False))
