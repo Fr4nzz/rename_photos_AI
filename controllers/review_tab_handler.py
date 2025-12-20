@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QMainWindow, QWidget
-from PyQt5.QtCore import QThread
+from PyQt5.QtCore import QThread, Qt
 from PyQt5.QtGui import QPixmap, QImage
 
 from app_state import AppState, DEFAULTS
@@ -37,15 +37,25 @@ class ReviewTabHandler(BaseTabHandler):
         self.current_page = 0
         self.total_pages = 1
         self.filtered_df = pd.DataFrame()
+        # Scroll position memory: page_number -> scroll_position
+        self.scroll_positions = {}
 
     def connect_signals(self):
         self.ui.csv_dropdown.currentIndexChanged.connect(self.refresh_view)
         self.ui.refresh_from_disk_button.clicked.connect(lambda: self.refresh_csv_dropdown(select_newest=True))
         self.ui.crop_review_checkbox.stateChanged.connect(self._handle_ui_change)
-        self.ui.show_duplicates_checkbox.stateChanged.connect(self._handle_ui_change)
-        
+
+        # Filter checkboxes
+        self.ui.filter_all_checkbox.stateChanged.connect(self._handle_filter_all_changed)
+        for cb in [self.ui.filter_crossed_checkbox, self.ui.filter_notes_checkbox,
+                   self.ui.filter_skip_checkbox, self.ui.filter_mismatch_checkbox]:
+            cb.stateChanged.connect(self._handle_filter_option_changed)
+
         self.ui.items_per_page_input.editingFinished.connect(self._handle_ui_change)
         self.ui.image_quality_dropdown.currentIndexChanged.connect(self._handle_ui_change)
+
+        # Editable page number
+        self.ui.page_number_input.editingFinished.connect(self._handle_page_input_changed)
         
         self.ui.suffix_mode_dropdown.currentIndexChanged.connect(self._handle_suffix_mode_change)
         self.ui.custom_suffix_input.editingFinished.connect(self._sync_settings_from_ui)
@@ -106,6 +116,79 @@ class ReviewTabHandler(BaseTabHandler):
     def _handle_ui_change(self):
         self._sync_settings_from_ui()
         self.refresh_view()
+
+    def _handle_filter_all_changed(self, state):
+        """When 'All' is checked, uncheck all other filter options."""
+        if state == Qt.Checked:
+            # Block signals to prevent recursive calls
+            for cb in [self.ui.filter_crossed_checkbox, self.ui.filter_notes_checkbox,
+                       self.ui.filter_skip_checkbox, self.ui.filter_mismatch_checkbox]:
+                cb.blockSignals(True)
+                cb.setChecked(False)
+                cb.blockSignals(False)
+            self._handle_ui_change()
+        else:
+            # If unchecking All and no other filter is selected, re-check All
+            if not self._any_filter_selected():
+                self.ui.filter_all_checkbox.blockSignals(True)
+                self.ui.filter_all_checkbox.setChecked(True)
+                self.ui.filter_all_checkbox.blockSignals(False)
+
+    def _handle_filter_option_changed(self, state):
+        """When any filter option is changed, update 'All' checkbox accordingly."""
+        if state == Qt.Checked:
+            # Uncheck 'All' when any specific filter is selected
+            self.ui.filter_all_checkbox.blockSignals(True)
+            self.ui.filter_all_checkbox.setChecked(False)
+            self.ui.filter_all_checkbox.blockSignals(False)
+            self._handle_ui_change()
+        else:
+            # If no filters are selected, re-check 'All'
+            if not self._any_filter_selected():
+                self.ui.filter_all_checkbox.blockSignals(True)
+                self.ui.filter_all_checkbox.setChecked(True)
+                self.ui.filter_all_checkbox.blockSignals(False)
+            self._handle_ui_change()
+
+    def _any_filter_selected(self) -> bool:
+        """Check if any non-'All' filter is selected."""
+        return any([
+            self.ui.filter_crossed_checkbox.isChecked(),
+            self.ui.filter_notes_checkbox.isChecked(),
+            self.ui.filter_skip_checkbox.isChecked(),
+            self.ui.filter_mismatch_checkbox.isChecked()
+        ])
+
+    def _handle_page_input_changed(self):
+        """Handle manual page number input."""
+        try:
+            page_num = int(self.ui.page_number_input.text())
+            # Convert from 1-based (user) to 0-based (internal)
+            target_page = page_num - 1
+            if 0 <= target_page < self.total_pages and target_page != self.current_page:
+                self._save_scroll_position()
+                self.current_page = target_page
+                self._populate_review_grid()
+                self._restore_scroll_position()
+            else:
+                # Invalid input, reset to current page
+                self._update_navigation_controls()
+        except ValueError:
+            # Invalid input, reset to current page
+            self._update_navigation_controls()
+
+    def _save_scroll_position(self):
+        """Save current scroll position for the current page."""
+        scrollbar = self.ui.scroll_area.verticalScrollBar()
+        self.scroll_positions[self.current_page] = scrollbar.value()
+
+    def _restore_scroll_position(self):
+        """Restore scroll position for the current page, or scroll to top if not saved."""
+        scrollbar = self.ui.scroll_area.verticalScrollBar()
+        if self.current_page in self.scroll_positions:
+            scrollbar.setValue(self.scroll_positions[self.current_page])
+        else:
+            scrollbar.setValue(0)
 
     def refresh_csv_dropdown(self, select_newest: bool = False):
         self.ui.csv_dropdown.blockSignals(True)
@@ -225,21 +308,43 @@ class ReviewTabHandler(BaseTabHandler):
             self.filtered_df, self.total_pages, self.current_page = pd.DataFrame(), 1, 0
             return
 
-        display_df = df[df['status'] != 'Missing'] # Don't show missing files unless specifically asked
-        if self.ui.show_duplicates_checkbox.isChecked():
-            main_col = self.app_state.settings['main_column']
-            if main_col in df.columns:
-                valid_ids = df.loc[df[main_col].notna() & (df[main_col] != ''), main_col]
-                id_counts = valid_ids.value_counts()
-                mismatched_ids = id_counts[id_counts != 2].index
-                display_df = display_df[display_df[main_col].isin(mismatched_ids)]
+        display_df = df[df['status'] != 'Missing']  # Don't show missing files unless specifically asked
+
+        # Apply filters (only if "All" is not checked)
+        if not self.ui.filter_all_checkbox.isChecked():
+            filter_mask = pd.Series([False] * len(display_df), index=display_df.index)
+
+            # Crossed Out filter: non-empty 'co' column
+            if self.ui.filter_crossed_checkbox.isChecked() and 'co' in display_df.columns:
+                filter_mask |= display_df['co'].notna() & (display_df['co'] != '')
+
+            # Has Notes filter: non-empty 'n' column
+            if self.ui.filter_notes_checkbox.isChecked() and 'n' in display_df.columns:
+                filter_mask |= display_df['n'].notna() & (display_df['n'] != '')
+
+            # Skipped filter: non-empty 'skip' column
+            if self.ui.filter_skip_checkbox.isChecked() and 'skip' in display_df.columns:
+                filter_mask |= display_df['skip'].notna() & (display_df['skip'] != '')
+
+            # Mismatches filter: IDs that don't appear exactly twice
+            if self.ui.filter_mismatch_checkbox.isChecked():
+                main_col = self.app_state.settings['main_column']
+                if main_col in df.columns:
+                    valid_ids = df.loc[df[main_col].notna() & (df[main_col] != ''), main_col]
+                    id_counts = valid_ids.value_counts()
+                    mismatched_ids = id_counts[id_counts != 2].index
+                    filter_mask |= display_df[main_col].isin(mismatched_ids)
+
+            display_df = display_df[filter_mask]
 
         # Keep original index so we can map back to current_df when syncing changes
         self.filtered_df = display_df.copy()
         items_per_page = self.app_state.settings.get('review_items_per_page', 50)
         self.total_pages = math.ceil(len(self.filtered_df) / items_per_page) if items_per_page > 0 else 1
         self.total_pages = max(1, self.total_pages)
+        # Reset to page 0 when filters change, clear scroll positions
         self.current_page = 0
+        self.scroll_positions.clear()
 
     def _populate_review_grid(self):
         try:
@@ -558,28 +663,34 @@ class ReviewTabHandler(BaseTabHandler):
 
     def go_to_next_page(self):
         if self.current_page < self.total_pages - 1:
+            self._save_scroll_position()
             self.current_page += 1
             self._populate_review_grid()
+            self._restore_scroll_position()
 
     def go_to_prev_page(self):
         if self.current_page > 0:
+            self._save_scroll_position()
             self.current_page -= 1
             self._populate_review_grid()
+            self._restore_scroll_position()
 
     def _update_navigation_controls(self):
         """Updates the state and text of pagination controls."""
         self.ui.prev_page_button.setEnabled(self.current_page > 0)
         self.ui.next_page_button.setEnabled(self.current_page < self.total_pages - 1)
-        
+
         items_per_page = self.app_state.settings.get('review_items_per_page', 50)
         total_items = len(self.filtered_df)
-        
+
+        # Update editable page number input
+        self.ui.page_number_input.setText(str(self.current_page + 1))
+
         if total_items == 0:
-            self.ui.page_label.setText("Page 1 of 1 (No items)")
+            self.ui.page_total_label.setText("of 1")
+            self.ui.page_items_label.setText("(No items)")
         else:
             start_item = self.current_page * items_per_page + 1
             end_item = min((self.current_page + 1) * items_per_page, total_items)
-            self.ui.page_label.setText(
-                f"Page {self.current_page + 1} of {self.total_pages} "
-                f"({start_item}-{end_item} of {total_items})"
-            )
+            self.ui.page_total_label.setText(f"of {self.total_pages}")
+            self.ui.page_items_label.setText(f"({start_item}-{end_item} of {total_items})")
