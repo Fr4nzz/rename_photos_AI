@@ -1,7 +1,7 @@
 # ai-photo-processor/app_state.py
 
 import os
-import sys  # <--- IMPORT ADDED
+import sys
 import shutil
 import json
 import pandas as pd
@@ -24,6 +24,25 @@ SETTINGS_FILE = "settings.json"
 API_KEYS_FILE = "api_keys.txt"
 LAST_DIR_FILE = "last_dir.txt"
 
+# =============================================================================
+# DEFAULT VALUES - Single source of truth for all default settings
+# =============================================================================
+DEFAULTS = {
+    'images_per_prompt': 5,
+    'batch_size': 9,
+    'merged_img_height': 1080,
+    'main_column': 'CAM',
+    'rotation_angle': 180,
+    'review_items_per_page': 50,
+    'review_thumb_height': '720p',
+    'suffix_mode': 'Standard',
+    'custom_suffixes': 'd,v',
+    'crop_top': 0.1,
+    'crop_bottom': 0.0,
+    'crop_left': 0.0,
+    'crop_right': 0.5,
+}
+
 DEFAULT_PROMPT = """Extract CAM (CAM07xxxx) and notes (n) from the image.
 - 2 wing photos (dorsal and ventral) per individual (CAM) are arranged in a grid left to right, top to bottom.
 - If no CAMID is visible or image should be skipped, set skip: 'x', else skip: ''
@@ -41,6 +60,11 @@ DEFAULT_PROMPT = """Extract CAM (CAM07xxxx) and notes (n) from the image.
 }
 """
 
+def is_bundled() -> bool:
+    """Check if running as a PyInstaller bundled executable."""
+    return getattr(sys, 'frozen', False)
+
+
 class AppState:
 
     def __init__(self, logger: SimpleLogger):
@@ -54,17 +78,29 @@ class AppState:
         self.available_models: List[str] = []
 
         self.settings: Dict[str, Any] = {
-            'images_per_prompt': 5, 'batch_size': 9, 'merged_img_height': 1080, 'main_column': 'CAM',
-            'model_name': '', 'prompt_text': DEFAULT_PROMPT,
-            'exiftool_path': self._find_exiftool(), 'rotation_angle': 180,
-            'use_exif': True, 'preview_raw': False, 'review_crop_enabled': True,
-            'review_items_per_page': 50,
-            'review_thumb_height': '720p',
-            'suffix_mode': 'Standard',
-            'custom_suffixes': 'd,v',
+            'images_per_prompt': DEFAULTS['images_per_prompt'],
+            'batch_size': DEFAULTS['batch_size'],
+            'merged_img_height': DEFAULTS['merged_img_height'],
+            'main_column': DEFAULTS['main_column'],
+            'model_name': '',
+            'prompt_text': DEFAULT_PROMPT,
+            'exiftool_path': self._find_exiftool(),
+            'rotation_angle': DEFAULTS['rotation_angle'],
+            'use_exif': True,
+            'preview_raw': False,
+            'review_crop_enabled': True,
+            'review_items_per_page': DEFAULTS['review_items_per_page'],
+            'review_thumb_height': DEFAULTS['review_thumb_height'],
+            'suffix_mode': DEFAULTS['suffix_mode'],
+            'custom_suffixes': DEFAULTS['custom_suffixes'],
             'crop_settings': {
-                'top': 0.1, 'bottom': 0.0, 'left': 0.0, 'right': 0.5,
-                'zoom': True, 'grayscale': True, 'prerotate': False
+                'top': DEFAULTS['crop_top'],
+                'bottom': DEFAULTS['crop_bottom'],
+                'left': DEFAULTS['crop_left'],
+                'right': DEFAULTS['crop_right'],
+                'zoom': True,
+                'grayscale': False,
+                'prerotate': False
             }
         }
 

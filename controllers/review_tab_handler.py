@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import QFileDialog, QMessageBox, QMainWindow, QWidget
 from PyQt5.QtCore import QThread
 from PyQt5.QtGui import QPixmap, QImage
 
-from app_state import AppState
+from app_state import AppState, DEFAULTS
 from controllers.base_handler import BaseTabHandler
 from ui.review_tab import ReviewResultsTab
 from ui.review_tab_item import ReviewItemWidget
@@ -76,7 +76,7 @@ class ReviewTabHandler(BaseTabHandler):
 
     def _sync_settings_from_ui(self):
         self.app_state.settings['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
-        items_per_page = safe_int(self.ui.items_per_page_input.text(), default=50)
+        items_per_page = safe_int(self.ui.items_per_page_input.text(), default=DEFAULTS['review_items_per_page'])
         self.app_state.settings['review_items_per_page'] = max(1, items_per_page)
         self.app_state.settings['review_thumb_height'] = self.ui.image_quality_dropdown.currentText()
         self.app_state.settings['suffix_mode'] = self.ui.suffix_mode_dropdown.currentText()

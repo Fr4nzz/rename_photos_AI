@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import QFileDialog, QMessageBox, QMainWindow
 from PyQt5.QtCore import Qt, QUrl, QThread
 from PyQt5.QtGui import QPixmap, QImage, QDesktopServices
 
-from app_state import AppState, DEFAULT_PROMPT
+from app_state import AppState, DEFAULT_PROMPT, DEFAULTS
 from controllers.base_handler import BaseTabHandler
 from ui.process_tab import ProcessImagesTab
 from workers import RotationWorker, GeminiWorker, PreviewWorker
@@ -141,9 +141,9 @@ class ProcessTabHandler(BaseTabHandler):
 
     def _sync_settings_from_ui(self):
         s, ui = self.app_state.settings, self.ui
-        s['images_per_prompt'] = safe_int(ui.images_per_prompt_input.text(), default=5)
-        s['batch_size'] = safe_int(ui.batch_size_input.text(), default=9)
-        s['merged_img_height'] = safe_int(ui.merged_img_height_input.text(), default=1080)
+        s['images_per_prompt'] = safe_int(ui.images_per_prompt_input.text(), default=DEFAULTS['images_per_prompt'])
+        s['batch_size'] = safe_int(ui.batch_size_input.text(), default=DEFAULTS['batch_size'])
+        s['merged_img_height'] = safe_int(ui.merged_img_height_input.text(), default=DEFAULTS['merged_img_height'])
         s['main_column'] = ui.main_column_input.text() or 'CAM'
         s['model_name'] = ui.model_dropdown.currentText()
         s['prompt_text'] = ui.prompt_text_edit.toPlainText()

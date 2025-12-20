@@ -12,8 +12,9 @@ from .widgets import ClickableLabel
 class ProcessImagesTab(QWidget):
     """The UI for the 'Process Images' tab, featuring a fully resizable splitter layout."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, hide_exiftool_config: bool = False, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._hide_exiftool_config = hide_exiftool_config
         self._setup_ui()
 
     def _setup_ui(self):
@@ -32,7 +33,8 @@ class ProcessImagesTab(QWidget):
         folder_layout.addWidget(self.dir_path_label, 1)
         folder_layout.addWidget(self.browse_button)
         settings_vbox.addWidget(folder_group)
-        
+
+        # ExifTool config - hidden when running as bundled .exe (exiftool is bundled)
         exiftool_group = QGroupBox("ExifTool Configuration")
         exiftool_layout = QHBoxLayout(exiftool_group)
         self.exiftool_path_input = QLineEdit()
@@ -40,7 +42,8 @@ class ProcessImagesTab(QWidget):
         exiftool_layout.addWidget(QLabel("Path:"))
         exiftool_layout.addWidget(self.exiftool_path_input, 1)
         exiftool_layout.addWidget(self.exiftool_browse_button)
-        settings_vbox.addWidget(exiftool_group)
+        if not self._hide_exiftool_config:
+            settings_vbox.addWidget(exiftool_group)
 
         selection_group = QGroupBox("Preview Selection")
         selection_layout = QFormLayout(selection_group)

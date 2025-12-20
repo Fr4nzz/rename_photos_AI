@@ -2,7 +2,7 @@
 
 from PyQt5.QtWidgets import QMainWindow, QTabWidget, QMessageBox
 
-from app_state import AppState
+from app_state import AppState, is_bundled
 from ui.process_tab import ProcessImagesTab
 from ui.review_tab import ReviewResultsTab
 from ui.api_keys_tab import ApiKeysTab
@@ -28,7 +28,8 @@ class MainWindow(QMainWindow):
         # 2. Initialize UI Tabs
         self.tab_widget = QTabWidget()
         self.setCentralWidget(self.tab_widget)
-        self.process_tab = ProcessImagesTab()
+        # Hide ExifTool config when running as bundled .exe (exiftool is bundled)
+        self.process_tab = ProcessImagesTab(hide_exiftool_config=is_bundled())
         self.review_tab = ReviewResultsTab()
         self.api_keys_tab = ApiKeysTab()
 
