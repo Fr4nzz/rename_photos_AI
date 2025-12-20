@@ -35,15 +35,16 @@ class ProcessImagesTab(QWidget):
         settings_vbox.addWidget(folder_group)
 
         # ExifTool config - hidden when running as bundled .exe (exiftool is bundled)
-        exiftool_group = QGroupBox("ExifTool Configuration")
-        exiftool_layout = QHBoxLayout(exiftool_group)
+        # Keep as instance attribute to prevent garbage collection of child widgets
+        self._exiftool_group = QGroupBox("ExifTool Configuration")
+        exiftool_layout = QHBoxLayout(self._exiftool_group)
         self.exiftool_path_input = QLineEdit()
         self.exiftool_browse_button = QPushButton("...")
         exiftool_layout.addWidget(QLabel("Path:"))
         exiftool_layout.addWidget(self.exiftool_path_input, 1)
         exiftool_layout.addWidget(self.exiftool_browse_button)
         if not self._hide_exiftool_config:
-            settings_vbox.addWidget(exiftool_group)
+            settings_vbox.addWidget(self._exiftool_group)
 
         selection_group = QGroupBox("Preview Selection")
         selection_layout = QFormLayout(selection_group)
