@@ -60,27 +60,36 @@ class ProcessTabHandler(BaseTabHandler):
             label.clicked.connect(self.on_preview_label_clicked)
 
     def populate_initial_ui(self):
+        # Block signals on all widgets that could trigger _sync_settings_from_ui
+        # to prevent premature syncing before all values are set
+        widgets_to_block = [
+            self.ui.rotation_dropdown, self.ui.use_exif_checkbox, self.ui.preview_raw_checkbox,
+            self.ui.zoom_checkbox, self.ui.grayscale_checkbox, self.ui.prerotate_checkbox,
+            self.ui.crop_top_input, self.ui.crop_bottom_input, self.ui.crop_left_input, self.ui.crop_right_input,
+            self.ui.images_per_prompt_input, self.ui.batch_size_input, self.ui.merged_img_height_input,
+            self.ui.main_column_input, self.ui.model_dropdown, self.ui.prompt_text_edit,
+        ]
+        for w in widgets_to_block:
+            w.blockSignals(True)
+
         path = self.app_state.input_directory
         self.ui.dir_path_label.setText(path or "(No folder selected)")
         self.ui.dir_path_label.setFilePath(path)
         self.ui.exiftool_path_input.setText(self.app_state.settings.get('exiftool_path', ''))
-        
+
         orientations = {"0° (No Change)": 0, "90° CCW": 90, "180°": 180, "90° CW": 270}
-        self.ui.rotation_dropdown.blockSignals(True)
         self.ui.rotation_dropdown.clear()
         for text, angle in orientations.items():
             self.ui.rotation_dropdown.addItem(text, angle)
-        
+
         saved_angle = self.app_state.settings.get('rotation_angle', 180)
         index = self.ui.rotation_dropdown.findData(saved_angle)
         self.ui.rotation_dropdown.setCurrentIndex(index if index >= 0 else 2)
-        self.ui.rotation_dropdown.blockSignals(False)
-        
+
         self.ui.use_exif_checkbox.setChecked(self.app_state.settings['use_exif'])
         self.ui.preview_raw_checkbox.setChecked(self.app_state.settings['preview_raw'])
-        
+
         cs = self.app_state.settings['crop_settings']
-        print(f"[DEBUG] populate_initial_ui: cs['zoom'] = {cs['zoom']}")
         self.ui.zoom_checkbox.setChecked(cs['zoom'])
         self.ui.grayscale_checkbox.setChecked(cs['grayscale'])
         self.ui.prerotate_checkbox.setChecked(cs.get('prerotate', False))
@@ -88,20 +97,24 @@ class ProcessTabHandler(BaseTabHandler):
         self.ui.crop_bottom_input.setText(str(cs['bottom']))
         self.ui.crop_left_input.setText(str(cs['left']))
         self.ui.crop_right_input.setText(str(cs['right']))
-        
-        self.ui.images_per_prompt_input.setText(str(self.app_state.settings.get('images_per_prompt', 10)))
+
+        self.ui.images_per_prompt_input.setText(str(self.app_state.settings.get('images_per_prompt', DEFAULTS['images_per_prompt'])))
         self.ui.batch_size_input.setText(str(self.app_state.settings['batch_size']))
         self.ui.merged_img_height_input.setText(str(self.app_state.settings['merged_img_height']))
         self.ui.main_column_input.setText(str(self.app_state.settings['main_column']))
-        
+
         prompt_text = self.app_state.settings.get('prompt_text', '').strip()
         if not prompt_text:
             self.logger.info("Prompt is empty, loading default.")
             prompt_text = DEFAULT_PROMPT
             self.app_state.settings['prompt_text'] = prompt_text
-        
+
         self.ui.prompt_text_edit.setPlainText(prompt_text)
-        
+
+        # Unblock signals before calling methods that need them
+        for w in widgets_to_block:
+            w.blockSignals(False)
+
         self.update_models_dropdown()
         self.refresh_file_dependent_ui()
 
@@ -141,9 +154,6 @@ class ProcessTabHandler(BaseTabHandler):
         self.save_settings()
 
     def _sync_settings_from_ui(self):
-        import traceback
-        print(f"[DEBUG] _sync_settings_from_ui called, zoom_checkbox.isChecked()={self.ui.zoom_checkbox.isChecked()}")
-        print(f"[DEBUG] Call stack:\n{''.join(traceback.format_stack()[-5:-1])}")
         s, ui = self.app_state.settings, self.ui
         s['images_per_prompt'] = safe_int(ui.images_per_prompt_input.text(), default=DEFAULTS['images_per_prompt'])
         s['batch_size'] = safe_int(ui.batch_size_input.text(), default=DEFAULTS['batch_size'])
