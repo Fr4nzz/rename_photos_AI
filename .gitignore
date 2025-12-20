@@ -23,6 +23,10 @@
 # No ignorar app icon
 !app.ico
 
+# No ignorar screenshots necesarios para README
+!screenshots/
+!screenshots/*.png
+
 # Ignorar carpeta dist y build
 dist/
 build/ 
