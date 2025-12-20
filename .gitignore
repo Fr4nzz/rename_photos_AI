@@ -20,8 +20,11 @@
 # No ignorar build.spec
 !build.spec
 
-# No ignorar app icon
-!app.ico
+# No ignorar icons folder (app icons for all platforms)
+!icons/
+!icons/*.ico
+!icons/*.svg
+!icons/*.icns
 
 # No ignorar screenshots necesarios para README
 !screenshots/
