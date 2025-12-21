@@ -17,47 +17,62 @@ class ReviewResultsTab(QWidget):
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
 
-        # --- Top Controls Toolbar ---
-        top_controls_layout = QHBoxLayout()
-        top_controls_layout.addWidget(QLabel("CSV File:"))
+        # --- Row 1: CSV, Refresh, Cropping, Items/Page, Quality ---
+        row1_layout = QHBoxLayout()
+        row1_layout.addWidget(QLabel("CSV:"))
         self.csv_dropdown = QComboBox()
-        top_controls_layout.addWidget(self.csv_dropdown, 1)
-        self.refresh_from_disk_button = QPushButton("Refresh from Disk")
-        top_controls_layout.addWidget(self.refresh_from_disk_button)
-        self.crop_review_checkbox = QCheckBox("Enable Cropping")
-        top_controls_layout.addWidget(self.crop_review_checkbox)
+        row1_layout.addWidget(self.csv_dropdown, 1)
+        self.refresh_from_disk_button = QPushButton("Refresh")
+        row1_layout.addWidget(self.refresh_from_disk_button)
+        self.crop_review_checkbox = QCheckBox("Crop")
+        row1_layout.addWidget(self.crop_review_checkbox)
 
-        # Filter checkboxes group
-        filter_group = QGroupBox("Filter")
-        filter_layout = QHBoxLayout(filter_group)
-        filter_layout.setContentsMargins(8, 2, 8, 2)
+        row1_layout.addWidget(QLabel("Items/Page:"))
+        self.items_per_page_input = QLineEdit()
+        self.items_per_page_input.setValidator(QIntValidator(1, 9999))
+        self.items_per_page_input.setFixedWidth(50)
+        row1_layout.addWidget(self.items_per_page_input)
+
+        row1_layout.addWidget(QLabel("Quality:"))
+        self.image_quality_dropdown = QComboBox()
+        self.image_quality_dropdown.addItems(["480p", "540p", "720p", "900p", "1080p", "Original"])
+        row1_layout.addWidget(self.image_quality_dropdown)
+
+        main_layout.addLayout(row1_layout)
+
+        # --- Row 2: Filters and Sort ---
+        row2_layout = QHBoxLayout()
+
+        # Filter checkboxes
+        row2_layout.addWidget(QLabel("Filter:"))
         self.filter_all_checkbox = QCheckBox("All")
         self.filter_all_checkbox.setChecked(True)
         self.filter_crossed_checkbox = QCheckBox("Crossed Out")
         self.filter_notes_checkbox = QCheckBox("Has Notes")
         self.filter_skip_checkbox = QCheckBox("Skipped")
         self.filter_mismatch_checkbox = QCheckBox("Mismatches")
-        filter_layout.addWidget(self.filter_all_checkbox)
-        filter_layout.addWidget(self.filter_crossed_checkbox)
-        filter_layout.addWidget(self.filter_notes_checkbox)
-        filter_layout.addWidget(self.filter_skip_checkbox)
-        filter_layout.addWidget(self.filter_mismatch_checkbox)
-        top_controls_layout.addWidget(filter_group)
+        row2_layout.addWidget(self.filter_all_checkbox)
+        row2_layout.addWidget(self.filter_crossed_checkbox)
+        row2_layout.addWidget(self.filter_notes_checkbox)
+        row2_layout.addWidget(self.filter_skip_checkbox)
+        row2_layout.addWidget(self.filter_mismatch_checkbox)
 
-        top_controls_layout.addStretch()
+        row2_layout.addStretch()
 
-        top_controls_layout.addWidget(QLabel("Items/Page:"))
-        self.items_per_page_input = QLineEdit()
-        self.items_per_page_input.setValidator(QIntValidator(1, 9999))
-        self.items_per_page_input.setFixedWidth(50)
-        top_controls_layout.addWidget(self.items_per_page_input)
+        # Sort dropdown
+        row2_layout.addWidget(QLabel("Sort:"))
+        self.sort_dropdown = QComboBox()
+        self.sort_dropdown.addItems([
+            "File Name (A-Z)",
+            "File Name (Z-A)",
+            "Capture Date (New-Old)",
+            "Capture Date (Old-New)",
+            "CAM ID (A-Z)",
+            "CAM ID (Z-A)"
+        ])
+        row2_layout.addWidget(self.sort_dropdown)
 
-        top_controls_layout.addWidget(QLabel("Image Quality:"))
-        self.image_quality_dropdown = QComboBox()
-        self.image_quality_dropdown.addItems(["480p", "540p", "720p", "900p", "1080p", "Original"])
-        top_controls_layout.addWidget(self.image_quality_dropdown)
-
-        main_layout.addLayout(top_controls_layout)
+        main_layout.addLayout(row2_layout)
 
         # --- Pagination Controls Toolbar ---
         pagination_controls_layout = QHBoxLayout()

@@ -85,8 +85,10 @@ class MainWindow(QMainWindow):
         """Handle logic for when the user switches tabs."""
         if self.tab_widget.widget(index) == self.review_tab:
             self.logger.info("Switched to Review Results tab.")
-            # --- MODIFIED: Pass a flag to select the newest CSV by default ---
-            self.review_handler.refresh_csv_dropdown(select_newest=True)
+            # Only refresh if CSV dropdown is empty or directory changed
+            if (self.review_handler.ui.csv_dropdown.count() == 0 or
+                    self.review_handler._last_loaded_dir != self.app_state.input_directory):
+                self.review_handler.refresh_csv_dropdown(select_newest=True)
 
     def save_api_keys(self):
         """Handles saving API keys, a simple enough action to keep here."""

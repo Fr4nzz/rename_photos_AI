@@ -39,10 +39,14 @@ class ReviewTabHandler(BaseTabHandler):
         self.filtered_df = pd.DataFrame()
         # Scroll position memory: page_number -> scroll_position
         self.scroll_positions = {}
+        # Track loaded state to avoid reloading on tab switch
+        self._last_loaded_csv = None
+        self._last_loaded_dir = None
+        self._images_loaded = False
 
     def connect_signals(self):
-        self.ui.csv_dropdown.currentIndexChanged.connect(self.refresh_view)
-        self.ui.refresh_from_disk_button.clicked.connect(lambda: self.refresh_csv_dropdown(select_newest=True))
+        self.ui.csv_dropdown.currentIndexChanged.connect(self._on_csv_changed)
+        self.ui.refresh_from_disk_button.clicked.connect(self._force_refresh)
         self.ui.crop_review_checkbox.stateChanged.connect(self._handle_ui_change)
 
         # Filter checkboxes
@@ -54,9 +58,12 @@ class ReviewTabHandler(BaseTabHandler):
         self.ui.items_per_page_input.editingFinished.connect(self._handle_ui_change)
         self.ui.image_quality_dropdown.currentIndexChanged.connect(self._handle_ui_change)
 
+        # Sort dropdown
+        self.ui.sort_dropdown.currentIndexChanged.connect(self._handle_sort_changed)
+
         # Editable page number
         self.ui.page_number_input.editingFinished.connect(self._handle_page_input_changed)
-        
+
         self.ui.suffix_mode_dropdown.currentIndexChanged.connect(self._handle_suffix_mode_change)
         self.ui.custom_suffix_input.editingFinished.connect(self._sync_settings_from_ui)
 
@@ -115,7 +122,25 @@ class ReviewTabHandler(BaseTabHandler):
 
     def _handle_ui_change(self):
         self._sync_settings_from_ui()
+        self._apply_filters_and_update_pages()
+        self._populate_review_grid()
+
+    def _on_csv_changed(self):
+        """Handle CSV dropdown change - reload data."""
+        self._images_loaded = False
         self.refresh_view()
+
+    def _force_refresh(self):
+        """Force refresh from disk, resetting cache."""
+        self._last_loaded_csv = None
+        self._last_loaded_dir = None
+        self._images_loaded = False
+        self.refresh_csv_dropdown(select_newest=True)
+
+    def _handle_sort_changed(self):
+        """Handle sort dropdown change - re-apply filters and sort."""
+        self._apply_filters_and_update_pages()
+        self._populate_review_grid()
 
     def _handle_filter_all_changed(self, state):
         """When 'All' is checked, uncheck all other filter options."""
@@ -254,7 +279,7 @@ class ReviewTabHandler(BaseTabHandler):
                     csv_df = pd.read_csv(csv_path, dtype=str).fillna('')
                 except Exception as e:
                     self.logger.error(f"Could not load selected CSV: {csv_name}", exception=e)
-        
+
         # Define the expected columns.
         main_col = self.app_state.settings.get('main_column', 'CAM')
         expected_cols = ['from', 'to', 'skip', 'co', main_col, 'n', 'suffix']
@@ -268,10 +293,10 @@ class ReviewTabHandler(BaseTabHandler):
             # Determine the original path using the log file
             original_path = rename_log_map.get(current_path_str, current_path_str)
             seen_original_paths.add(original_path)
-            
+
             # Find the corresponding data row in the CSV using the original 'from' path
             data_row = {}
-            status = "New" # Default status if not found in CSV
+            status = "New"  # Default status if not found in CSV
             if not csv_df.empty:
                 match = csv_df[csv_df['from'] == original_path]
                 if not match.empty:
@@ -282,10 +307,13 @@ class ReviewTabHandler(BaseTabHandler):
             final_row = {'current_path': current_path_str, 'status': status}
             for col in expected_cols:
                 final_row[col] = data_row.get(col, '')
-            final_row['from'] = original_path # Ensure 'from' is always the original path
-            
+            final_row['from'] = original_path  # Ensure 'from' is always the original path
+
+            # Extract capture date from EXIF
+            final_row['capture_date'] = self._extract_capture_date(current_path)
+
             reconciled_data.append(final_row)
-        
+
         # Add rows for files that are in the CSV but not on disk (e.g., deleted)
         if not csv_df.empty:
             missing_files_df = csv_df[~csv_df['from'].isin(seen_original_paths)]
@@ -293,14 +321,95 @@ class ReviewTabHandler(BaseTabHandler):
                 final_row = row.to_dict()
                 final_row['current_path'] = "File not found"
                 final_row['status'] = "Missing"
+                final_row['capture_date'] = None
                 reconciled_data.append(final_row)
 
         self.app_state.current_df = pd.DataFrame(reconciled_data)
         if 'photo_ID' not in self.app_state.current_df.columns or self.app_state.current_df['photo_ID'].isnull().any():
             self.app_state.current_df['photo_ID'] = range(1, len(self.app_state.current_df) + 1)
-        
+
+        # Auto-calculate suffixes and To fields for rows that don't have them
+        self._auto_assign_suffixes_and_names()
+
+        # Update cache tracking
+        self._last_loaded_csv = csv_name
+        self._last_loaded_dir = self.app_state.input_directory
+        self._images_loaded = False
+
         self._apply_filters_and_update_pages()
         self._populate_review_grid()
+
+    def _extract_capture_date(self, file_path: Path) -> datetime:
+        """Extract capture date from image EXIF data."""
+        try:
+            from PIL import Image
+            from PIL.ExifTags import TAGS
+            with Image.open(file_path) as img:
+                exif_data = img._getexif()
+                if exif_data:
+                    for tag_id, value in exif_data.items():
+                        tag = TAGS.get(tag_id, tag_id)
+                        if tag == 'DateTimeOriginal':
+                            return datetime.strptime(value, '%Y:%m:%d %H:%M:%S')
+        except Exception:
+            pass
+        return None
+
+    def _auto_assign_suffixes_and_names(self):
+        """Auto-assign suffixes to photos and calculate To field."""
+        df = self.app_state.current_df
+        if df.empty:
+            return
+
+        main_col = self.app_state.settings.get('main_column', 'CAM')
+        suffix_mode = self.app_state.settings.get('suffix_mode', 'Standard')
+        custom_suffixes = self.app_state.settings.get('custom_suffixes', 'd,v')
+
+        # Get suffix sequence based on mode
+        if 'Standard' in suffix_mode:
+            suffix_list = ['d', 'v', 'd2', 'v2', 'd3', 'v3', 'd4', 'v4', 'd5', 'v5']
+        elif 'Wing Clips' in suffix_mode:
+            suffix_list = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10']
+        else:  # Custom
+            suffix_list = [s.strip() for s in custom_suffixes.split(',') if s.strip()]
+            if not suffix_list:
+                suffix_list = ['d', 'v']
+
+        # Group by CAM ID and assign suffixes
+        for cam_id, group in df.groupby(main_col, dropna=True):
+            if not cam_id or cam_id == '':
+                continue
+
+            for i, idx in enumerate(group.index):
+                # Only assign suffix if not already set
+                current_suffix = df.loc[idx, 'suffix']
+                if not current_suffix or current_suffix == '':
+                    suffix_idx = min(i, len(suffix_list) - 1)
+                    df.loc[idx, 'suffix'] = suffix_list[suffix_idx]
+
+                # Calculate To field if not already set or if empty
+                current_to = df.loc[idx, 'to']
+                if not current_to or current_to == '':
+                    self._calculate_single_to_field(idx)
+
+    def _calculate_single_to_field(self, idx):
+        """Calculate the To field for a single row based on CAM and suffix."""
+        df = self.app_state.current_df
+        main_col = self.app_state.settings.get('main_column', 'CAM')
+
+        cam_id = df.loc[idx, main_col]
+        suffix = df.loc[idx, 'suffix']
+        current_path = df.loc[idx, 'current_path']
+
+        if not cam_id or cam_id == '' or current_path == 'File not found':
+            return
+
+        # Get file extension
+        ext = Path(current_path).suffix
+
+        # Build the new filename
+        new_name = f"{cam_id}{suffix}{ext}" if suffix else f"{cam_id}{ext}"
+        df.loc[idx, 'to'] = new_name
 
     def _apply_filters_and_update_pages(self):
         df = self.app_state.current_df
@@ -326,7 +435,7 @@ class ReviewTabHandler(BaseTabHandler):
             if self.ui.filter_skip_checkbox.isChecked() and 'skip' in display_df.columns:
                 filter_mask |= display_df['skip'].notna() & (display_df['skip'] != '')
 
-            # Mismatches filter: IDs that don't appear exactly twice
+            # Mismatches filter: IDs that don't appear exactly twice OR duplicate CAM+suffix
             if self.ui.filter_mismatch_checkbox.isChecked():
                 main_col = self.app_state.settings['main_column']
                 if main_col in df.columns:
@@ -335,7 +444,29 @@ class ReviewTabHandler(BaseTabHandler):
                     mismatched_ids = id_counts[id_counts != 2].index
                     filter_mask |= display_df[main_col].isin(mismatched_ids)
 
+                # Also include duplicate CAM+suffix combinations
+                if 'suffix' in df.columns:
+                    cam_suffix = df[main_col].astype(str) + '_' + df['suffix'].astype(str)
+                    dup_cam_suffix = cam_suffix[cam_suffix.duplicated(keep=False)]
+                    filter_mask |= display_df.index.isin(dup_cam_suffix.index)
+
             display_df = display_df[filter_mask]
+
+        # Apply sorting
+        sort_option = self.ui.sort_dropdown.currentText()
+        main_col = self.app_state.settings['main_column']
+        if sort_option == "File Name (A-Z)":
+            display_df = display_df.sort_values('current_path', ascending=True)
+        elif sort_option == "File Name (Z-A)":
+            display_df = display_df.sort_values('current_path', ascending=False)
+        elif sort_option == "Capture Date (New-Old)" and 'capture_date' in display_df.columns:
+            display_df = display_df.sort_values('capture_date', ascending=False, na_position='last')
+        elif sort_option == "Capture Date (Old-New)" and 'capture_date' in display_df.columns:
+            display_df = display_df.sort_values('capture_date', ascending=True, na_position='last')
+        elif sort_option == "CAM ID (A-Z)" and main_col in display_df.columns:
+            display_df = display_df.sort_values(main_col, ascending=True, na_position='last')
+        elif sort_option == "CAM ID (Z-A)" and main_col in display_df.columns:
+            display_df = display_df.sort_values(main_col, ascending=False, na_position='last')
 
         # Keep original index so we can map back to current_df when syncing changes
         self.filtered_df = display_df.copy()
@@ -377,8 +508,10 @@ class ReviewTabHandler(BaseTabHandler):
                     item_widget = ReviewItemWidget(row.name, row.to_dict(), main_col, total_count)
                     item_widget.data_changed.connect(lambda w=item_widget: self._sync_df_from_review_item(w))
                     item_widget.data_changed.connect(self._handle_autosave)
+                    # Connect CAM/suffix change to recalculate To field
+                    item_widget.cam_or_suffix_changed.connect(self._on_cam_or_suffix_changed)
                     self.ui.add_item_to_grid(grid_row, grid_col, item_widget)
-                    
+
                     if img_path_str := row.get('current_path'):
                         img_path = Path(img_path_str)
                         if img_path.exists():
@@ -404,10 +537,53 @@ class ReviewTabHandler(BaseTabHandler):
         idx = data.pop('df_index')
         # Sync with both DataFrames to keep UI filters consistent until next refresh
         for df in [self.app_state.current_df, self.filtered_df]:
-             for col, value in data.items():
-                if col in df.columns and idx < len(df):
+            for col, value in data.items():
+                if col in df.columns and idx in df.index:
                     df.loc[idx, col] = value
-               
+
+    def _on_cam_or_suffix_changed(self, widget: ReviewItemWidget):
+        """Handle CAM or suffix change - recalculate To field and check for duplicates."""
+        data = widget.get_data()
+        idx = data['df_index']
+        main_col = self.app_state.settings.get('main_column', 'CAM')
+
+        # Update the dataframe first
+        cam_id = data.get(main_col, '')
+        suffix = data.get('suffix', '')
+
+        # Calculate new To field
+        df = self.app_state.current_df
+        current_path = df.loc[idx, 'current_path']
+        if cam_id and current_path != 'File not found':
+            ext = Path(current_path).suffix
+            new_to = f"{cam_id}{suffix}{ext}" if suffix else f"{cam_id}{ext}"
+            df.loc[idx, 'to'] = new_to
+            widget.update_to_field(new_to)
+
+            # Also update filtered_df
+            if idx in self.filtered_df.index:
+                self.filtered_df.loc[idx, 'to'] = new_to
+
+        # Check for duplicate CAM+suffix combinations
+        self._check_duplicate_suffix_warning(widget, cam_id, suffix, idx)
+
+    def _check_duplicate_suffix_warning(self, widget: ReviewItemWidget, cam_id: str, suffix: str, current_idx):
+        """Check if this CAM+suffix combination creates a duplicate and show warning."""
+        if not cam_id or not suffix:
+            widget.clear_warning()
+            return
+
+        df = self.app_state.current_df
+        main_col = self.app_state.settings.get('main_column', 'CAM')
+
+        # Find other rows with same CAM+suffix
+        same_cam_suffix = df[(df[main_col] == cam_id) & (df['suffix'] == suffix)]
+        if len(same_cam_suffix) > 1:
+            other_indices = [i for i in same_cam_suffix.index if i != current_idx]
+            widget.set_warning(f"Duplicate: {cam_id}{suffix} appears {len(same_cam_suffix)} times!")
+        else:
+            widget.clear_warning()
+
     def start_image_load_worker(self, paths):
         crop_settings = {**self.app_state.settings['crop_settings'], 'zoom': self.ui.crop_review_checkbox.isChecked()}
         
@@ -436,16 +612,30 @@ class ReviewTabHandler(BaseTabHandler):
         if self.app_state.current_df.empty:
             return
 
+        # Show warning dialog
+        reply = QMessageBox.warning(
+            self.main_window,
+            "Recalculate Final Names",
+            "This will recalculate ALL 'To' fields based on current CAM IDs and suffix rules.\n\n"
+            "Any manual edits you made to the 'To' fields will be lost.\n\n"
+            "Do you want to continue?",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
         self._sync_settings_from_ui()
         settings = self.app_state.settings
-        
+
         self.app_state.current_df = calculate_final_names(
             self.app_state.current_df,
             settings['main_column'],
             settings['suffix_mode'],
             settings['custom_suffixes']
         )
-        
+
         # After calculating names, save them to a new 'checked' file and refresh
         self.create_checked_csv(
             success_message="'To' column recalculated and saved to a new 'checked' file."
