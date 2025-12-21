@@ -425,7 +425,12 @@ class ReviewTabHandler(BaseTabHandler):
             self.filtered_df, self.total_pages, self.current_page = pd.DataFrame(), 1, 0
             return
 
-        display_df = df[df['status'] != 'Missing']  # Don't show missing files unless specifically asked
+        # Don't show missing files unless specifically asked
+        # Handle case where 'status' column might not exist (e.g., when sorting before full refresh)
+        if 'status' in df.columns:
+            display_df = df[df['status'] != 'Missing']
+        else:
+            display_df = df.copy()
 
         # Apply filters (only if "All" is not checked)
         if not self.ui.filter_all_checkbox.isChecked():
@@ -476,9 +481,17 @@ class ReviewTabHandler(BaseTabHandler):
         elif sort_option == "CAM ID (Z-A)" and main_col in display_df.columns:
             display_df = display_df.sort_values(main_col, ascending=False, na_position='last')
         elif sort_option == "Batch (1-N)" and 'batch_number' in display_df.columns:
-            display_df = display_df.sort_values('batch_number', ascending=True, na_position='last')
+            # Convert to numeric for proper sorting, handling empty strings
+            display_df = display_df.copy()
+            display_df['_batch_sort'] = pd.to_numeric(display_df['batch_number'], errors='coerce').fillna(0)
+            display_df = display_df.sort_values('_batch_sort', ascending=True)
+            display_df = display_df.drop(columns=['_batch_sort'])
         elif sort_option == "Batch (N-1)" and 'batch_number' in display_df.columns:
-            display_df = display_df.sort_values('batch_number', ascending=False, na_position='last')
+            # Convert to numeric for proper sorting, handling empty strings
+            display_df = display_df.copy()
+            display_df['_batch_sort'] = pd.to_numeric(display_df['batch_number'], errors='coerce').fillna(0)
+            display_df = display_df.sort_values('_batch_sort', ascending=False)
+            display_df = display_df.drop(columns=['_batch_sort'])
 
         # Keep original index so we can map back to current_df when syncing changes
         self.filtered_df = display_df.copy()

@@ -30,10 +30,14 @@ class ReviewItemWidget(QGroupBox):
             self.clear_warning()
 
         # Display batch number if available
-        batch_num = item_data.get('batch_number', 0)
-        if batch_num and batch_num != 0:
-            self.set_batch_number(int(batch_num))
-        else:
+        batch_num = item_data.get('batch_number', '')
+        try:
+            batch_num_int = int(float(batch_num)) if batch_num else 0
+            if batch_num_int > 0:
+                self.set_batch_number(batch_num_int)
+            else:
+                self.batch_label.setVisible(False)
+        except (ValueError, TypeError):
             self.batch_label.setVisible(False)
 
         # Display the runtime status of the file
