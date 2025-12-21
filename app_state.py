@@ -154,6 +154,14 @@ class AppState:
         except (json.JSONDecodeError, TypeError) as e:
             self.logger.warn(f"Could not parse {settings_path}. Using default settings. Error: {e}")
 
+        # IMPORTANT: When running as a bundled app, always refresh the exiftool path
+        # because the _MEIPASS temp folder changes on each run
+        if is_bundled():
+            fresh_exiftool = self._find_exiftool()
+            if fresh_exiftool:
+                self.settings['exiftool_path'] = fresh_exiftool
+                self.logger.info(f"Refreshed exiftool path for bundled app: {fresh_exiftool}")
+
         keys_path = self._config_path / API_KEYS_FILE
         if keys_path.exists():
             self.api_keys = [line.strip() for line in keys_path.read_text('utf-8').splitlines() if line.strip()]
