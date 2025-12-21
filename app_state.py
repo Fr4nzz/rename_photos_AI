@@ -29,7 +29,8 @@ LAST_DIR_FILE = "last_dir.txt"
 # =============================================================================
 DEFAULTS = {
     'images_per_prompt': 5,
-    'batch_size': 9,
+    'grid_rows': 3,
+    'grid_cols': 3,
     'merged_img_height': 1080,
     'main_column': 'CAM',
     'rotation_angle': 180,
@@ -90,7 +91,8 @@ class AppState:
 
         self.settings: Dict[str, Any] = {
             'images_per_prompt': DEFAULTS['images_per_prompt'],
-            'batch_size': DEFAULTS['batch_size'],
+            'grid_rows': DEFAULTS['grid_rows'],
+            'grid_cols': DEFAULTS['grid_cols'],
             'merged_img_height': DEFAULTS['merged_img_height'],
             'main_column': DEFAULTS['main_column'],
             'model_name': '',

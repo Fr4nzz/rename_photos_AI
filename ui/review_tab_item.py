@@ -29,6 +29,13 @@ class ReviewItemWidget(QGroupBox):
         else:
             self.clear_warning()
 
+        # Display batch number if available
+        batch_num = item_data.get('batch_number', 0)
+        if batch_num and batch_num != 0:
+            self.set_batch_number(int(batch_num))
+        else:
+            self.batch_label.setVisible(False)
+
         # Display the runtime status of the file
         status = item_data.get('status', '')
         if status == 'Renamed':
@@ -49,10 +56,14 @@ class ReviewItemWidget(QGroupBox):
         self.warning_label.setStyleSheet("color: red; font-weight: bold;")
         self.warning_label.setWordWrap(True)
         self.warning_label.setVisible(False)
+        self.batch_label = QLabel()
+        self.batch_label.setStyleSheet("color: #4169E1; font-weight: bold;")  # Royal Blue
+        self.batch_label.setVisible(False)
         self.status_label = QLabel()
         self.status_label.setWordWrap(True)
         self.status_label.setVisible(False)
         top_bar_layout.addWidget(self.warning_label)
+        top_bar_layout.addWidget(self.batch_label)
         top_bar_layout.addStretch()
         top_bar_layout.addWidget(self.status_label)
         main_layout.addLayout(top_bar_layout)
@@ -124,6 +135,10 @@ class ReviewItemWidget(QGroupBox):
 
     def clear_warning(self):
         self.warning_label.setVisible(False)
+
+    def set_batch_number(self, batch_num: int):
+        self.batch_label.setText(f"Batch {batch_num}")
+        self.batch_label.setVisible(True)
         
     def set_status(self, text: str, style: str):
         self.status_label.setText(text)

@@ -46,8 +46,10 @@ class ProcessTabHandler(BaseTabHandler):
         for widget in [self.ui.crop_top_input, self.ui.crop_bottom_input,
                        self.ui.crop_left_input, self.ui.crop_right_input]:
             widget.editingFinished.connect(self.update_all_previews)
-        for widget in [self.ui.images_per_prompt_input, self.ui.batch_size_input, self.ui.merged_img_height_input]:
+        for widget in [self.ui.images_per_prompt_input, self.ui.grid_rows_input,
+                       self.ui.grid_cols_input, self.ui.merged_img_height_input]:
              widget.editingFinished.connect(self.update_batch_preview)
+        self.ui.continue_dropdown.currentIndexChanged.connect(self._on_run_mode_changed)
         self.ui.main_column_input.editingFinished.connect(self._sync_settings_from_ui)
         self.ui.model_dropdown.currentIndexChanged.connect(self._sync_settings_from_ui)
         self.ui.prompt_text_edit.textChanged.connect(self._sync_settings_from_ui)
@@ -66,8 +68,8 @@ class ProcessTabHandler(BaseTabHandler):
             self.ui.rotation_dropdown, self.ui.use_exif_checkbox, self.ui.preview_raw_checkbox,
             self.ui.zoom_checkbox, self.ui.grayscale_checkbox, self.ui.prerotate_checkbox,
             self.ui.crop_top_input, self.ui.crop_bottom_input, self.ui.crop_left_input, self.ui.crop_right_input,
-            self.ui.images_per_prompt_input, self.ui.batch_size_input, self.ui.merged_img_height_input,
-            self.ui.main_column_input, self.ui.model_dropdown, self.ui.prompt_text_edit,
+            self.ui.images_per_prompt_input, self.ui.grid_rows_input, self.ui.grid_cols_input,
+            self.ui.merged_img_height_input, self.ui.main_column_input, self.ui.model_dropdown, self.ui.prompt_text_edit,
         ]
         for w in widgets_to_block:
             w.blockSignals(True)
@@ -99,7 +101,8 @@ class ProcessTabHandler(BaseTabHandler):
         self.ui.crop_right_input.setText(str(cs['right']))
 
         self.ui.images_per_prompt_input.setText(str(self.app_state.settings.get('images_per_prompt', DEFAULTS['images_per_prompt'])))
-        self.ui.batch_size_input.setText(str(self.app_state.settings['batch_size']))
+        self.ui.grid_rows_input.setText(str(self.app_state.settings.get('grid_rows', DEFAULTS['grid_rows'])))
+        self.ui.grid_cols_input.setText(str(self.app_state.settings.get('grid_cols', DEFAULTS['grid_cols'])))
         self.ui.merged_img_height_input.setText(str(self.app_state.settings['merged_img_height']))
         self.ui.main_column_input.setText(str(self.app_state.settings['main_column']))
 
@@ -156,7 +159,8 @@ class ProcessTabHandler(BaseTabHandler):
     def _sync_settings_from_ui(self):
         s, ui = self.app_state.settings, self.ui
         s['images_per_prompt'] = safe_int(ui.images_per_prompt_input.text(), default=DEFAULTS['images_per_prompt'])
-        s['batch_size'] = safe_int(ui.batch_size_input.text(), default=DEFAULTS['batch_size'])
+        s['grid_rows'] = safe_int(ui.grid_rows_input.text(), default=DEFAULTS['grid_rows'])
+        s['grid_cols'] = safe_int(ui.grid_cols_input.text(), default=DEFAULTS['grid_cols'])
         s['merged_img_height'] = safe_int(ui.merged_img_height_input.text(), default=DEFAULTS['merged_img_height'])
         s['main_column'] = ui.main_column_input.text() or 'CAM'
         s['model_name'] = ui.model_dropdown.currentText()
@@ -200,9 +204,9 @@ class ProcessTabHandler(BaseTabHandler):
 
         if jpg_files:
             s = self.app_state.settings
-            batch_size = s['batch_size']
-            if batch_size > 0:
-                num_batches = (len(jpg_files) + batch_size - 1) // batch_size
+            grid_size = s['grid_rows'] * s['grid_cols']
+            if grid_size > 0:
+                num_batches = (len(jpg_files) + grid_size - 1) // grid_size
                 current_idx = self.ui.batch_preview_dropdown.currentIndex()
                 self.ui.batch_preview_dropdown.blockSignals(True)
                 self.ui.batch_preview_dropdown.clear()
@@ -213,7 +217,7 @@ class ProcessTabHandler(BaseTabHandler):
                 self.ui.batch_preview_dropdown.blockSignals(False)
 
                 if self.ui.batch_preview_dropdown.count() > 0:
-                    batch_start_idx = self.ui.batch_preview_dropdown.currentIndex() * batch_size
+                    batch_start_idx = self.ui.batch_preview_dropdown.currentIndex() * grid_size
                     self.ui.combined_preview_label.clear()
                     self.ui.combined_preview_label.setText("Loading...")
                     self.ui.combined_preview_label.setFilePath("")
@@ -256,15 +260,43 @@ class ProcessTabHandler(BaseTabHandler):
 
     def start_gemini_processing(self):
         self._sync_settings_from_ui()
-        run_mode = self.ui.continue_dropdown.currentText()
+        run_mode_data = self.ui.continue_dropdown.currentData()
+        run_mode_text = self.ui.continue_dropdown.currentText()
         start_batch, total_batches, df = 1, 0, pd.DataFrame()
+        retry_batches = []  # List of specific batch numbers to retry
 
         if not self.app_state.api_keys:
             QMessageBox.warning(self.main_window, "No API Keys", "Please add one or more API keys in the 'API Keys' tab.")
             return
 
-        if run_mode.startswith("Continue from"):
-            csv_name = self.ui.continue_dropdown.currentData()
+        if run_mode_data == "retry_specific":
+            # Parse retry batch numbers
+            retry_text = self.ui.retry_batches_input.text().strip()
+            if not retry_text:
+                QMessageBox.warning(self.main_window, "No Batches", "Please enter batch numbers to retry.")
+                return
+
+            retry_batches = self._parse_batch_numbers(retry_text)
+            if not retry_batches:
+                QMessageBox.warning(self.main_window, "Invalid Input", "Could not parse batch numbers. Use format: 1,3,5-7")
+                return
+
+            # Load the CSV to update
+            csv_name = self.ui.retry_csv_dropdown.currentText()
+            if not csv_name:
+                QMessageBox.warning(self.main_window, "No CSV", "Please select a CSV file to update.")
+                return
+
+            csv_path = os.path.join(self.app_state.rename_files_dir, csv_name)
+            if os.path.exists(csv_path):
+                self.logger.info(f"Retry mode: Loading {csv_name} to update batches {retry_batches}")
+                df = pd.read_csv(csv_path)
+            else:
+                QMessageBox.warning(self.main_window, "CSV Not Found", f"Could not find {csv_name}")
+                return
+
+        elif run_mode_text.startswith("Continue from"):
+            csv_name = run_mode_data
             csv_path = os.path.join(self.app_state.rename_files_dir, csv_name)
             if os.path.exists(csv_path):
                 self.logger.info(f"Attempting to continue from {csv_name}")
@@ -277,12 +309,12 @@ class ProcessTabHandler(BaseTabHandler):
                     self.logger.info(f"Resuming from batch {start_batch} of {total_batches}.")
                 else:
                     self.logger.warn(f"Could not parse batch numbers from {csv_name}. Starting over.")
-                    run_mode = "Start Over"
+                    run_mode_data = "start_over"
             else:
                 self.logger.warn(f"Selected CSV {csv_name} not found. Starting over.")
-                run_mode = "Start Over"
-        
-        if run_mode == "Start Over":
+                run_mode_data = "start_over"
+
+        if run_mode_data == "start_over":
             self.logger.info("Starting a new processing run.")
             image_paths = get_image_files(self.app_state.input_directory, 'compressed')
             if not image_paths:
@@ -305,12 +337,27 @@ class ProcessTabHandler(BaseTabHandler):
         self.app_state.current_df = df
         settings_for_worker = self.app_state.settings.copy()
         settings_for_worker['api_keys'] = self.app_state.api_keys
-        
+
         self.current_worker = GeminiWorker(
             df.copy(), settings_for_worker, self.app_state.rename_files_dir, self.logger,
-            start_batch=start_batch, total_batches=total_batches
+            start_batch=start_batch, total_batches=total_batches, retry_batches=retry_batches
         )
         self._start_worker_thread()
+
+    def _parse_batch_numbers(self, text: str) -> list:
+        """Parse batch numbers from string like '1,3,5-7' into list [1,3,5,6,7]."""
+        batches = []
+        try:
+            for part in text.split(','):
+                part = part.strip()
+                if '-' in part:
+                    start, end = part.split('-')
+                    batches.extend(range(int(start), int(end) + 1))
+                else:
+                    batches.append(int(part))
+            return sorted(set(batches))  # Remove duplicates and sort
+        except ValueError:
+            return []
 
     def _start_worker_thread(self):
         self.worker_thread = QThread()
@@ -320,6 +367,7 @@ class ProcessTabHandler(BaseTabHandler):
         self.current_worker.error.connect(self.on_worker_error)
         if isinstance(self.current_worker, GeminiWorker):
             self.current_worker.batch_completed.connect(self.on_gemini_batch_complete)
+            self.current_worker.failed_batches_report.connect(self.on_failed_batches_report)
         self.worker_thread.started.connect(self.current_worker.run)
         self.worker_thread.start()
         self.set_ui_processing_state(True)
@@ -337,11 +385,41 @@ class ProcessTabHandler(BaseTabHandler):
         self.logger.info(f"Batch {batch_num}/{total_batches} complete. Saved to {path}")
 
     def on_worker_finished(self):
-        QMessageBox.information(self.main_window, "Complete", "The process has finished.")
         self.set_ui_processing_state(False)
         self._cleanup_worker_thread()
         self.update_progress_bar(0, "%p%")
         self.populate_continue_dropdown()  # Refresh options after run
+
+        # Check if there were failed batches (stored during processing)
+        if hasattr(self, '_pending_failed_batches') and self._pending_failed_batches:
+            failed = self._pending_failed_batches
+            self._pending_failed_batches = []
+
+            # Format batch numbers for display
+            batch_str = ', '.join(str(b) for b in failed)
+            reply = QMessageBox.warning(
+                self.main_window,
+                "Batches with Empty Responses",
+                f"The following batches returned empty responses even after retry:\n\n"
+                f"Batches: {batch_str}\n\n"
+                f"Would you like to switch to 'Retry specific batches' mode to retry them?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+
+            if reply == QMessageBox.Yes:
+                # Find and select "Retry specific batches" option
+                retry_idx = self.ui.continue_dropdown.findData("retry_specific")
+                if retry_idx >= 0:
+                    self.ui.continue_dropdown.setCurrentIndex(retry_idx)
+                # Fill in the batch numbers
+                self.ui.retry_batches_input.setText(batch_str)
+        else:
+            QMessageBox.information(self.main_window, "Complete", "The process has finished.")
+
+    def on_failed_batches_report(self, failed_batches: list):
+        """Store failed batches to show warning after processing completes."""
+        self._pending_failed_batches = failed_batches
 
     def on_worker_error(self, message: str):
         QMessageBox.critical(self.main_window, "Error", message)
@@ -387,10 +465,10 @@ class ProcessTabHandler(BaseTabHandler):
             return
 
         s = self.app_state.settings
-        batch_size = s['batch_size']
-        if batch_size <= 0: return
+        grid_size = s['grid_rows'] * s['grid_cols']
+        if grid_size <= 0: return
 
-        num_batches = (len(jpg_files) + batch_size - 1) // batch_size
+        num_batches = (len(jpg_files) + grid_size - 1) // grid_size
 
         current_idx = self.ui.batch_preview_dropdown.currentIndex()
         self.ui.batch_preview_dropdown.blockSignals(True)
@@ -407,7 +485,7 @@ class ProcessTabHandler(BaseTabHandler):
         self.ui.combined_preview_label.setText("Loading...")
         self.ui.combined_preview_label.setFilePath("")
 
-        start_idx = self.ui.batch_preview_dropdown.currentIndex() * batch_size
+        start_idx = self.ui.batch_preview_dropdown.currentIndex() * grid_size
         self._start_preview_worker(None, jpg_files, start_idx)
 
     def _stop_preview_worker(self):
@@ -432,7 +510,8 @@ class ProcessTabHandler(BaseTabHandler):
             'use_exif': s.get('use_exif', True),
             'rotation_angle': s.get('rotation_angle', 0),
             'crop_settings': s.get('crop_settings', {}),
-            'batch_size': s.get('batch_size', 9),
+            'grid_rows': s.get('grid_rows', 3),
+            'grid_cols': s.get('grid_cols', 3),
             'merged_img_height': s.get('merged_img_height', 1080),
             'temp_dir': self.app_state.rename_files_dir or '',
         }
@@ -479,10 +558,14 @@ class ProcessTabHandler(BaseTabHandler):
         pass
 
     def populate_continue_dropdown(self):
+        self.ui.continue_dropdown.blockSignals(True)
         self.ui.continue_dropdown.clear()
-        self.ui.continue_dropdown.addItem("Start Over", "")
+        self.ui.continue_dropdown.addItem("Start Over", "start_over")
+        self.ui.continue_dropdown.addItem("Retry specific batches", "retry_specific")
 
         if not self.app_state.rename_files_dir or not os.path.isdir(self.app_state.rename_files_dir):
+            self.ui.continue_dropdown.blockSignals(False)
+            self._on_run_mode_changed()
             return
 
         try:
@@ -500,9 +583,46 @@ class ProcessTabHandler(BaseTabHandler):
                 self.ui.continue_dropdown.addItem(f"Continue from {p}", p) # Store filename in UserData
 
             if len(partials) > 0:
-                self.ui.continue_dropdown.setCurrentIndex(1) # Select the newest partial by default
+                self.ui.continue_dropdown.setCurrentIndex(2) # Select the newest partial by default (after Start Over and Retry)
+
+            # Populate retry CSV dropdown with all CSV files
+            self._populate_retry_csv_dropdown()
+
         except FileNotFoundError:
             self.logger.warn("Could not populate continue dropdown, rename_files directory not found.")
+
+        self.ui.continue_dropdown.blockSignals(False)
+        self._on_run_mode_changed()
+
+    def _populate_retry_csv_dropdown(self):
+        """Populate the CSV dropdown for retry mode."""
+        self.ui.retry_csv_dropdown.clear()
+        if not self.app_state.rename_files_dir or not os.path.isdir(self.app_state.rename_files_dir):
+            return
+
+        try:
+            csv_files = [
+                f for f in os.listdir(self.app_state.rename_files_dir)
+                if f.endswith('.csv') and not f.startswith('rename_log')
+            ]
+            csv_files.sort(
+                key=lambda f: os.path.getmtime(os.path.join(self.app_state.rename_files_dir, f)),
+                reverse=True
+            )
+            for csv_file in csv_files:
+                self.ui.retry_csv_dropdown.addItem(csv_file)
+        except FileNotFoundError:
+            pass
+
+    def _on_run_mode_changed(self):
+        """Show/hide retry-specific controls based on selected run mode."""
+        current_data = self.ui.continue_dropdown.currentData()
+        is_retry_mode = (current_data == "retry_specific")
+
+        self.ui.retry_batches_label.setVisible(is_retry_mode)
+        self.ui.retry_batches_input.setVisible(is_retry_mode)
+        self.ui.retry_csv_label.setVisible(is_retry_mode)
+        self.ui.retry_csv_dropdown.setVisible(is_retry_mode)
 
     def update_models_dropdown(self):
         """Fetch Gemini models (2.5+), Flash before Pro."""

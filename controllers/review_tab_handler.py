@@ -282,7 +282,7 @@ class ReviewTabHandler(BaseTabHandler):
 
         # Define the expected columns.
         main_col = self.app_state.settings.get('main_column', 'CAM')
-        expected_cols = ['from', 'to', 'skip', 'co', main_col, 'n', 'suffix']
+        expected_cols = ['from', 'to', 'skip', 'co', main_col, 'n', 'suffix', 'batch_number']
 
         # Reconcile data
         reconciled_data = []
@@ -475,6 +475,10 @@ class ReviewTabHandler(BaseTabHandler):
             display_df = display_df.sort_values(main_col, ascending=True, na_position='last')
         elif sort_option == "CAM ID (Z-A)" and main_col in display_df.columns:
             display_df = display_df.sort_values(main_col, ascending=False, na_position='last')
+        elif sort_option == "Batch (1-N)" and 'batch_number' in display_df.columns:
+            display_df = display_df.sort_values('batch_number', ascending=True, na_position='last')
+        elif sort_option == "Batch (N-1)" and 'batch_number' in display_df.columns:
+            display_df = display_df.sort_values('batch_number', ascending=False, na_position='last')
 
         # Keep original index so we can map back to current_df when syncing changes
         self.filtered_df = display_df.copy()

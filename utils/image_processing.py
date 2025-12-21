@@ -224,25 +224,42 @@ def preprocess_image(image: Image.Image, label_text: str, crop_settings: Dict) -
     return img_final.convert('RGB')
 
 
-def merge_images(images: List[Image.Image], merged_img_height: int) -> Optional[Image.Image]:
+def merge_images(images: List[Image.Image], merged_img_height: int, grid_rows: int = None, grid_cols: int = None) -> Optional[Image.Image]:
+    """Merge images into a grid.
+
+    Args:
+        images: List of PIL images to merge
+        merged_img_height: Target height for the merged image
+        grid_rows: Number of rows in the grid (optional, auto-calculated if not provided)
+        grid_cols: Number of columns in the grid (optional, auto-calculated if not provided)
+    """
     if not images: return None
     n = len(images)
-    cols = int(math.ceil(math.sqrt(n)))
-    if n == 0 or cols == 0: return None
-    rows = int(math.ceil(n / float(cols)))
+    if n == 0: return None
+
+    # Use provided grid dimensions or calculate automatically
+    if grid_rows and grid_cols:
+        rows = grid_rows
+        cols = grid_cols
+    else:
+        # Fall back to automatic calculation
+        cols = int(math.ceil(math.sqrt(n)))
+        if cols == 0: return None
+        rows = int(math.ceil(n / float(cols)))
+
     if rows == 0: return None
-    
+
     ref_w, ref_h = images[0].size
     if ref_h == 0: return None
-    
+
     cell_h = merged_img_height // rows
     cell_w = int(cell_h * (ref_w / ref_h))
     if cell_w == 0 or cell_h == 0: return None
-    
+
     grid_img = Image.new('RGB', (cols * cell_w, rows * cell_h), 'white')
     for i, img in enumerate(images):
         resized_img = img.resize((cell_w, cell_h), Image.Resampling.LANCZOS)
         row, col = divmod(i, cols)
         grid_img.paste(resized_img, (col * cell_w, row * cell_h))
-        
+
     return grid_img

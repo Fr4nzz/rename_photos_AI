@@ -95,11 +95,24 @@ class ProcessImagesTab(QWidget):
         self.images_per_prompt_input = QLineEdit()
         self.images_per_prompt_input.setToolTip(
             "Number of merged images to send in one API call.\n"
-            "Each merged image contains 'Batch Size' individual photos.\n"
-            "Example: 10 images × 9 batch size = 90 photos per prompt."
+            "Each merged image contains (rows × cols) individual photos.\n"
+            "Example: 10 images × 9 grid size = 90 photos per prompt."
         )
-        self.batch_size_input = QLineEdit()
-        self.batch_size_input.setToolTip("Number of individual photos merged into each image.")
+        # Grid Size: rows x columns configuration
+        grid_size_widget = QWidget()
+        grid_size_layout = QHBoxLayout(grid_size_widget)
+        grid_size_layout.setContentsMargins(0, 0, 0, 0)
+        self.grid_rows_input = QLineEdit()
+        self.grid_rows_input.setFixedWidth(40)
+        self.grid_rows_input.setToolTip("Number of rows in the image grid")
+        self.grid_cols_input = QLineEdit()
+        self.grid_cols_input.setFixedWidth(40)
+        self.grid_cols_input.setToolTip("Number of columns in the image grid")
+        grid_size_layout.addWidget(self.grid_rows_input)
+        grid_size_layout.addWidget(QLabel("×"))
+        grid_size_layout.addWidget(self.grid_cols_input)
+        grid_size_layout.addWidget(QLabel("(rows × cols)"))
+        grid_size_layout.addStretch()
         self.merged_img_height_input = QLineEdit()
         self.main_column_input = QLineEdit()
         self.save_prompt_button = QPushButton("Save All Settings")
@@ -110,7 +123,7 @@ class ProcessImagesTab(QWidget):
         prompt_buttons_layout.addWidget(self.restore_prompt_button)
         api_layout.addRow("Model:", self.model_dropdown)
         api_layout.addRow("Images per Prompt:", self.images_per_prompt_input)
-        api_layout.addRow("Batch Size:", self.batch_size_input)
+        api_layout.addRow("Grid Size:", grid_size_widget)
         api_layout.addRow("Merged Height:", self.merged_img_height_input)
         api_layout.addRow("Main Column:", self.main_column_input)
         api_layout.addRow(prompt_buttons_layout)
@@ -164,6 +177,28 @@ class ProcessImagesTab(QWidget):
         self.continue_dropdown = QComboBox()
         bottom_bar_layout.addWidget(QLabel("Run Mode:"))
         bottom_bar_layout.addWidget(self.continue_dropdown)
+
+        # Retry-specific batches controls (hidden by default)
+        self.retry_batches_label = QLabel("Batches to retry:")
+        self.retry_batches_input = QLineEdit()
+        self.retry_batches_input.setPlaceholderText("e.g., 1,3,5-7")
+        self.retry_batches_input.setFixedWidth(120)
+        self.retry_batches_input.setToolTip("Enter batch numbers separated by commas. Use dash for ranges (e.g., 1,3,5-7)")
+        self.retry_csv_label = QLabel("CSV to update:")
+        self.retry_csv_dropdown = QComboBox()
+        self.retry_csv_dropdown.setFixedWidth(200)
+
+        bottom_bar_layout.addWidget(self.retry_batches_label)
+        bottom_bar_layout.addWidget(self.retry_batches_input)
+        bottom_bar_layout.addWidget(self.retry_csv_label)
+        bottom_bar_layout.addWidget(self.retry_csv_dropdown)
+
+        # Initially hide retry controls
+        self.retry_batches_label.setVisible(False)
+        self.retry_batches_input.setVisible(False)
+        self.retry_csv_label.setVisible(False)
+        self.retry_csv_dropdown.setVisible(False)
+
         bottom_bar_layout.addSpacing(20)
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
