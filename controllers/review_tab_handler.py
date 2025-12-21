@@ -309,8 +309,16 @@ class ReviewTabHandler(BaseTabHandler):
                 final_row[col] = data_row.get(col, '')
             final_row['from'] = original_path  # Ensure 'from' is always the original path
 
-            # Extract capture date from EXIF
-            final_row['capture_date'] = self._extract_capture_date(current_path)
+            # Use capture_date from CSV if available, otherwise extract from EXIF (slow)
+            if 'capture_date' in data_row and data_row['capture_date']:
+                # Parse from CSV string format
+                try:
+                    final_row['capture_date'] = datetime.strptime(data_row['capture_date'], '%d/%m/%Y %H:%M:%S')
+                except (ValueError, TypeError):
+                    final_row['capture_date'] = None
+            else:
+                # Only extract from EXIF if not in CSV (this is slow)
+                final_row['capture_date'] = self._extract_capture_date(current_path)
 
             reconciled_data.append(final_row)
 
