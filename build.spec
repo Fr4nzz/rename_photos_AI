@@ -129,20 +129,16 @@ if ICONS_DIR.exists():
     bundled_datas.append((str(ICONS_DIR), 'icons'))
     print(f"[build.spec] Found {ICONS_DIR}/ - will bundle for taskbar icon")
 
-# Detect and bundle exiftool files (Windows only)
+# NOTE: ExifTool is NOT bundled inside the .exe anymore.
+# The Windows ExifTool executable has its own extraction mechanism (PAR-packed Perl)
+# which conflicts with PyInstaller's temp folder extraction.
+# Instead, place exiftool.exe and exiftool_files/ folder in the same directory
+# as the final AIPhotoProcessor.exe after building.
 if sys.platform == 'win32':
-    # Check for exiftool.exe in current directory - use binaries for executables
-    if Path('exiftool.exe').exists():
-        bundled_binaries.append(('exiftool.exe', '.'))
-        print("[build.spec] Found exiftool.exe - will bundle as binary")
-
-    # Check for exiftool_files directory (required by exiftool on Windows)
-    if Path('exiftool_files').exists():
-        bundled_datas.append(('exiftool_files', 'exiftool_files'))
-        print("[build.spec] Found exiftool_files/ - will bundle")
-
-    if not bundled_binaries:
-        print("[build.spec] WARNING: exiftool.exe not found. Place it next to build.spec to bundle.")
+    print("[build.spec] NOTE: ExifTool should be placed alongside the built .exe:")
+    print("             dist/exiftool.exe")
+    print("             dist/exiftool_files/")
+    print("         The app will automatically find it there.")
 
 a = Analysis(
     ['main.py'],  # Entry point
