@@ -199,6 +199,22 @@ Each image card displays:
 
 ---
 
+## Free Tier Capacity
+
+With a **free Gemini API key**, here's how many photos you can process:
+
+| Setting | Default Value |
+|---------|---------------|
+| Images per Prompt | 5 merged grids per message |
+| Grid Size | 3 × 3 = 9 photos per grid |
+| **Photos per message** | 5 × 9 = **45 photos** |
+| Free tier rate limit | ~20 messages/day/key |
+| **Daily capacity per key** | 20 × 45 = **900 photos** |
+
+> 💡 **Tip**: Add multiple API keys to multiply your capacity. With 5 keys, you can process **4,500 photos/day**. The app automatically rotates between keys to maximize throughput.
+
+---
+
 ## Tips
 
 - **Grid Size**: Larger grids (e.g., 4×4) process more images per API call but may reduce OCR accuracy for small text
