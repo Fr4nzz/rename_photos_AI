@@ -53,7 +53,7 @@ class ProcessImagesTab(QWidget):
         self.preview_raw_checkbox = QCheckBox("Process RAW Images")
         self.batch_preview_dropdown = QComboBox()
         selection_layout.addRow("Image:", self.preview_image_dropdown)
-        selection_layout.addRow("Batch:", self.batch_preview_dropdown)
+        selection_layout.addRow("Message:", self.batch_preview_dropdown)
         selection_layout.addRow(self.preview_raw_checkbox)
         settings_vbox.addWidget(selection_group)
 
@@ -144,7 +144,7 @@ class ProcessImagesTab(QWidget):
 
         previews_data = [
             ("Original", self.original_preview_label), ("Rotated", self.rotated_preview_label),
-            ("Processed (for Gemini)", self.processed_preview_label), ("Batch Preview", self.combined_preview_label)
+            ("Processed (for Gemini)", self.processed_preview_label), ("Message Preview", self.combined_preview_label)
         ]
         
         for i, (title, label) in enumerate(previews_data):
@@ -178,12 +178,12 @@ class ProcessImagesTab(QWidget):
         bottom_bar_layout.addWidget(QLabel("Run Mode:"))
         bottom_bar_layout.addWidget(self.continue_dropdown)
 
-        # Retry-specific batches controls (hidden by default)
-        self.retry_batches_label = QLabel("Batches to retry:")
+        # Retry-specific messages controls (hidden by default)
+        self.retry_batches_label = QLabel("Messages to retry:")
         self.retry_batches_input = QLineEdit()
         self.retry_batches_input.setPlaceholderText("e.g., 1,3,5-7")
         self.retry_batches_input.setFixedWidth(120)
-        self.retry_batches_input.setToolTip("Enter batch numbers separated by commas. Use dash for ranges (e.g., 1,3,5-7)")
+        self.retry_batches_input.setToolTip("Enter message numbers separated by commas. Use dash for ranges (e.g., 1,3,5-7)")
         self.retry_csv_label = QLabel("CSV to update:")
         self.retry_csv_dropdown = QComboBox()
         self.retry_csv_dropdown.setFixedWidth(200)

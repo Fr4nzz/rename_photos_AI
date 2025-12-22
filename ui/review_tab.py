@@ -69,8 +69,8 @@ class ReviewResultsTab(QWidget):
             "Capture Date (Old-New)",
             "CAM ID (A-Z)",
             "CAM ID (Z-A)",
-            "Batch (1-N)",
-            "Batch (N-1)"
+            "Message (1-N)",
+            "Message (N-1)"
         ])
         row2_layout.addWidget(self.sort_dropdown)
 

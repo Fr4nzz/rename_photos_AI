@@ -211,7 +211,7 @@ class ProcessTabHandler(BaseTabHandler):
                 self.ui.batch_preview_dropdown.blockSignals(True)
                 self.ui.batch_preview_dropdown.clear()
                 if num_batches > 0:
-                    self.ui.batch_preview_dropdown.addItems([f"Batch {i+1}" for i in range(num_batches)])
+                    self.ui.batch_preview_dropdown.addItems([f"Message {i+1}" for i in range(num_batches)])
                     if 0 <= current_idx < num_batches:
                         self.ui.batch_preview_dropdown.setCurrentIndex(current_idx)
                 self.ui.batch_preview_dropdown.blockSignals(False)
@@ -273,12 +273,12 @@ class ProcessTabHandler(BaseTabHandler):
             # Parse retry batch numbers
             retry_text = self.ui.retry_batches_input.text().strip()
             if not retry_text:
-                QMessageBox.warning(self.main_window, "No Batches", "Please enter batch numbers to retry.")
+                QMessageBox.warning(self.main_window, "No Messages", "Please enter message numbers to retry.")
                 return
 
             retry_batches = self._parse_batch_numbers(retry_text)
             if not retry_batches:
-                QMessageBox.warning(self.main_window, "Invalid Input", "Could not parse batch numbers. Use format: 1,3,5-7")
+                QMessageBox.warning(self.main_window, "Invalid Input", "Could not parse message numbers. Use format: 1,3,5-7")
                 return
 
             # Load the CSV to update
@@ -382,7 +382,7 @@ class ProcessTabHandler(BaseTabHandler):
         self.app_state.current_df = df
         path = os.path.join(self.app_state.rename_files_dir, f"temp_output_b{batch_num}of{total_batches}.csv")
         df.to_csv(path, index=False)
-        self.logger.info(f"Batch {batch_num}/{total_batches} complete. Saved to {path}")
+        self.logger.info(f"Message {batch_num}/{total_batches} complete. Saved to {path}")
 
     def on_worker_finished(self):
         self.set_ui_processing_state(False)
@@ -399,10 +399,10 @@ class ProcessTabHandler(BaseTabHandler):
             batch_str = ', '.join(str(b) for b in failed)
             reply = QMessageBox.warning(
                 self.main_window,
-                "Batches with Empty Responses",
-                f"The following batches returned empty responses even after retry:\n\n"
-                f"Batches: {batch_str}\n\n"
-                f"Would you like to switch to 'Retry specific batches' mode to retry them?",
+                "Messages with Empty Responses",
+                f"The following messages returned empty responses even after retry:\n\n"
+                f"Messages: {batch_str}\n\n"
+                f"Would you like to switch to 'Retry specific messages' mode to retry them?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.Yes
             )
@@ -474,7 +474,7 @@ class ProcessTabHandler(BaseTabHandler):
         self.ui.batch_preview_dropdown.blockSignals(True)
         self.ui.batch_preview_dropdown.clear()
         if num_batches > 0:
-            self.ui.batch_preview_dropdown.addItems([f"Batch {i+1}" for i in range(num_batches)])
+            self.ui.batch_preview_dropdown.addItems([f"Message {i+1}" for i in range(num_batches)])
             if 0 <= current_idx < num_batches: self.ui.batch_preview_dropdown.setCurrentIndex(current_idx)
         self.ui.batch_preview_dropdown.blockSignals(False)
 
@@ -561,7 +561,7 @@ class ProcessTabHandler(BaseTabHandler):
         self.ui.continue_dropdown.blockSignals(True)
         self.ui.continue_dropdown.clear()
         self.ui.continue_dropdown.addItem("Start Over", "start_over")
-        self.ui.continue_dropdown.addItem("Retry specific batches", "retry_specific")
+        self.ui.continue_dropdown.addItem("Retry specific messages", "retry_specific")
 
         if not self.app_state.rename_files_dir or not os.path.isdir(self.app_state.rename_files_dir):
             self.ui.continue_dropdown.blockSignals(False)

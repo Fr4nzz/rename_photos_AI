@@ -141,7 +141,7 @@ class ReviewItemWidget(QGroupBox):
         self.warning_label.setVisible(False)
 
     def set_batch_number(self, batch_num: int):
-        self.batch_label.setText(f"Batch {batch_num}")
+        self.batch_label.setText(f"Message {batch_num}")
         self.batch_label.setVisible(True)
         
     def set_status(self, text: str, style: str):

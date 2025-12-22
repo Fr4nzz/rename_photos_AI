@@ -93,6 +93,7 @@ class GeminiWorker(QObject):
             current_step = 0
 
             prerotate = self.config['crop_settings'].get('prerotate', False)
+            use_exif = self.config.get('use_exif', True)
             rotation_angle = self.config.get('rotation_angle', 0)
 
             for api_call_idx in batches_to_process:
@@ -126,9 +127,13 @@ class GeminiWorker(QObject):
 
                     images = []
                     for _, row in batch_df.iterrows():
-                        img = fix_orientation(Image.open(row['from']))
+                        raw_img = Image.open(row['from'])
+                        # If prerotate is ON, follow use_exif setting; if OFF, always use EXIF rotation
                         if prerotate:
+                            img = fix_orientation(raw_img) if use_exif else raw_img
                             img = img.rotate(rotation_angle, expand=True)
+                        else:
+                            img = fix_orientation(raw_img)
                         images.append(preprocess_image(img, str(row['photo_ID']), self.config['crop_settings']))
 
                     if merged_img := merge_images(images, self.config['merged_img_height'], grid_rows, grid_cols):
@@ -163,12 +168,12 @@ class GeminiWorker(QObject):
                 if is_empty:
                     # Response was empty even after retry
                     self.failed_batches.append(api_call_num)
-                    self.logger.warn(f"Batch {api_call_num} returned empty response even after retry.")
+                    self.logger.warn(f"Message {api_call_num} returned empty response even after retry.")
 
                 # Update progress after API response
                 current_step += 1
                 pct = int(current_step / total_steps * 100)
-                self.progress.emit(pct, f"Batch {api_call_num}/{self.total_batches} complete - {pct}%")
+                self.progress.emit(pct, f"Message {api_call_num}/{self.total_batches} complete - {pct}%")
 
                 # Update batch_number for all photos in this batch
                 for idx in batch_photo_indices:
@@ -206,10 +211,10 @@ class GeminiWorker(QObject):
 
             # Empty response
             if attempt < max_retries:
-                self.logger.warn(f"Batch {batch_num} returned empty response, retrying...")
+                self.logger.warn(f"Message {batch_num} returned empty response, retrying...")
                 time.sleep(2)  # Brief pause before retry
             else:
-                self.logger.warn(f"Batch {batch_num} still empty after {max_retries} retry(s).")
+                self.logger.warn(f"Message {batch_num} still empty after {max_retries} retry(s).")
 
         return response_text, True, True  # Success but empty
 
@@ -309,9 +314,14 @@ class PreviewWorker(QObject):
 
             # Processed preview
             if not self.is_stopped:
-                img_for_gemini = exif_corrected
-                if s.get('crop_settings', {}).get('prerotate', False):
-                    img_for_gemini = exif_corrected.rotate(s.get('rotation_angle', 0), expand=True)
+                prerotate = s.get('crop_settings', {}).get('prerotate', False)
+                use_exif = s.get('use_exif', True)
+                # If prerotate is ON, follow use_exif setting; if OFF, always use EXIF rotation
+                if prerotate:
+                    img_for_gemini = base_img.copy()  # base_img already respects use_exif
+                    img_for_gemini = img_for_gemini.rotate(s.get('rotation_angle', 0), expand=True)
+                else:
+                    img_for_gemini = exif_corrected  # Always EXIF-corrected when not pre-rotating
                 processed = preprocess_image(img_for_gemini, "1", s.get('crop_settings', {}))
                 self._emit_preview('processed', processed, str(img_path))
 
@@ -329,6 +339,7 @@ class PreviewWorker(QObject):
         grid_size = grid_rows * grid_cols
         start_idx = s.get('batch_start_idx', 0)
         prerotate = s.get('crop_settings', {}).get('prerotate', False)
+        use_exif = s.get('use_exif', True)
         rotation_angle = s.get('rotation_angle', 0)
 
         images_to_merge = []
@@ -337,10 +348,12 @@ class PreviewWorker(QObject):
                 return
             try:
                 img = Image.open(p)
-                exif_corrected = fix_orientation(img)
-                img_for_gemini = exif_corrected
+                # If prerotate is ON, follow use_exif setting; if OFF, always use EXIF rotation
                 if prerotate:
-                    img_for_gemini = exif_corrected.rotate(rotation_angle, expand=True)
+                    base_img = fix_orientation(img) if use_exif else img
+                    img_for_gemini = base_img.rotate(rotation_angle, expand=True)
+                else:
+                    img_for_gemini = fix_orientation(img)  # Always EXIF-corrected when not pre-rotating
                 processed = preprocess_image(img_for_gemini, str(start_idx + i + 1), s.get('crop_settings', {}))
                 images_to_merge.append(processed)
             except Exception as e:

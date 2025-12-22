@@ -480,13 +480,13 @@ class ReviewTabHandler(BaseTabHandler):
             display_df = display_df.sort_values(main_col, ascending=True, na_position='last')
         elif sort_option == "CAM ID (Z-A)" and main_col in display_df.columns:
             display_df = display_df.sort_values(main_col, ascending=False, na_position='last')
-        elif sort_option == "Batch (1-N)" and 'batch_number' in display_df.columns:
+        elif sort_option == "Message (1-N)" and 'batch_number' in display_df.columns:
             # Convert to numeric for proper sorting, handling empty strings
             display_df = display_df.copy()
             display_df['_batch_sort'] = pd.to_numeric(display_df['batch_number'], errors='coerce').fillna(0)
             display_df = display_df.sort_values('_batch_sort', ascending=True)
             display_df = display_df.drop(columns=['_batch_sort'])
-        elif sort_option == "Batch (N-1)" and 'batch_number' in display_df.columns:
+        elif sort_option == "Message (N-1)" and 'batch_number' in display_df.columns:
             # Convert to numeric for proper sorting, handling empty strings
             display_df = display_df.copy()
             display_df['_batch_sort'] = pd.to_numeric(display_df['batch_number'], errors='coerce').fillna(0)
