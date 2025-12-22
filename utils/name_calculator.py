@@ -2,8 +2,10 @@
 
 import os
 import pandas as pd
+from typing import List
 
-def _generate_suffixes(group_size: int, mode: str, custom_pattern: list) -> list:
+
+def _generate_suffixes(group_size: int, mode: str, custom_pattern: List[str]) -> List[str]:
     """Generates a list of suffixes based on the specified mode."""
     suffixes = []
     

@@ -1,37 +1,33 @@
 # ai-photo-processor/controllers/process_tab_handler.py
 
 import os
-import google.generativeai as genai
 import pandas as pd
 import re
 from pathlib import Path
 from PIL import Image
 
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QMainWindow
-from PyQt5.QtCore import Qt, QUrl, QThread, QObject
+from PyQt5.QtCore import Qt, QUrl, QThread
 from PyQt5.QtGui import QPixmap, QImage, QDesktopServices
 
-from app_state import AppState, DEFAULT_PROMPT
+from app_state import AppState, DEFAULT_PROMPT, DEFAULTS
+from controllers.base_handler import BaseTabHandler
 from ui.process_tab import ProcessImagesTab
-from workers import RotationWorker, GeminiWorker
+from workers import RotationWorker, GeminiWorker, PreviewWorker
 from utils.file_management import get_image_files, SUPPORTED_RAW_EXTENSIONS
 from utils.image_processing import (
     preprocess_image, merge_images, fix_orientation, decode_raw_image
 )
+from utils.helpers import safe_int, safe_float
 from utils.logger import SimpleLogger
 
 
-class ProcessTabHandler(QObject):
-    """Controller for all logic related to the Process Images tab."""
+class ProcessTabHandler(BaseTabHandler):
 
     def __init__(self, ui: ProcessImagesTab, app_state: AppState, logger: SimpleLogger, main_window: QMainWindow):
-        super().__init__()
-        self.ui = ui
-        self.app_state = app_state
-        self.logger = logger
-        self.main_window = main_window
-        self.worker_thread = None
-        self.current_worker = None
+        super().__init__(ui, app_state, logger, main_window)
+        self.preview_worker = None
+        self.preview_thread = None
 
     def connect_signals(self):
         self.ui.browse_button.clicked.connect(self.select_directory)
@@ -39,17 +35,21 @@ class ProcessTabHandler(QObject):
         self.ui.exiftool_browse_button.clicked.connect(self.select_exiftool_path)
         self.ui.preview_image_dropdown.currentIndexChanged.connect(self.update_previews)
         self.ui.preview_raw_checkbox.stateChanged.connect(self.on_preview_mode_changed)
-        self.ui.rotation_dropdown.currentIndexChanged.connect(self.update_previews)
+        self.ui.rotation_dropdown.currentIndexChanged.connect(self.update_all_previews)
         self.ui.use_exif_checkbox.stateChanged.connect(self.update_previews)
         self.ui.apply_rotation_button.clicked.connect(self.start_rotation)
         self.ui.batch_preview_dropdown.currentIndexChanged.connect(self.update_batch_preview)
-        for widget in [self.ui.zoom_checkbox, self.ui.grayscale_checkbox]:
-            widget.stateChanged.connect(self.update_previews)
-        for widget in [
-            self.ui.crop_top_input, self.ui.crop_bottom_input, self.ui.crop_left_input, self.ui.crop_right_input]:
-            widget.editingFinished.connect(self.update_previews)
-        for widget in [self.ui.batch_size_input, self.ui.merged_img_height_input]:
+        # Crop/filter checkboxes update both individual and batch previews
+        for widget in [self.ui.zoom_checkbox, self.ui.grayscale_checkbox, self.ui.prerotate_checkbox]:
+            widget.stateChanged.connect(self.update_all_previews)
+        # Crop inputs update both individual and batch previews
+        for widget in [self.ui.crop_top_input, self.ui.crop_bottom_input,
+                       self.ui.crop_left_input, self.ui.crop_right_input]:
+            widget.editingFinished.connect(self.update_all_previews)
+        for widget in [self.ui.images_per_prompt_input, self.ui.grid_rows_input,
+                       self.ui.grid_cols_input, self.ui.merged_img_height_input]:
              widget.editingFinished.connect(self.update_batch_preview)
+        self.ui.continue_dropdown.currentIndexChanged.connect(self._on_run_mode_changed)
         self.ui.main_column_input.editingFinished.connect(self._sync_settings_from_ui)
         self.ui.model_dropdown.currentIndexChanged.connect(self._sync_settings_from_ui)
         self.ui.prompt_text_edit.textChanged.connect(self._sync_settings_from_ui)
@@ -62,46 +62,62 @@ class ProcessTabHandler(QObject):
             label.clicked.connect(self.on_preview_label_clicked)
 
     def populate_initial_ui(self):
-        """Populates all UI elements with values from the application state."""
+        # Block signals on all widgets that could trigger _sync_settings_from_ui
+        # to prevent premature syncing before all values are set
+        widgets_to_block = [
+            self.ui.rotation_dropdown, self.ui.use_exif_checkbox, self.ui.preview_raw_checkbox,
+            self.ui.zoom_checkbox, self.ui.grayscale_checkbox, self.ui.prerotate_checkbox,
+            self.ui.crop_top_input, self.ui.crop_bottom_input, self.ui.crop_left_input, self.ui.crop_right_input,
+            self.ui.images_per_prompt_input, self.ui.grid_rows_input, self.ui.grid_cols_input,
+            self.ui.merged_img_height_input, self.ui.main_column_input, self.ui.model_dropdown, self.ui.prompt_text_edit,
+        ]
+        for w in widgets_to_block:
+            w.blockSignals(True)
+
         path = self.app_state.input_directory
         self.ui.dir_path_label.setText(path or "(No folder selected)")
         self.ui.dir_path_label.setFilePath(path)
         self.ui.exiftool_path_input.setText(self.app_state.settings.get('exiftool_path', ''))
-        
+
         orientations = {"0° (No Change)": 0, "90° CCW": 90, "180°": 180, "90° CW": 270}
-        self.ui.rotation_dropdown.blockSignals(True)
         self.ui.rotation_dropdown.clear()
         for text, angle in orientations.items():
             self.ui.rotation_dropdown.addItem(text, angle)
-        
+
         saved_angle = self.app_state.settings.get('rotation_angle', 180)
         index = self.ui.rotation_dropdown.findData(saved_angle)
         self.ui.rotation_dropdown.setCurrentIndex(index if index >= 0 else 2)
-        self.ui.rotation_dropdown.blockSignals(False)
-        
+
         self.ui.use_exif_checkbox.setChecked(self.app_state.settings['use_exif'])
         self.ui.preview_raw_checkbox.setChecked(self.app_state.settings['preview_raw'])
-        
+
         cs = self.app_state.settings['crop_settings']
         self.ui.zoom_checkbox.setChecked(cs['zoom'])
         self.ui.grayscale_checkbox.setChecked(cs['grayscale'])
+        self.ui.prerotate_checkbox.setChecked(cs.get('prerotate', False))
         self.ui.crop_top_input.setText(str(cs['top']))
         self.ui.crop_bottom_input.setText(str(cs['bottom']))
         self.ui.crop_left_input.setText(str(cs['left']))
         self.ui.crop_right_input.setText(str(cs['right']))
-        
-        self.ui.batch_size_input.setText(str(self.app_state.settings['batch_size']))
+
+        self.ui.images_per_prompt_input.setText(str(self.app_state.settings.get('images_per_prompt', DEFAULTS['images_per_prompt'])))
+        self.ui.grid_rows_input.setText(str(self.app_state.settings.get('grid_rows', DEFAULTS['grid_rows'])))
+        self.ui.grid_cols_input.setText(str(self.app_state.settings.get('grid_cols', DEFAULTS['grid_cols'])))
         self.ui.merged_img_height_input.setText(str(self.app_state.settings['merged_img_height']))
         self.ui.main_column_input.setText(str(self.app_state.settings['main_column']))
-        
+
         prompt_text = self.app_state.settings.get('prompt_text', '').strip()
         if not prompt_text:
             self.logger.info("Prompt is empty, loading default.")
             prompt_text = DEFAULT_PROMPT
             self.app_state.settings['prompt_text'] = prompt_text
-        
+
         self.ui.prompt_text_edit.setPlainText(prompt_text)
-        
+
+        # Unblock signals before calling methods that need them
+        for w in widgets_to_block:
+            w.blockSignals(False)
+
         self.update_models_dropdown()
         self.refresh_file_dependent_ui()
 
@@ -136,15 +152,16 @@ class ProcessTabHandler(QObject):
         QMessageBox.information(self.main_window, "Success", "Settings have been saved.")
 
     def restore_default_prompt(self):
-        """Restores the default prompt and saves the settings."""
         self.app_state.settings['prompt_text'] = DEFAULT_PROMPT
         self.ui.prompt_text_edit.setPlainText(DEFAULT_PROMPT)
         self.save_settings()
 
     def _sync_settings_from_ui(self):
         s, ui = self.app_state.settings, self.ui
-        s['batch_size'] = int(ui.batch_size_input.text()) if ui.batch_size_input.text().isdigit() else 9
-        s['merged_img_height'] = int(ui.merged_img_height_input.text()) if ui.merged_img_height_input.text().isdigit() else 1080
+        s['images_per_prompt'] = safe_int(ui.images_per_prompt_input.text(), default=DEFAULTS['images_per_prompt'])
+        s['grid_rows'] = safe_int(ui.grid_rows_input.text(), default=DEFAULTS['grid_rows'])
+        s['grid_cols'] = safe_int(ui.grid_cols_input.text(), default=DEFAULTS['grid_cols'])
+        s['merged_img_height'] = safe_int(ui.merged_img_height_input.text(), default=DEFAULTS['merged_img_height'])
         s['main_column'] = ui.main_column_input.text() or 'CAM'
         s['model_name'] = ui.model_dropdown.currentText()
         s['prompt_text'] = ui.prompt_text_edit.toPlainText()
@@ -152,18 +169,62 @@ class ProcessTabHandler(QObject):
         s['rotation_angle'] = ui.rotation_dropdown.currentData(Qt.UserRole)
         s['use_exif'] = ui.use_exif_checkbox.isChecked()
         s['preview_raw'] = ui.preview_raw_checkbox.isChecked()
-        try:
-            cs = s['crop_settings']
-            cs['zoom'] = ui.zoom_checkbox.isChecked()
-            cs['grayscale'] = ui.grayscale_checkbox.isChecked()
-            cs['top'] = float(ui.crop_top_input.text())
-            cs['bottom'] = float(ui.crop_bottom_input.text())
-            cs['left'] = float(ui.crop_left_input.text())
-            cs['right'] = float(ui.crop_right_input.text())
-        except (ValueError, TypeError): self.logger.warn("Invalid crop value entered.")
+
+        # Update crop settings - safe_float handles empty/invalid input gracefully
+        cs = s['crop_settings']
+        cs['zoom'] = ui.zoom_checkbox.isChecked()
+        cs['grayscale'] = ui.grayscale_checkbox.isChecked()
+        cs['prerotate'] = ui.prerotate_checkbox.isChecked()
+        cs['top'] = safe_float(ui.crop_top_input.text(), default=cs.get('top', 0.0))
+        cs['bottom'] = safe_float(ui.crop_bottom_input.text(), default=cs.get('bottom', 0.0))
+        cs['left'] = safe_float(ui.crop_left_input.text(), default=cs.get('left', 0.0))
+        cs['right'] = safe_float(ui.crop_right_input.text(), default=cs.get('right', 0.0))
 
     def on_preview_mode_changed(self):
         self.refresh_file_dependent_ui()
+
+    def update_all_previews(self):
+        """Update both individual previews and batch preview in a single worker."""
+        self._sync_settings_from_ui()
+
+        # Get individual image path
+        img_path = None
+        if selected_file := self.ui.preview_image_dropdown.currentText():
+            img_path = Path(self.app_state.input_directory) / selected_file
+            if img_path.exists():
+                for label in [self.ui.original_preview_label, self.ui.rotated_preview_label, self.ui.processed_preview_label]:
+                    label.setText("Loading...")
+                    label.setFilePath("")
+            else:
+                img_path = None
+
+        # Get batch files and update dropdown
+        jpg_files = get_image_files(self.app_state.input_directory, 'compressed')
+        batch_start_idx = 0
+
+        if jpg_files:
+            s = self.app_state.settings
+            grid_size = s['grid_rows'] * s['grid_cols']
+            if grid_size > 0:
+                num_batches = (len(jpg_files) + grid_size - 1) // grid_size
+                current_idx = self.ui.batch_preview_dropdown.currentIndex()
+                self.ui.batch_preview_dropdown.blockSignals(True)
+                self.ui.batch_preview_dropdown.clear()
+                if num_batches > 0:
+                    self.ui.batch_preview_dropdown.addItems([f"Message {i+1}" for i in range(num_batches)])
+                    if 0 <= current_idx < num_batches:
+                        self.ui.batch_preview_dropdown.setCurrentIndex(current_idx)
+                self.ui.batch_preview_dropdown.blockSignals(False)
+
+                if self.ui.batch_preview_dropdown.count() > 0:
+                    batch_start_idx = self.ui.batch_preview_dropdown.currentIndex() * grid_size
+                    self.ui.combined_preview_label.clear()
+                    self.ui.combined_preview_label.setText("Loading...")
+                    self.ui.combined_preview_label.setFilePath("")
+
+        # Start single worker for both
+        if img_path or jpg_files:
+            self._start_preview_worker(img_path, jpg_files, batch_start_idx)
 
     def refresh_file_dependent_ui(self):
         self._sync_settings_from_ui()
@@ -175,9 +236,8 @@ class ProcessTabHandler(QObject):
         self.ui.preview_image_dropdown.clear()
         if image_files: self.ui.preview_image_dropdown.addItems([p.name for p in image_files])
         self.ui.preview_image_dropdown.blockSignals(False)
-        if image_files: 
-            self.update_previews()
-            self.update_batch_preview()
+        if image_files:
+            self.update_all_previews()
         else: self.clear_all_previews()
 
     def clear_all_previews(self):
@@ -200,15 +260,43 @@ class ProcessTabHandler(QObject):
 
     def start_gemini_processing(self):
         self._sync_settings_from_ui()
-        run_mode = self.ui.continue_dropdown.currentText()
+        run_mode_data = self.ui.continue_dropdown.currentData()
+        run_mode_text = self.ui.continue_dropdown.currentText()
         start_batch, total_batches, df = 1, 0, pd.DataFrame()
+        retry_batches = []  # List of specific batch numbers to retry
 
         if not self.app_state.api_keys:
             QMessageBox.warning(self.main_window, "No API Keys", "Please add one or more API keys in the 'API Keys' tab.")
             return
 
-        if run_mode.startswith("Continue from"):
-            csv_name = self.ui.continue_dropdown.currentData()
+        if run_mode_data == "retry_specific":
+            # Parse retry batch numbers
+            retry_text = self.ui.retry_batches_input.text().strip()
+            if not retry_text:
+                QMessageBox.warning(self.main_window, "No Messages", "Please enter message numbers to retry.")
+                return
+
+            retry_batches = self._parse_batch_numbers(retry_text)
+            if not retry_batches:
+                QMessageBox.warning(self.main_window, "Invalid Input", "Could not parse message numbers. Use format: 1,3,5-7")
+                return
+
+            # Load the CSV to update
+            csv_name = self.ui.retry_csv_dropdown.currentText()
+            if not csv_name:
+                QMessageBox.warning(self.main_window, "No CSV", "Please select a CSV file to update.")
+                return
+
+            csv_path = os.path.join(self.app_state.rename_files_dir, csv_name)
+            if os.path.exists(csv_path):
+                self.logger.info(f"Retry mode: Loading {csv_name} to update batches {retry_batches}")
+                df = pd.read_csv(csv_path)
+            else:
+                QMessageBox.warning(self.main_window, "CSV Not Found", f"Could not find {csv_name}")
+                return
+
+        elif run_mode_text.startswith("Continue from"):
+            csv_name = run_mode_data
             csv_path = os.path.join(self.app_state.rename_files_dir, csv_name)
             if os.path.exists(csv_path):
                 self.logger.info(f"Attempting to continue from {csv_name}")
@@ -221,12 +309,12 @@ class ProcessTabHandler(QObject):
                     self.logger.info(f"Resuming from batch {start_batch} of {total_batches}.")
                 else:
                     self.logger.warn(f"Could not parse batch numbers from {csv_name}. Starting over.")
-                    run_mode = "Start Over"
+                    run_mode_data = "start_over"
             else:
                 self.logger.warn(f"Selected CSV {csv_name} not found. Starting over.")
-                run_mode = "Start Over"
-        
-        if run_mode == "Start Over":
+                run_mode_data = "start_over"
+
+        if run_mode_data == "start_over":
             self.logger.info("Starting a new processing run.")
             image_paths = get_image_files(self.app_state.input_directory, 'compressed')
             if not image_paths:
@@ -249,12 +337,27 @@ class ProcessTabHandler(QObject):
         self.app_state.current_df = df
         settings_for_worker = self.app_state.settings.copy()
         settings_for_worker['api_keys'] = self.app_state.api_keys
-        
+
         self.current_worker = GeminiWorker(
             df.copy(), settings_for_worker, self.app_state.rename_files_dir, self.logger,
-            start_batch=start_batch, total_batches=total_batches
+            start_batch=start_batch, total_batches=total_batches, retry_batches=retry_batches
         )
         self._start_worker_thread()
+
+    def _parse_batch_numbers(self, text: str) -> list:
+        """Parse batch numbers from string like '1,3,5-7' into list [1,3,5,6,7]."""
+        batches = []
+        try:
+            for part in text.split(','):
+                part = part.strip()
+                if '-' in part:
+                    start, end = part.split('-')
+                    batches.extend(range(int(start), int(end) + 1))
+                else:
+                    batches.append(int(part))
+            return sorted(set(batches))  # Remove duplicates and sort
+        except ValueError:
+            return []
 
     def _start_worker_thread(self):
         self.worker_thread = QThread()
@@ -264,12 +367,11 @@ class ProcessTabHandler(QObject):
         self.current_worker.error.connect(self.on_worker_error)
         if isinstance(self.current_worker, GeminiWorker):
             self.current_worker.batch_completed.connect(self.on_gemini_batch_complete)
+            self.current_worker.failed_batches_report.connect(self.on_failed_batches_report)
         self.worker_thread.started.connect(self.current_worker.run)
         self.worker_thread.start()
         self.set_ui_processing_state(True)
 
-    def stop_worker(self):
-        if self.current_worker: self.current_worker.stop()
 
     def set_ui_processing_state(self, is_processing: bool):
         self.ui.start_processing_button.setEnabled(not is_processing)
@@ -280,27 +382,51 @@ class ProcessTabHandler(QObject):
         self.app_state.current_df = df
         path = os.path.join(self.app_state.rename_files_dir, f"temp_output_b{batch_num}of{total_batches}.csv")
         df.to_csv(path, index=False)
-        self.logger.info(f"Batch {batch_num}/{total_batches} complete. Saved to {path}")
+        self.logger.info(f"Message {batch_num}/{total_batches} complete. Saved to {path}")
 
     def on_worker_finished(self):
-        QMessageBox.information(self.main_window, "Complete", "The process has finished.")
         self.set_ui_processing_state(False)
-        if self.worker_thread: 
-            self.worker_thread.quit()
-            self.worker_thread.wait()
-        self.worker_thread, self.current_worker = None, None
+        self._cleanup_worker_thread()
         self.update_progress_bar(0, "%p%")
-        self.populate_continue_dropdown() # Refresh options after run
+        self.populate_continue_dropdown()  # Refresh options after run
+
+        # Check if there were failed batches (stored during processing)
+        if hasattr(self, '_pending_failed_batches') and self._pending_failed_batches:
+            failed = self._pending_failed_batches
+            self._pending_failed_batches = []
+
+            # Format batch numbers for display
+            batch_str = ', '.join(str(b) for b in failed)
+            reply = QMessageBox.warning(
+                self.main_window,
+                "Messages with Empty Responses",
+                f"The following messages returned empty responses even after retry:\n\n"
+                f"Messages: {batch_str}\n\n"
+                f"Would you like to switch to 'Retry specific messages' mode to retry them?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+
+            if reply == QMessageBox.Yes:
+                # Find and select "Retry specific batches" option
+                retry_idx = self.ui.continue_dropdown.findData("retry_specific")
+                if retry_idx >= 0:
+                    self.ui.continue_dropdown.setCurrentIndex(retry_idx)
+                # Fill in the batch numbers
+                self.ui.retry_batches_input.setText(batch_str)
+        else:
+            QMessageBox.information(self.main_window, "Complete", "The process has finished.")
+
+    def on_failed_batches_report(self, failed_batches: list):
+        """Store failed batches to show warning after processing completes."""
+        self._pending_failed_batches = failed_batches
 
     def on_worker_error(self, message: str):
         QMessageBox.critical(self.main_window, "Error", message)
         self.set_ui_processing_state(False)
-        if self.worker_thread: 
-            self.worker_thread.quit()
-            self.worker_thread.wait()
-        self.worker_thread, self.current_worker = None, None
+        self._cleanup_worker_thread()
         self.update_progress_bar(0, "Error")
-        self.populate_continue_dropdown() # Refresh options after error
+        self.populate_continue_dropdown()  # Refresh options after error
 
     def update_progress_bar(self, value: int, text_format: str):
         self.ui.progress_bar.setFormat(text_format)
@@ -322,87 +448,124 @@ class ProcessTabHandler(QObject):
         if not (selected_file := self.ui.preview_image_dropdown.currentText()): return
         img_path = Path(self.app_state.input_directory) / selected_file
         if not img_path.exists(): return
-        
-        s = self.app_state.settings
-        base_img_previews, exif_corrected_img = None, None
-        
-        try:
-            if img_path.suffix.lower() in SUPPORTED_RAW_EXTENSIONS:
-                base_img_previews = decode_raw_image(img_path, use_exif=s['use_exif'])
-                exif_corrected_img = decode_raw_image(img_path, use_exif=True)
-            else: # Compressed
-                unrotated_pil = Image.open(img_path)
-                exif_corrected_img = fix_orientation(unrotated_pil.copy())
-                base_img_previews = exif_corrected_img if s['use_exif'] else unrotated_pil
-            
-            if not base_img_previews:
-                raise IOError("Failed to load base image for preview.")
-            
-            rotated_image = base_img_previews.rotate(s['rotation_angle'], expand=True)
-            processed_image = preprocess_image(exif_corrected_img, "1", s['crop_settings'])
 
-            for label, img, path in [
-                (self.ui.original_preview_label, base_img_previews, str(img_path)),
-                (self.ui.rotated_preview_label, rotated_image, str(img_path)),
-                (self.ui.processed_preview_label, processed_image, str(img_path))
-            ]:
-                label.setPixmap(self.pil_to_qpixmap(img))
-                label.setFilePath(path)
-        except Exception as e:
-            self.logger.error(f"Error generating preview for {img_path.name}", exception=e)
-            for label in [self.ui.original_preview_label, self.ui.rotated_preview_label, self.ui.processed_preview_label]:
-                label.setText("Preview Error")
-                label.setFilePath("")
+        # Show loading state
+        for label in [self.ui.original_preview_label, self.ui.rotated_preview_label, self.ui.processed_preview_label]:
+            label.setText("Loading...")
+            label.setFilePath("")
+
+        self._start_preview_worker(img_path)
 
     def update_batch_preview(self):
         self._sync_settings_from_ui()
-        if not (jpg_files := get_image_files(self.app_state.input_directory, 'compressed')):
+        jpg_files = get_image_files(self.app_state.input_directory, 'compressed')
+        if not jpg_files:
             self.ui.combined_preview_label.clear()
             self.ui.combined_preview_label.setText("No Images")
             return
-        
+
         s = self.app_state.settings
-        batch_size = s['batch_size']
-        if batch_size <= 0: return # Avoid division by zero
-        num_batches = (len(jpg_files) + batch_size - 1) // batch_size
-        
+        grid_size = s['grid_rows'] * s['grid_cols']
+        if grid_size <= 0: return
+
+        num_batches = (len(jpg_files) + grid_size - 1) // grid_size
+
         current_idx = self.ui.batch_preview_dropdown.currentIndex()
         self.ui.batch_preview_dropdown.blockSignals(True)
         self.ui.batch_preview_dropdown.clear()
         if num_batches > 0:
-            self.ui.batch_preview_dropdown.addItems([f"Batch {i+1}" for i in range(num_batches)])
+            self.ui.batch_preview_dropdown.addItems([f"Message {i+1}" for i in range(num_batches)])
             if 0 <= current_idx < num_batches: self.ui.batch_preview_dropdown.setCurrentIndex(current_idx)
         self.ui.batch_preview_dropdown.blockSignals(False)
-        
-        if self.ui.batch_preview_dropdown.count() == 0: return
-        
-        start_idx = self.ui.batch_preview_dropdown.currentIndex() * batch_size
-        images_to_merge = []
-        for i, p in enumerate(jpg_files[start_idx : start_idx + batch_size]):
-            try:
-                img = Image.open(p)
-                exif_corrected_img = fix_orientation(img)
-                processed_img = preprocess_image(exif_corrected_img, str(start_idx + i + 1), s['crop_settings'])
-                images_to_merge.append(processed_img)
-            except Exception as e:
-                self.logger.error(f"Failed to process image for batch preview: {p.name}", exception=e)
 
-        if merged := merge_images(images_to_merge, s['merged_img_height']):
-            temp_path = Path(self.app_state.rename_files_dir) / "temp_merged_preview.jpg"
-            merged.save(temp_path, quality=90)
-            self.ui.combined_preview_label.setPixmap(self.pil_to_qpixmap(merged))
-            self.ui.combined_preview_label.setFilePath(str(temp_path))
-        else:
-            self.ui.combined_preview_label.clear()
-            self.ui.combined_preview_label.setText("Batch Preview")
-            self.ui.combined_preview_label.setFilePath("")
+        if self.ui.batch_preview_dropdown.count() == 0: return
+
+        # Show loading state and start worker
+        self.ui.combined_preview_label.clear()
+        self.ui.combined_preview_label.setText("Loading...")
+        self.ui.combined_preview_label.setFilePath("")
+
+        start_idx = self.ui.batch_preview_dropdown.currentIndex() * grid_size
+        self._start_preview_worker(None, jpg_files, start_idx)
+
+    def _stop_preview_worker(self):
+        """Stop any running preview worker."""
+        if self.preview_worker:
+            self.preview_worker.stop()
+        if self.preview_thread and self.preview_thread.isRunning():
+            self.preview_thread.quit()
+            self.preview_thread.wait(1000)
+        self.preview_worker = None
+        self.preview_thread = None
+
+    def _start_preview_worker(self, img_path=None, jpg_files=None, batch_start_idx=0):
+        """Start the preview worker thread."""
+        self._stop_preview_worker()
+
+        s = self.app_state.settings
+        config = {
+            'image_path': str(img_path) if img_path else '',
+            'jpg_files': jpg_files or [],
+            'batch_start_idx': batch_start_idx,
+            'use_exif': s.get('use_exif', True),
+            'rotation_angle': s.get('rotation_angle', 0),
+            'crop_settings': s.get('crop_settings', {}),
+            'grid_rows': s.get('grid_rows', 3),
+            'grid_cols': s.get('grid_cols', 3),
+            'merged_img_height': s.get('merged_img_height', 1080),
+            'temp_dir': self.app_state.rename_files_dir or '',
+        }
+
+        self.preview_worker = PreviewWorker(config, self.logger)
+        self.preview_thread = QThread()
+        self.preview_worker.moveToThread(self.preview_thread)
+
+        self.preview_worker.preview_ready.connect(self._on_preview_ready)
+        self.preview_worker.batch_preview_ready.connect(self._on_batch_preview_ready)
+        self.preview_worker.finished.connect(self._on_preview_finished)
+        self.preview_thread.started.connect(self.preview_worker.run)
+
+        self.preview_thread.start()
+
+    def _on_preview_ready(self, preview_type: str, img_bytes: bytes, width: int, height: int, file_path: str):
+        """Handle individual preview ready signal."""
+        q_img = QImage(img_bytes, width, height, 3 * width, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(q_img)
+
+        label_map = {
+            'original': self.ui.original_preview_label,
+            'rotated': self.ui.rotated_preview_label,
+            'processed': self.ui.processed_preview_label,
+        }
+        if label := label_map.get(preview_type):
+            label.setPixmap(pixmap)
+            label.setFilePath(file_path)
+
+    def _on_batch_preview_ready(self, img_bytes: bytes, width: int, height: int, file_path: str):
+        """Handle batch preview ready signal."""
+        q_img = QImage(img_bytes, width, height, 3 * width, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(q_img)
+        self.ui.combined_preview_label.setPixmap(pixmap)
+        self.ui.combined_preview_label.setFilePath(file_path)
+
+    def _on_preview_finished(self):
+        """Clean up after preview worker finishes.
+
+        Note: Do NOT call _stop_preview_worker() here! If a new worker was
+        started while this one was running, it would kill the new worker.
+        Cleanup happens in _start_preview_worker when a new worker starts.
+        """
+        pass
 
     def populate_continue_dropdown(self):
-        """Scans for partial output files and populates the continue dropdown."""
+        self.ui.continue_dropdown.blockSignals(True)
         self.ui.continue_dropdown.clear()
-        self.ui.continue_dropdown.addItem("Start Over", "")
+        self.ui.continue_dropdown.addItem("Start Over", "start_over")
+        self.ui.continue_dropdown.addItem("Retry specific messages", "retry_specific")
 
         if not self.app_state.rename_files_dir or not os.path.isdir(self.app_state.rename_files_dir):
+            self.ui.continue_dropdown.blockSignals(False)
+            self._on_run_mode_changed()
             return
 
         try:
@@ -420,54 +583,136 @@ class ProcessTabHandler(QObject):
                 self.ui.continue_dropdown.addItem(f"Continue from {p}", p) # Store filename in UserData
 
             if len(partials) > 0:
-                self.ui.continue_dropdown.setCurrentIndex(1) # Select the newest partial by default
+                self.ui.continue_dropdown.setCurrentIndex(2) # Select the newest partial by default (after Start Over and Retry)
+
+            # Populate retry CSV dropdown with all CSV files
+            self._populate_retry_csv_dropdown()
+
         except FileNotFoundError:
             self.logger.warn("Could not populate continue dropdown, rename_files directory not found.")
 
+        self.ui.continue_dropdown.blockSignals(False)
+        self._on_run_mode_changed()
+
+    def _populate_retry_csv_dropdown(self):
+        """Populate the CSV dropdown for retry mode."""
+        self.ui.retry_csv_dropdown.clear()
+        if not self.app_state.rename_files_dir or not os.path.isdir(self.app_state.rename_files_dir):
+            return
+
+        try:
+            csv_files = [
+                f for f in os.listdir(self.app_state.rename_files_dir)
+                if f.endswith('.csv') and not f.startswith('rename_log')
+            ]
+            csv_files.sort(
+                key=lambda f: os.path.getmtime(os.path.join(self.app_state.rename_files_dir, f)),
+                reverse=True
+            )
+            for csv_file in csv_files:
+                self.ui.retry_csv_dropdown.addItem(csv_file)
+        except FileNotFoundError:
+            pass
+
+    def _on_run_mode_changed(self):
+        """Show/hide retry-specific controls based on selected run mode."""
+        current_data = self.ui.continue_dropdown.currentData()
+        is_retry_mode = (current_data == "retry_specific")
+
+        self.ui.retry_batches_label.setVisible(is_retry_mode)
+        self.ui.retry_batches_input.setVisible(is_retry_mode)
+        self.ui.retry_csv_label.setVisible(is_retry_mode)
+        self.ui.retry_csv_dropdown.setVisible(is_retry_mode)
+
     def update_models_dropdown(self):
+        """Fetch Gemini models (2.5+), Flash before Pro."""
         self.ui.model_dropdown.clear()
+
         if not self.app_state.api_keys:
             self.ui.model_dropdown.addItem("No API Key Set")
             return
-        try:
-            genai.configure(api_key=self.app_state.api_keys[0])
 
-            MIN_MODEL_VERSION = 2.5
+        try:
+            from google import genai
+
+            client = genai.Client(api_key=self.app_state.api_keys[0])
+
+            # Patterns to exclude (non-text-generation models)
+            EXCLUDED_PATTERNS = [
+                '-tts', '-image', '-audio', '-video', 'embedding',
+                'aqa', 'bisheng', 'learnlm', 'imagen', 'veo'
+            ]
+
             usable_models = []
 
-            for m in genai.list_models():
-                model_name = m.name.split('/')[-1]
-                version_match = re.search(r'(\d+\.\d+)', model_name)
-                version = float(version_match.group(1)) if version_match else 0.0
+            for model in client.models.list():
+                # Get model name, strip "models/" prefix if present
+                model_name = model.name
+                if '/' in model_name:
+                    model_name = model_name.split('/')[-1]
 
-                if ('generateContent' in m.supported_generation_methods and
-                    'gemini' in model_name and
-                    version >= MIN_MODEL_VERSION):
-                    usable_models.append(model_name)
+                model_lower = model_name.lower()
 
-            def hierarchical_sort_key(model_name):
-                version_match = re.search(r'(\d+\.\d+)', model_name)
-                version = float(version_match.group(1)) if version_match else 0.0
-                is_stable = 'preview' not in model_name
-                tier = 2 if 'pro' in model_name else (1 if 'flash' in model_name else 0)
-                return (version, is_stable, tier)
+                # Skip non-Gemini models
+                if 'gemini' not in model_lower:
+                    continue
 
-            vision_models = sorted(usable_models, key=hierarchical_sort_key, reverse=True)
+                # Skip excluded patterns
+                if any(pattern in model_lower for pattern in EXCLUDED_PATTERNS):
+                    continue
 
-            if vision_models:
-                self.app_state.available_models = vision_models
-                self.ui.model_dropdown.addItems(vision_models)
+                # Parse version - handles "gemini-2.5-flash" and "gemini-3-flash"
+                version_match = re.search(r'gemini-(\d+)(?:\.(\d+))?', model_lower)
+                if not version_match:
+                    continue
 
+                major = int(version_match.group(1))
+                minor = int(version_match.group(2)) if version_match.group(2) else 0
+
+                # Filter: version >= 2.5
+                if major < 2 or (major == 2 and minor < 5):
+                    continue
+
+                usable_models.append({
+                    'name': model_name,
+                    'major': major,
+                    'minor': minor,
+                    'is_preview': 'preview' in model_lower,
+                    'is_flash': 'flash' in model_lower,
+                    'is_pro': 'pro' in model_lower,
+                })
+
+            # Sort priority (highest first):
+            # 1. Higher version (3.x before 2.x)
+            # 2. Flash BEFORE Pro (free tier friendly - Pro often not available on free tier)
+            # 3. Stable before preview (but both should work)
+            usable_models.sort(
+                key=lambda m: (
+                    m['major'],           # Higher major version first
+                    m['minor'],           # Higher minor version first
+                    m['is_flash'],        # Flash BEFORE Pro (True sorts after False, so flash=True goes first with reverse)
+                    not m['is_preview'],  # Stable before preview
+                ),
+                reverse=True
+            )
+
+            # Populate dropdown
+            if usable_models:
+                model_names = [m['name'] for m in usable_models]
+                self.app_state.available_models = model_names
+                self.ui.model_dropdown.addItems(model_names)
+
+                # Try to restore saved model, otherwise use first (best) option
                 saved_model = self.app_state.settings.get('model_name')
-                if saved_model and saved_model in vision_models:
+                if saved_model and saved_model in model_names:
                     self.ui.model_dropdown.setCurrentText(saved_model)
                 else:
-                    new_best_model = vision_models[0]
-                    self.app_state.settings['model_name'] = new_best_model
-                    self.ui.model_dropdown.setCurrentText(new_best_model)
-                    self.logger.info(f"Default model was invalid. Set new default to: {new_best_model}")
+                    # Default to first model (should be gemini-3-flash or gemini-3-flash-preview)
+                    self.ui.model_dropdown.setCurrentIndex(0)
+                    self.app_state.settings['model_name'] = model_names[0]
+                    self.logger.info(f"Default model set to: {model_names[0]}")
             else:
-                self.ui.model_dropdown.addItem(f"No models found >= v{MIN_MODEL_VERSION}")
+                self.ui.model_dropdown.addItem("No compatible models found")
 
         except Exception as e:
             self.logger.error("Failed to fetch Gemini models", exception=e)

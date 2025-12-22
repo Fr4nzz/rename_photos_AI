@@ -1,14 +1,33 @@
 # ai-photo-processor/main_window.py
 
+from pathlib import Path
 from PyQt5.QtWidgets import QMainWindow, QTabWidget, QMessageBox
+from PyQt5.QtGui import QIcon
 
-from app_state import AppState
+from app_state import AppState, is_bundled, get_base_path
 from ui.process_tab import ProcessImagesTab
 from ui.review_tab import ReviewResultsTab
 from ui.api_keys_tab import ApiKeysTab
 from controllers.process_tab_handler import ProcessTabHandler
 from controllers.review_tab_handler import ReviewTabHandler
 from utils.logger import SimpleLogger
+
+
+def get_app_icon() -> QIcon:
+    """Get the application icon from the icons folder."""
+    base_path = get_base_path()
+    # Try different icon locations
+    icon_paths = [
+        base_path / 'icons' / 'app.ico',
+        base_path / 'app.ico',
+        Path('icons') / 'app.ico',
+        Path('app.ico'),
+    ]
+    for icon_path in icon_paths:
+        if icon_path.exists():
+            return QIcon(str(icon_path))
+    return QIcon()  # Empty icon if not found
+
 
 class MainWindow(QMainWindow):
     """
@@ -21,6 +40,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("AI Photo Processor")
         self.setGeometry(100, 100, 1600, 900)
 
+        # Set window icon (shows in taskbar)
+        self.setWindowIcon(get_app_icon())
+
         # 1. Initialize Core Components
         self.logger = SimpleLogger()
         self.app_state = AppState(self.logger)
@@ -28,7 +50,8 @@ class MainWindow(QMainWindow):
         # 2. Initialize UI Tabs
         self.tab_widget = QTabWidget()
         self.setCentralWidget(self.tab_widget)
-        self.process_tab = ProcessImagesTab()
+        # Hide ExifTool config when running as bundled .exe (exiftool is bundled)
+        self.process_tab = ProcessImagesTab(hide_exiftool_config=is_bundled())
         self.review_tab = ReviewResultsTab()
         self.api_keys_tab = ApiKeysTab()
 
@@ -62,8 +85,10 @@ class MainWindow(QMainWindow):
         """Handle logic for when the user switches tabs."""
         if self.tab_widget.widget(index) == self.review_tab:
             self.logger.info("Switched to Review Results tab.")
-            # --- MODIFIED: Pass a flag to select the newest CSV by default ---
-            self.review_handler.refresh_csv_dropdown(select_newest=True)
+            # Only refresh if CSV dropdown is empty or directory changed
+            if (self.review_handler.ui.csv_dropdown.count() == 0 or
+                    self.review_handler._last_loaded_dir != self.app_state.input_directory):
+                self.review_handler.refresh_csv_dropdown(select_newest=True)
 
     def save_api_keys(self):
         """Handles saving API keys, a simple enough action to keep here."""

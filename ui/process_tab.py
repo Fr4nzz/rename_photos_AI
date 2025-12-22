@@ -12,8 +12,9 @@ from .widgets import ClickableLabel
 class ProcessImagesTab(QWidget):
     """The UI for the 'Process Images' tab, featuring a fully resizable splitter layout."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, hide_exiftool_config: bool = False, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._hide_exiftool_config = hide_exiftool_config
         self._setup_ui()
 
     def _setup_ui(self):
@@ -32,15 +33,18 @@ class ProcessImagesTab(QWidget):
         folder_layout.addWidget(self.dir_path_label, 1)
         folder_layout.addWidget(self.browse_button)
         settings_vbox.addWidget(folder_group)
-        
-        exiftool_group = QGroupBox("ExifTool Configuration")
-        exiftool_layout = QHBoxLayout(exiftool_group)
+
+        # ExifTool config - hidden when running as bundled .exe (exiftool is bundled)
+        # Keep as instance attribute to prevent garbage collection of child widgets
+        self._exiftool_group = QGroupBox("ExifTool Configuration")
+        exiftool_layout = QHBoxLayout(self._exiftool_group)
         self.exiftool_path_input = QLineEdit()
         self.exiftool_browse_button = QPushButton("...")
         exiftool_layout.addWidget(QLabel("Path:"))
         exiftool_layout.addWidget(self.exiftool_path_input, 1)
         exiftool_layout.addWidget(self.exiftool_browse_button)
-        settings_vbox.addWidget(exiftool_group)
+        if not self._hide_exiftool_config:
+            settings_vbox.addWidget(self._exiftool_group)
 
         selection_group = QGroupBox("Preview Selection")
         selection_layout = QFormLayout(selection_group)
@@ -49,7 +53,7 @@ class ProcessImagesTab(QWidget):
         self.preview_raw_checkbox = QCheckBox("Process RAW Images")
         self.batch_preview_dropdown = QComboBox()
         selection_layout.addRow("Image:", self.preview_image_dropdown)
-        selection_layout.addRow("Batch:", self.batch_preview_dropdown)
+        selection_layout.addRow("Message:", self.batch_preview_dropdown)
         selection_layout.addRow(self.preview_raw_checkbox)
         settings_vbox.addWidget(selection_group)
 
@@ -67,12 +71,18 @@ class ProcessImagesTab(QWidget):
         crop_layout = QFormLayout(crop_group)
         self.zoom_checkbox = QCheckBox("Enable Cropping")
         self.grayscale_checkbox = QCheckBox("Convert to Grayscale")
+        self.prerotate_checkbox = QCheckBox("Pre-rotate images for Gemini")
+        self.prerotate_checkbox.setToolTip(
+            "If checked, images will be rotated by the selected angle before merging for Gemini.\n"
+            "If unchecked (default), images use their EXIF orientation without modification."
+        )
         self.crop_top_input = QLineEdit()
         self.crop_bottom_input = QLineEdit()
         self.crop_left_input = QLineEdit()
         self.crop_right_input = QLineEdit()
         crop_layout.addRow(self.zoom_checkbox)
         crop_layout.addRow(self.grayscale_checkbox)
+        crop_layout.addRow(self.prerotate_checkbox)
         crop_layout.addRow("Top %:", self.crop_top_input)
         crop_layout.addRow("Bottom %:", self.crop_bottom_input)
         crop_layout.addRow("Left %:", self.crop_left_input)
@@ -82,7 +92,27 @@ class ProcessImagesTab(QWidget):
         api_group = QGroupBox("API Settings")
         api_layout = QFormLayout(api_group)
         self.model_dropdown = QComboBox()
-        self.batch_size_input = QLineEdit()
+        self.images_per_prompt_input = QLineEdit()
+        self.images_per_prompt_input.setToolTip(
+            "Number of merged images to send in one API call.\n"
+            "Each merged image contains (rows × cols) individual photos.\n"
+            "Example: 10 images × 9 grid size = 90 photos per prompt."
+        )
+        # Grid Size: rows x columns configuration
+        grid_size_widget = QWidget()
+        grid_size_layout = QHBoxLayout(grid_size_widget)
+        grid_size_layout.setContentsMargins(0, 0, 0, 0)
+        self.grid_rows_input = QLineEdit()
+        self.grid_rows_input.setFixedWidth(40)
+        self.grid_rows_input.setToolTip("Number of rows in the image grid")
+        self.grid_cols_input = QLineEdit()
+        self.grid_cols_input.setFixedWidth(40)
+        self.grid_cols_input.setToolTip("Number of columns in the image grid")
+        grid_size_layout.addWidget(self.grid_rows_input)
+        grid_size_layout.addWidget(QLabel("×"))
+        grid_size_layout.addWidget(self.grid_cols_input)
+        grid_size_layout.addWidget(QLabel("(rows × cols)"))
+        grid_size_layout.addStretch()
         self.merged_img_height_input = QLineEdit()
         self.main_column_input = QLineEdit()
         self.save_prompt_button = QPushButton("Save All Settings")
@@ -92,7 +122,8 @@ class ProcessImagesTab(QWidget):
         prompt_buttons_layout.addWidget(self.save_prompt_button)
         prompt_buttons_layout.addWidget(self.restore_prompt_button)
         api_layout.addRow("Model:", self.model_dropdown)
-        api_layout.addRow("Batch Size:", self.batch_size_input)
+        api_layout.addRow("Images per Prompt:", self.images_per_prompt_input)
+        api_layout.addRow("Grid Size:", grid_size_widget)
         api_layout.addRow("Merged Height:", self.merged_img_height_input)
         api_layout.addRow("Main Column:", self.main_column_input)
         api_layout.addRow(prompt_buttons_layout)
@@ -113,7 +144,7 @@ class ProcessImagesTab(QWidget):
 
         previews_data = [
             ("Original", self.original_preview_label), ("Rotated", self.rotated_preview_label),
-            ("Processed (for Gemini)", self.processed_preview_label), ("Batch Preview", self.combined_preview_label)
+            ("Processed (for Gemini)", self.processed_preview_label), ("Message Preview", self.combined_preview_label)
         ]
         
         for i, (title, label) in enumerate(previews_data):
@@ -146,6 +177,28 @@ class ProcessImagesTab(QWidget):
         self.continue_dropdown = QComboBox()
         bottom_bar_layout.addWidget(QLabel("Run Mode:"))
         bottom_bar_layout.addWidget(self.continue_dropdown)
+
+        # Retry-specific messages controls (hidden by default)
+        self.retry_batches_label = QLabel("Messages to retry:")
+        self.retry_batches_input = QLineEdit()
+        self.retry_batches_input.setPlaceholderText("e.g., 1,3,5-7")
+        self.retry_batches_input.setFixedWidth(120)
+        self.retry_batches_input.setToolTip("Enter message numbers separated by commas. Use dash for ranges (e.g., 1,3,5-7)")
+        self.retry_csv_label = QLabel("CSV to update:")
+        self.retry_csv_dropdown = QComboBox()
+        self.retry_csv_dropdown.setFixedWidth(200)
+
+        bottom_bar_layout.addWidget(self.retry_batches_label)
+        bottom_bar_layout.addWidget(self.retry_batches_input)
+        bottom_bar_layout.addWidget(self.retry_csv_label)
+        bottom_bar_layout.addWidget(self.retry_csv_dropdown)
+
+        # Initially hide retry controls
+        self.retry_batches_label.setVisible(False)
+        self.retry_batches_input.setVisible(False)
+        self.retry_csv_label.setVisible(False)
+        self.retry_csv_dropdown.setVisible(False)
+
         bottom_bar_layout.addSpacing(20)
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)

@@ -8,15 +8,17 @@ from pathlib import Path
 from datetime import datetime
 
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QMainWindow, QWidget
-from PyQt5.QtCore import QThread, QObject
+from PyQt5.QtCore import QThread, Qt
 from PyQt5.QtGui import QPixmap, QImage
 
-from app_state import AppState
+from app_state import AppState, DEFAULTS
+from controllers.base_handler import BaseTabHandler
 from ui.review_tab import ReviewResultsTab
 from ui.review_tab_item import ReviewItemWidget
 from workers import ImageLoadWorker
 from utils.name_calculator import calculate_final_names
 from utils.file_management import get_image_files, SUPPORTED_RAW_EXTENSIONS
+from utils.helpers import safe_int
 from utils.logger import SimpleLogger
 
 QUALITY_TO_HEIGHT = {
@@ -24,31 +26,44 @@ QUALITY_TO_HEIGHT = {
     "Original": 0
 }
 
-class ReviewTabHandler(QObject):
-    """Controller for all logic related to the Review Results tab."""
+class ReviewTabHandler(BaseTabHandler):
 
     def __init__(self, ui: ReviewResultsTab, app_state: AppState, logger: SimpleLogger, main_window: QMainWindow):
-        super().__init__()
-        self.ui = ui
-        self.app_state = app_state
-        self.logger = logger
-        self.main_window = main_window
+        super().__init__(ui, app_state, logger, main_window)
+        # ReviewTabHandler uses different naming for worker variables
         self.image_load_worker = None
         self.image_load_thread = None
         self.path_to_widget_map = {}
         self.current_page = 0
         self.total_pages = 1
         self.filtered_df = pd.DataFrame()
+        # Scroll position memory: page_number -> scroll_position
+        self.scroll_positions = {}
+        # Track loaded state to avoid reloading on tab switch
+        self._last_loaded_csv = None
+        self._last_loaded_dir = None
+        self._images_loaded = False
 
     def connect_signals(self):
-        self.ui.csv_dropdown.currentIndexChanged.connect(self.refresh_view)
-        self.ui.refresh_from_disk_button.clicked.connect(lambda: self.refresh_csv_dropdown(select_newest=True))
+        self.ui.csv_dropdown.currentIndexChanged.connect(self._on_csv_changed)
+        self.ui.refresh_from_disk_button.clicked.connect(self._force_refresh)
         self.ui.crop_review_checkbox.stateChanged.connect(self._handle_ui_change)
-        self.ui.show_duplicates_checkbox.stateChanged.connect(self._handle_ui_change)
-        
+
+        # Filter checkboxes
+        self.ui.filter_all_checkbox.stateChanged.connect(self._handle_filter_all_changed)
+        for cb in [self.ui.filter_crossed_checkbox, self.ui.filter_notes_checkbox,
+                   self.ui.filter_skip_checkbox, self.ui.filter_mismatch_checkbox]:
+            cb.stateChanged.connect(self._handle_filter_option_changed)
+
         self.ui.items_per_page_input.editingFinished.connect(self._handle_ui_change)
         self.ui.image_quality_dropdown.currentIndexChanged.connect(self._handle_ui_change)
-        
+
+        # Sort dropdown
+        self.ui.sort_dropdown.currentIndexChanged.connect(self._handle_sort_changed)
+
+        # Editable page number
+        self.ui.page_number_input.editingFinished.connect(self._handle_page_input_changed)
+
         self.ui.suffix_mode_dropdown.currentIndexChanged.connect(self._handle_suffix_mode_change)
         self.ui.custom_suffix_input.editingFinished.connect(self._sync_settings_from_ui)
 
@@ -77,40 +92,128 @@ class ReviewTabHandler(QObject):
         self._update_suffix_widgets_visibility()
 
     def _sync_settings_from_ui(self):
-        """Read values from the UI and update the app_state."""
         self.app_state.settings['review_crop_enabled'] = self.ui.crop_review_checkbox.isChecked()
-        
-        try:
-            items_per_page = int(self.ui.items_per_page_input.text())
-            self.app_state.settings['review_items_per_page'] = items_per_page if items_per_page > 0 else 1
-        except (ValueError, TypeError):
-            self.app_state.settings['review_items_per_page'] = 50
-            self.ui.items_per_page_input.setText("50")
-
+        items_per_page = safe_int(self.ui.items_per_page_input.text(), default=DEFAULTS['review_items_per_page'])
+        self.app_state.settings['review_items_per_page'] = max(1, items_per_page)
         self.app_state.settings['review_thumb_height'] = self.ui.image_quality_dropdown.currentText()
         self.app_state.settings['suffix_mode'] = self.ui.suffix_mode_dropdown.currentText()
         self.app_state.settings['custom_suffixes'] = self.ui.custom_suffix_input.text()
 
     def stop_worker(self):
+        """Stop image load worker (uses different var names than base class)."""
         if self.image_load_thread and self.image_load_thread.isRunning():
             self.image_load_worker.stop()
             self.image_load_thread.quit()
-            self.image_load_thread.wait()
+            if not self.image_load_thread.wait(3000):
+                self.logger.warn("Image load thread did not stop gracefully, forcing termination.")
+                self.image_load_thread.terminate()
+                self.image_load_thread.wait(1000)
+            self.image_load_thread = None
+            self.image_load_worker = None
     
     def _handle_suffix_mode_change(self):
-        """Syncs settings and updates widget visibility when the suffix mode changes."""
         self._sync_settings_from_ui()
         self._update_suffix_widgets_visibility()
 
     def _update_suffix_widgets_visibility(self):
-        """Shows or hides the custom suffix input based on the dropdown selection."""
         is_custom_mode = (self.ui.suffix_mode_dropdown.currentText() == "Custom")
         self.ui.custom_suffix_label.setVisible(is_custom_mode)
         self.ui.custom_suffix_input.setVisible(is_custom_mode)
 
     def _handle_ui_change(self):
         self._sync_settings_from_ui()
+        self._apply_filters_and_update_pages()
+        self._populate_review_grid()
+
+    def _on_csv_changed(self):
+        """Handle CSV dropdown change - reload data."""
+        self._images_loaded = False
         self.refresh_view()
+
+    def _force_refresh(self):
+        """Force refresh from disk, resetting cache."""
+        self._last_loaded_csv = None
+        self._last_loaded_dir = None
+        self._images_loaded = False
+        self.refresh_csv_dropdown(select_newest=True)
+
+    def _handle_sort_changed(self):
+        """Handle sort dropdown change - re-apply filters and sort."""
+        self._apply_filters_and_update_pages()
+        self._populate_review_grid()
+
+    def _handle_filter_all_changed(self, state):
+        """When 'All' is checked, uncheck all other filter options."""
+        if state == Qt.Checked:
+            # Block signals to prevent recursive calls
+            for cb in [self.ui.filter_crossed_checkbox, self.ui.filter_notes_checkbox,
+                       self.ui.filter_skip_checkbox, self.ui.filter_mismatch_checkbox]:
+                cb.blockSignals(True)
+                cb.setChecked(False)
+                cb.blockSignals(False)
+            self._handle_ui_change()
+        else:
+            # If unchecking All and no other filter is selected, re-check All
+            if not self._any_filter_selected():
+                self.ui.filter_all_checkbox.blockSignals(True)
+                self.ui.filter_all_checkbox.setChecked(True)
+                self.ui.filter_all_checkbox.blockSignals(False)
+
+    def _handle_filter_option_changed(self, state):
+        """When any filter option is changed, update 'All' checkbox accordingly."""
+        if state == Qt.Checked:
+            # Uncheck 'All' when any specific filter is selected
+            self.ui.filter_all_checkbox.blockSignals(True)
+            self.ui.filter_all_checkbox.setChecked(False)
+            self.ui.filter_all_checkbox.blockSignals(False)
+            self._handle_ui_change()
+        else:
+            # If no filters are selected, re-check 'All'
+            if not self._any_filter_selected():
+                self.ui.filter_all_checkbox.blockSignals(True)
+                self.ui.filter_all_checkbox.setChecked(True)
+                self.ui.filter_all_checkbox.blockSignals(False)
+            self._handle_ui_change()
+
+    def _any_filter_selected(self) -> bool:
+        """Check if any non-'All' filter is selected."""
+        return any([
+            self.ui.filter_crossed_checkbox.isChecked(),
+            self.ui.filter_notes_checkbox.isChecked(),
+            self.ui.filter_skip_checkbox.isChecked(),
+            self.ui.filter_mismatch_checkbox.isChecked()
+        ])
+
+    def _handle_page_input_changed(self):
+        """Handle manual page number input."""
+        try:
+            page_num = int(self.ui.page_number_input.text())
+            # Convert from 1-based (user) to 0-based (internal)
+            target_page = page_num - 1
+            if 0 <= target_page < self.total_pages and target_page != self.current_page:
+                self._save_scroll_position()
+                self.current_page = target_page
+                self._populate_review_grid()
+                self._restore_scroll_position()
+            else:
+                # Invalid input, reset to current page
+                self._update_navigation_controls()
+        except ValueError:
+            # Invalid input, reset to current page
+            self._update_navigation_controls()
+
+    def _save_scroll_position(self):
+        """Save current scroll position for the current page."""
+        scrollbar = self.ui.scroll_area.verticalScrollBar()
+        self.scroll_positions[self.current_page] = scrollbar.value()
+
+    def _restore_scroll_position(self):
+        """Restore scroll position for the current page, or scroll to top if not saved."""
+        scrollbar = self.ui.scroll_area.verticalScrollBar()
+        if self.current_page in self.scroll_positions:
+            scrollbar.setValue(self.scroll_positions[self.current_page])
+        else:
+            scrollbar.setValue(0)
 
     def refresh_csv_dropdown(self, select_newest: bool = False):
         self.ui.csv_dropdown.blockSignals(True)
@@ -118,7 +221,7 @@ class ReviewTabHandler(QObject):
         self.ui.csv_dropdown.clear()
         
         rename_dir = self.app_state.rename_files_dir
-        if rename_dir and os.path.exists(rename_dir):
+        if rename_dir and Path(rename_dir).is_dir():
             try:
                 # Filter out the rename log file from the dropdown
                 csv_files = sorted(
@@ -176,10 +279,10 @@ class ReviewTabHandler(QObject):
                     csv_df = pd.read_csv(csv_path, dtype=str).fillna('')
                 except Exception as e:
                     self.logger.error(f"Could not load selected CSV: {csv_name}", exception=e)
-        
+
         # Define the expected columns.
         main_col = self.app_state.settings.get('main_column', 'CAM')
-        expected_cols = ['from', 'to', 'skip', 'co', main_col, 'n', 'suffix']
+        expected_cols = ['from', 'to', 'skip', 'co', main_col, 'n', 'suffix', 'batch_number']
 
         # Reconcile data
         reconciled_data = []
@@ -190,10 +293,10 @@ class ReviewTabHandler(QObject):
             # Determine the original path using the log file
             original_path = rename_log_map.get(current_path_str, current_path_str)
             seen_original_paths.add(original_path)
-            
+
             # Find the corresponding data row in the CSV using the original 'from' path
             data_row = {}
-            status = "New" # Default status if not found in CSV
+            status = "New"  # Default status if not found in CSV
             if not csv_df.empty:
                 match = csv_df[csv_df['from'] == original_path]
                 if not match.empty:
@@ -204,10 +307,21 @@ class ReviewTabHandler(QObject):
             final_row = {'current_path': current_path_str, 'status': status}
             for col in expected_cols:
                 final_row[col] = data_row.get(col, '')
-            final_row['from'] = original_path # Ensure 'from' is always the original path
-            
+            final_row['from'] = original_path  # Ensure 'from' is always the original path
+
+            # Use capture_date from CSV if available, otherwise extract from EXIF (slow)
+            if 'capture_date' in data_row and data_row['capture_date']:
+                # Parse from CSV string format
+                try:
+                    final_row['capture_date'] = datetime.strptime(data_row['capture_date'], '%d/%m/%Y %H:%M:%S')
+                except (ValueError, TypeError):
+                    final_row['capture_date'] = None
+            else:
+                # Only extract from EXIF if not in CSV (this is slow)
+                final_row['capture_date'] = self._extract_capture_date(current_path)
+
             reconciled_data.append(final_row)
-        
+
         # Add rows for files that are in the CSV but not on disk (e.g., deleted)
         if not csv_df.empty:
             missing_files_df = csv_df[~csv_df['from'].isin(seen_original_paths)]
@@ -215,39 +329,180 @@ class ReviewTabHandler(QObject):
                 final_row = row.to_dict()
                 final_row['current_path'] = "File not found"
                 final_row['status'] = "Missing"
+                final_row['capture_date'] = None
                 reconciled_data.append(final_row)
 
         self.app_state.current_df = pd.DataFrame(reconciled_data)
         if 'photo_ID' not in self.app_state.current_df.columns or self.app_state.current_df['photo_ID'].isnull().any():
             self.app_state.current_df['photo_ID'] = range(1, len(self.app_state.current_df) + 1)
-        
+
+        # Auto-calculate suffixes and To fields for rows that don't have them
+        self._auto_assign_suffixes_and_names()
+
+        # Update cache tracking
+        self._last_loaded_csv = csv_name
+        self._last_loaded_dir = self.app_state.input_directory
+        self._images_loaded = False
+
         self._apply_filters_and_update_pages()
         self._populate_review_grid()
 
+    def _extract_capture_date(self, file_path: Path) -> datetime:
+        """Extract capture date from image EXIF data."""
+        try:
+            from PIL import Image
+            from PIL.ExifTags import TAGS
+            with Image.open(file_path) as img:
+                exif_data = img._getexif()
+                if exif_data:
+                    for tag_id, value in exif_data.items():
+                        tag = TAGS.get(tag_id, tag_id)
+                        if tag == 'DateTimeOriginal':
+                            return datetime.strptime(value, '%Y:%m:%d %H:%M:%S')
+        except Exception:
+            pass
+        return None
+
+    def _auto_assign_suffixes_and_names(self):
+        """Auto-assign suffixes to photos and calculate To field."""
+        df = self.app_state.current_df
+        if df.empty:
+            return
+
+        main_col = self.app_state.settings.get('main_column', 'CAM')
+        suffix_mode = self.app_state.settings.get('suffix_mode', 'Standard')
+        custom_suffixes = self.app_state.settings.get('custom_suffixes', 'd,v')
+
+        # Get suffix sequence based on mode
+        if 'Standard' in suffix_mode:
+            suffix_list = ['d', 'v', 'd2', 'v2', 'd3', 'v3', 'd4', 'v4', 'd5', 'v5']
+        elif 'Wing Clips' in suffix_mode:
+            suffix_list = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10']
+        else:  # Custom
+            suffix_list = [s.strip() for s in custom_suffixes.split(',') if s.strip()]
+            if not suffix_list:
+                suffix_list = ['d', 'v']
+
+        # Group by CAM ID and assign suffixes
+        for cam_id, group in df.groupby(main_col, dropna=True):
+            if not cam_id or cam_id == '':
+                continue
+
+            for i, idx in enumerate(group.index):
+                # Only assign suffix if not already set
+                current_suffix = df.loc[idx, 'suffix']
+                if not current_suffix or current_suffix == '':
+                    suffix_idx = min(i, len(suffix_list) - 1)
+                    df.loc[idx, 'suffix'] = suffix_list[suffix_idx]
+
+                # Calculate To field if not already set or if empty
+                current_to = df.loc[idx, 'to']
+                if not current_to or current_to == '':
+                    self._calculate_single_to_field(idx)
+
+    def _calculate_single_to_field(self, idx):
+        """Calculate the To field for a single row based on CAM and suffix."""
+        df = self.app_state.current_df
+        main_col = self.app_state.settings.get('main_column', 'CAM')
+
+        cam_id = df.loc[idx, main_col]
+        suffix = df.loc[idx, 'suffix']
+        current_path = df.loc[idx, 'current_path']
+
+        if not cam_id or cam_id == '' or current_path == 'File not found':
+            return
+
+        # Get file extension
+        ext = Path(current_path).suffix
+
+        # Build the new filename
+        new_name = f"{cam_id}{suffix}{ext}" if suffix else f"{cam_id}{ext}"
+        df.loc[idx, 'to'] = new_name
+
     def _apply_filters_and_update_pages(self):
-        """Applies UI filters to the main DataFrame and resets pagination."""
         df = self.app_state.current_df
         if df.empty:
             self.filtered_df, self.total_pages, self.current_page = pd.DataFrame(), 1, 0
             return
 
-        display_df = df[df['status'] != 'Missing'] # Don't show missing files unless specifically asked
-        if self.ui.show_duplicates_checkbox.isChecked():
-            main_col = self.app_state.settings['main_column']
-            if main_col in df.columns:
-                valid_ids = df.loc[df[main_col].notna() & (df[main_col] != ''), main_col]
-                id_counts = valid_ids.value_counts()
-                mismatched_ids = id_counts[id_counts != 2].index
-                display_df = display_df[display_df[main_col].isin(mismatched_ids)]
+        # Don't show missing files unless specifically asked
+        # Handle case where 'status' column might not exist (e.g., when sorting before full refresh)
+        if 'status' in df.columns:
+            display_df = df[df['status'] != 'Missing']
+        else:
+            display_df = df.copy()
 
-        self.filtered_df = display_df.reset_index(drop=True)
+        # Apply filters (only if "All" is not checked)
+        if not self.ui.filter_all_checkbox.isChecked():
+            filter_mask = pd.Series([False] * len(display_df), index=display_df.index)
+
+            # Crossed Out filter: non-empty 'co' column
+            if self.ui.filter_crossed_checkbox.isChecked() and 'co' in display_df.columns:
+                filter_mask |= display_df['co'].notna() & (display_df['co'] != '')
+
+            # Has Notes filter: non-empty 'n' column
+            if self.ui.filter_notes_checkbox.isChecked() and 'n' in display_df.columns:
+                filter_mask |= display_df['n'].notna() & (display_df['n'] != '')
+
+            # Skipped filter: non-empty 'skip' column
+            if self.ui.filter_skip_checkbox.isChecked() and 'skip' in display_df.columns:
+                filter_mask |= display_df['skip'].notna() & (display_df['skip'] != '')
+
+            # Mismatches filter: IDs that don't appear exactly twice OR duplicate CAM+suffix
+            if self.ui.filter_mismatch_checkbox.isChecked():
+                main_col = self.app_state.settings['main_column']
+                if main_col in df.columns:
+                    valid_ids = df.loc[df[main_col].notna() & (df[main_col] != ''), main_col]
+                    id_counts = valid_ids.value_counts()
+                    mismatched_ids = id_counts[id_counts != 2].index
+                    filter_mask |= display_df[main_col].isin(mismatched_ids)
+
+                # Also include duplicate CAM+suffix combinations
+                if 'suffix' in df.columns:
+                    cam_suffix = df[main_col].astype(str) + '_' + df['suffix'].astype(str)
+                    dup_cam_suffix = cam_suffix[cam_suffix.duplicated(keep=False)]
+                    filter_mask |= display_df.index.isin(dup_cam_suffix.index)
+
+            display_df = display_df[filter_mask]
+
+        # Apply sorting
+        sort_option = self.ui.sort_dropdown.currentText()
+        main_col = self.app_state.settings['main_column']
+        if sort_option == "File Name (A-Z)":
+            display_df = display_df.sort_values('current_path', ascending=True)
+        elif sort_option == "File Name (Z-A)":
+            display_df = display_df.sort_values('current_path', ascending=False)
+        elif sort_option == "Capture Date (New-Old)" and 'capture_date' in display_df.columns:
+            display_df = display_df.sort_values('capture_date', ascending=False, na_position='last')
+        elif sort_option == "Capture Date (Old-New)" and 'capture_date' in display_df.columns:
+            display_df = display_df.sort_values('capture_date', ascending=True, na_position='last')
+        elif sort_option == "CAM ID (A-Z)" and main_col in display_df.columns:
+            display_df = display_df.sort_values(main_col, ascending=True, na_position='last')
+        elif sort_option == "CAM ID (Z-A)" and main_col in display_df.columns:
+            display_df = display_df.sort_values(main_col, ascending=False, na_position='last')
+        elif sort_option == "Message (1-N)" and 'batch_number' in display_df.columns:
+            # Convert to numeric for proper sorting, handling empty strings
+            display_df = display_df.copy()
+            display_df['_batch_sort'] = pd.to_numeric(display_df['batch_number'], errors='coerce').fillna(0)
+            display_df = display_df.sort_values('_batch_sort', ascending=True)
+            display_df = display_df.drop(columns=['_batch_sort'])
+        elif sort_option == "Message (N-1)" and 'batch_number' in display_df.columns:
+            # Convert to numeric for proper sorting, handling empty strings
+            display_df = display_df.copy()
+            display_df['_batch_sort'] = pd.to_numeric(display_df['batch_number'], errors='coerce').fillna(0)
+            display_df = display_df.sort_values('_batch_sort', ascending=False)
+            display_df = display_df.drop(columns=['_batch_sort'])
+
+        # Keep original index so we can map back to current_df when syncing changes
+        self.filtered_df = display_df.copy()
         items_per_page = self.app_state.settings.get('review_items_per_page', 50)
         self.total_pages = math.ceil(len(self.filtered_df) / items_per_page) if items_per_page > 0 else 1
         self.total_pages = max(1, self.total_pages)
+        # Reset to page 0 when filters change, clear scroll positions
         self.current_page = 0
+        self.scroll_positions.clear()
 
     def _populate_review_grid(self):
-        """Populates the grid with items for the CURRENT page."""
         try:
             self.stop_worker()
             self.ui.clear_grid()
@@ -278,8 +533,10 @@ class ReviewTabHandler(QObject):
                     item_widget = ReviewItemWidget(row.name, row.to_dict(), main_col, total_count)
                     item_widget.data_changed.connect(lambda w=item_widget: self._sync_df_from_review_item(w))
                     item_widget.data_changed.connect(self._handle_autosave)
+                    # Connect CAM/suffix change to recalculate To field
+                    item_widget.cam_or_suffix_changed.connect(self._on_cam_or_suffix_changed)
                     self.ui.add_item_to_grid(grid_row, grid_col, item_widget)
-                    
+
                     if img_path_str := row.get('current_path'):
                         img_path = Path(img_path_str)
                         if img_path.exists():
@@ -305,10 +562,53 @@ class ReviewTabHandler(QObject):
         idx = data.pop('df_index')
         # Sync with both DataFrames to keep UI filters consistent until next refresh
         for df in [self.app_state.current_df, self.filtered_df]:
-             for col, value in data.items():
-                if col in df.columns and idx < len(df):
+            for col, value in data.items():
+                if col in df.columns and idx in df.index:
                     df.loc[idx, col] = value
-               
+
+    def _on_cam_or_suffix_changed(self, widget: ReviewItemWidget):
+        """Handle CAM or suffix change - recalculate To field and check for duplicates."""
+        data = widget.get_data()
+        idx = data['df_index']
+        main_col = self.app_state.settings.get('main_column', 'CAM')
+
+        # Update the dataframe first
+        cam_id = data.get(main_col, '')
+        suffix = data.get('suffix', '')
+
+        # Calculate new To field
+        df = self.app_state.current_df
+        current_path = df.loc[idx, 'current_path']
+        if cam_id and current_path != 'File not found':
+            ext = Path(current_path).suffix
+            new_to = f"{cam_id}{suffix}{ext}" if suffix else f"{cam_id}{ext}"
+            df.loc[idx, 'to'] = new_to
+            widget.update_to_field(new_to)
+
+            # Also update filtered_df
+            if idx in self.filtered_df.index:
+                self.filtered_df.loc[idx, 'to'] = new_to
+
+        # Check for duplicate CAM+suffix combinations
+        self._check_duplicate_suffix_warning(widget, cam_id, suffix, idx)
+
+    def _check_duplicate_suffix_warning(self, widget: ReviewItemWidget, cam_id: str, suffix: str, current_idx):
+        """Check if this CAM+suffix combination creates a duplicate and show warning."""
+        if not cam_id or not suffix:
+            widget.clear_warning()
+            return
+
+        df = self.app_state.current_df
+        main_col = self.app_state.settings.get('main_column', 'CAM')
+
+        # Find other rows with same CAM+suffix
+        same_cam_suffix = df[(df[main_col] == cam_id) & (df['suffix'] == suffix)]
+        if len(same_cam_suffix) > 1:
+            other_indices = [i for i in same_cam_suffix.index if i != current_idx]
+            widget.set_warning(f"Duplicate: {cam_id}{suffix} appears {len(same_cam_suffix)} times!")
+        else:
+            widget.clear_warning()
+
     def start_image_load_worker(self, paths):
         crop_settings = {**self.app_state.settings['crop_settings'], 'zoom': self.ui.crop_review_checkbox.isChecked()}
         
@@ -337,16 +637,30 @@ class ReviewTabHandler(QObject):
         if self.app_state.current_df.empty:
             return
 
+        # Show warning dialog
+        reply = QMessageBox.warning(
+            self.main_window,
+            "Recalculate Final Names",
+            "This will recalculate ALL 'To' fields based on current CAM IDs and suffix rules.\n\n"
+            "Any manual edits you made to the 'To' fields will be lost.\n\n"
+            "Do you want to continue?",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
         self._sync_settings_from_ui()
         settings = self.app_state.settings
-        
+
         self.app_state.current_df = calculate_final_names(
             self.app_state.current_df,
             settings['main_column'],
             settings['suffix_mode'],
             settings['custom_suffixes']
         )
-        
+
         # After calculating names, save them to a new 'checked' file and refresh
         self.create_checked_csv(
             success_message="'To' column recalculated and saved to a new 'checked' file."
@@ -498,7 +812,7 @@ class ReviewTabHandler(QObject):
         return base_name
 
     def _handle_autosave(self):
-        """Saves the current DataFrame state to a temporary autosave file."""
+        """Saves the current DataFrame state to a temporary autosave file and selects it."""
         if self.app_state.current_df.empty: return
 
         loaded_csv = self.ui.csv_dropdown.currentText()
@@ -509,6 +823,17 @@ class ReviewTabHandler(QObject):
         try:
             self._save_df_to_file(autosave_filename)
             self.logger.info(f"Autosaved changes to {autosave_filename}")
+
+            # Select the autosave file so subsequent refreshes use it
+            self.ui.csv_dropdown.blockSignals(True)
+            existing_idx = self.ui.csv_dropdown.findText(autosave_filename)
+            if existing_idx < 0:
+                # Add autosave at the top of the dropdown
+                self.ui.csv_dropdown.insertItem(0, autosave_filename)
+                existing_idx = 0
+            self.ui.csv_dropdown.setCurrentIndex(existing_idx)
+            self.ui.csv_dropdown.blockSignals(False)
+
         except Exception as e:
             self.logger.warn(f"Autosave failed for {autosave_filename}", exception=e)
 
@@ -553,28 +878,34 @@ class ReviewTabHandler(QObject):
 
     def go_to_next_page(self):
         if self.current_page < self.total_pages - 1:
+            self._save_scroll_position()
             self.current_page += 1
             self._populate_review_grid()
+            self._restore_scroll_position()
 
     def go_to_prev_page(self):
         if self.current_page > 0:
+            self._save_scroll_position()
             self.current_page -= 1
             self._populate_review_grid()
+            self._restore_scroll_position()
 
     def _update_navigation_controls(self):
         """Updates the state and text of pagination controls."""
         self.ui.prev_page_button.setEnabled(self.current_page > 0)
         self.ui.next_page_button.setEnabled(self.current_page < self.total_pages - 1)
-        
+
         items_per_page = self.app_state.settings.get('review_items_per_page', 50)
         total_items = len(self.filtered_df)
-        
+
+        # Update editable page number input
+        self.ui.page_number_input.setText(str(self.current_page + 1))
+
         if total_items == 0:
-            self.ui.page_label.setText("Page 1 of 1 (No items)")
+            self.ui.page_total_label.setText("of 1")
+            self.ui.page_items_label.setText("(No items)")
         else:
             start_item = self.current_page * items_per_page + 1
             end_item = min((self.current_page + 1) * items_per_page, total_items)
-            self.ui.page_label.setText(
-                f"Page {self.current_page + 1} of {self.total_pages} "
-                f"({start_item}-{end_item} of {total_items})"
-            )
+            self.ui.page_total_label.setText(f"of {self.total_pages}")
+            self.ui.page_items_label.setText(f"({start_item}-{end_item} of {total_items})")

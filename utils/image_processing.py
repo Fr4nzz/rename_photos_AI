@@ -10,12 +10,50 @@ from typing import List, Dict, Tuple, Optional
 
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 
-from .file_management import get_image_files
+from .file_management import get_image_files, SUPPORTED_RAW_EXTENSIONS
 from .logger import SimpleLogger
 
 # Constants
 ORIENTATION_TO_ANGLE = { 1: 0, 2: 0, 3: 180, 4: 180, 5: 90, 6: 270, 7: 270, 8: 90 }
 ANGLE_TO_ORIENTATION = {0: 1, 90: 8, 180: 3, 270: 6}
+
+# File extension sets for EXIF handling routing
+HEIC_EXTENSIONS = {'.heic', '.heif'}
+JPEG_EXTENSIONS = {'.jpg', '.jpeg'}
+
+
+def _get_heic_orientation(img_path: Path) -> int:
+    """Read EXIF orientation from HEIC files via pillow-heif."""
+    try:
+        import pillow_heif
+        heif = pillow_heif.open_heif(str(img_path))
+        for meta in heif.info.get('metadata', []):
+            if meta.get('type') == 'Exif':
+                data = meta.get('data', b'')
+                if data.startswith(b'Exif\x00\x00'):
+                    data = data[6:]
+                if data:
+                    return piexif.load(data).get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
+        if 'exif' in heif.info:
+            return piexif.load(heif.info['exif']).get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
+    except Exception:
+        pass
+    return 1
+
+
+def _get_orientation_via_exiftool(img_path: Path, exiftool_path: str) -> int:
+    """Read EXIF orientation via exiftool (works for RAW, HEIC, etc.)."""
+    try:
+        result = subprocess.run(
+            [exiftool_path, "-n", "-Orientation", str(img_path)],
+            capture_output=True, text=True, check=False, timeout=10
+        )
+        if result.returncode == 0 and (match := re.search(r':\s*(\d+)', result.stdout)):
+            return int(match.group(1))
+    except (subprocess.TimeoutExpired, ValueError, OSError):
+        pass
+    return 1
+
 
 def fix_orientation(img: Image.Image) -> Image.Image:
     """Rotates a PIL Image to respect its EXIF orientation tag for viewing."""
@@ -32,9 +70,7 @@ def fix_orientation(img: Image.Image) -> Image.Image:
     return img.transpose(orientation_map[orientation]) if orientation in orientation_map else img
 
 def decode_raw_image(image_path: Path, use_exif: bool) -> Optional[Image.Image]:
-    """
-    Decodes a RAW file into a viewable PIL Image, respecting the 'use_exif' flag.
-    """
+    """Decode RAW file to PIL Image. If use_exif=False, ignores camera orientation."""
     try:
         with rawpy.imread(str(image_path))as raw:
             flip_override = 0 if not use_exif else None
@@ -45,24 +81,36 @@ def decode_raw_image(image_path: Path, use_exif: bool) -> Optional[Image.Image]:
         return None
 
 def get_angle_from_exif(img_path: Path, file_type: str, exiftool_path: Optional[str] = None) -> int:
+    """Get rotation angle (0/90/180/270) from EXIF. Routes by extension: HEIC→pillow-heif, JPEG→piexif, RAW→exiftool."""
     orientation_tag = 1
+    suffix = img_path.suffix.lower()
+
     try:
-        if file_type == 'raw':
-            if not exiftool_path: return 0
-            command = [exiftool_path, "-n", "-Orientation", str(img_path)]
-            result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=10)
-            if result.returncode == 0 and result.stdout:
-                match = re.search(r':\s*(\d+)', result.stdout)
-                if match: orientation_tag = int(match.group(1))
-        else: # 'compressed'
+        if suffix in HEIC_EXTENSIONS:
+            orientation_tag = _get_heic_orientation(img_path)
+            if orientation_tag == 1 and exiftool_path:
+                orientation_tag = _get_orientation_via_exiftool(img_path, exiftool_path)
+        elif suffix in JPEG_EXTENSIONS:
             exif_dict = piexif.load(str(img_path))
             orientation_tag = exif_dict.get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
-    except (subprocess.TimeoutExpired, ValueError, TypeError, piexif.InvalidImageDataError, Exception):
+        elif suffix in SUPPORTED_RAW_EXTENSIONS or file_type == 'raw':
+            if exiftool_path:
+                orientation_tag = _get_orientation_via_exiftool(img_path, exiftool_path)
+        else:
+            try:
+                exif_dict = piexif.load(str(img_path))
+                orientation_tag = exif_dict.get("0th", {}).get(piexif.ImageIFD.Orientation, 1)
+            except (piexif.InvalidImageDataError, ValueError):
+                if exiftool_path:
+                    orientation_tag = _get_orientation_via_exiftool(img_path, exiftool_path)
+    except Exception:
         pass
+
     return ORIENTATION_TO_ANGLE.get(orientation_tag, 0)
 
 
 def process_single_file_for_rotation(img_path: Path, config: Dict, logger: SimpleLogger):
+    """Write EXIF orientation tag. Uses exiftool for RAW/HEIC, piexif for JPEG."""
     try:
         current_angle = get_angle_from_exif(img_path, config['file_type'], config.get('exiftool_path')) if config['use_exif'] else 0
         final_angle = (current_angle + config['rotation_angle']) % 360
@@ -70,12 +118,27 @@ def process_single_file_for_rotation(img_path: Path, config: Dict, logger: Simpl
         mode = "using EXIF" if config['use_exif'] else "ignoring EXIF"
         logger.info(f"Rotating {img_path.name}: angle={current_angle}°+{config['rotation_angle']}°, new_tag={final_orientation_tag} ({mode})")
 
-        if config['file_type'] == 'raw':
-            command = [config.get('exiftool_path'), f"-Orientation={final_orientation_tag}", "-overwrite_original", "-n", str(img_path)]
+        suffix = img_path.suffix.lower()
+        exiftool_path = config.get('exiftool_path')
+
+        # Determine which method to use for writing EXIF
+        use_exiftool = (
+            config['file_type'] == 'raw' or
+            suffix in SUPPORTED_RAW_EXTENSIONS or
+            suffix in HEIC_EXTENSIONS  # HEIC requires exiftool - piexif can't write HEIC
+        )
+
+        if use_exiftool:
+            if not exiftool_path:
+                logger.error(f"ExifTool required for {img_path.name} but path not configured.")
+                return
+
+            command = [exiftool_path, f"-Orientation={final_orientation_tag}", "-overwrite_original", "-n", str(img_path)]
             result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=15)
             if result.returncode != 0:
                 logger.error(f"ExifTool failed for {img_path.name}. Stderr: {result.stderr.strip()}")
         else:
+            # JPEG and other formats that piexif supports
             exif_dict = piexif.load(str(img_path))
             exif_dict['0th'][piexif.ImageIFD.Orientation] = final_orientation_tag
             piexif.insert(piexif.dump(exif_dict), str(img_path))
@@ -128,76 +191,75 @@ def get_system_font(size=50) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 def preprocess_image(image: Image.Image, label_text: str, crop_settings: Dict) -> Image.Image:
-    """
-    Applies all necessary preprocessing, with a correctly placed and sized label.
-    """
-    # 1. Apply cropping and filtering
+    """Apply crop/grayscale, add border, and overlay label text."""
     img_cropped = crop_image(image.copy(), crop_settings)
     img_processed = ImageOps.grayscale(img_cropped) if crop_settings.get('grayscale', False) else img_cropped
-
-    # 2. Add border
     img_bordered = ImageOps.expand(img_processed, border=10, fill='black')
 
-    # 3. Prepare for drawing
     img_final = img_bordered.convert('RGBA')
     draw = ImageDraw.Draw(img_final)
 
-    # 4. Define font size relative to image content height
     font_size = max(40, int(img_cropped.height / 12))
     font = get_system_font(size=font_size)
 
-    # --- FIX: Use asymmetrical padding to shrink background from the top ---
-    # 5. Define different padding for top, bottom, and sides
-    side_padding = int(font_size * 0.25)
-    top_padding = int(font_size * 0.10)      # Minimal padding above text
-    bottom_padding = int(font_size * 0.25)   # Generous padding below text
+    # Asymmetrical padding: minimal top, generous bottom
+    side_padding, top_padding, bottom_padding = int(font_size * 0.25), int(font_size * 0.10), int(font_size * 0.25)
 
-    # 6. Calculate text dimensions
     try:
         bbox = draw.textbbox((0, 0), label_text, font=font)
         text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     except AttributeError:
         text_w, text_h = draw.textsize(label_text, font=font)
 
-    # 7. Define the top of the entire label block, proportional to image height
     block_top_y = int(img_final.height * 0.04)
-
-    # 8. Define final coordinates for the text and background
     text_x = (img_final.width - text_w) // 2
     text_y = block_top_y + top_padding
 
-    bg_x1 = text_x - side_padding
-    bg_y1 = block_top_y
-    bg_x2 = text_x + text_w + side_padding
-    bg_y2 = block_top_y + top_padding + text_h + bottom_padding # Total height is now smaller
+    bg_x1, bg_y1 = text_x - side_padding, block_top_y
+    bg_x2, bg_y2 = text_x + text_w + side_padding, block_top_y + top_padding + text_h + bottom_padding
 
-    # 9. Draw the background and text
     draw.rectangle([bg_x1, bg_y1, bg_x2, bg_y2], fill=(255, 255, 255, 128))
     draw.text((text_x, text_y), label_text, fill='black', font=font)
 
-    # 10. Convert back to RGB
     return img_final.convert('RGB')
 
 
-def merge_images(images: List[Image.Image], merged_img_height: int) -> Optional[Image.Image]:
+def merge_images(images: List[Image.Image], merged_img_height: int, grid_rows: int = None, grid_cols: int = None) -> Optional[Image.Image]:
+    """Merge images into a grid.
+
+    Args:
+        images: List of PIL images to merge
+        merged_img_height: Target height for the merged image
+        grid_rows: Number of rows in the grid (optional, auto-calculated if not provided)
+        grid_cols: Number of columns in the grid (optional, auto-calculated if not provided)
+    """
     if not images: return None
     n = len(images)
-    cols = int(math.ceil(math.sqrt(n)))
-    if n == 0 or cols == 0: return None
-    rows = int(math.ceil(n / float(cols)))
+    if n == 0: return None
+
+    # Use provided grid dimensions or calculate automatically
+    if grid_rows and grid_cols:
+        rows = grid_rows
+        cols = grid_cols
+    else:
+        # Fall back to automatic calculation
+        cols = int(math.ceil(math.sqrt(n)))
+        if cols == 0: return None
+        rows = int(math.ceil(n / float(cols)))
+
     if rows == 0: return None
-    
+
     ref_w, ref_h = images[0].size
     if ref_h == 0: return None
-    
+
     cell_h = merged_img_height // rows
     cell_w = int(cell_h * (ref_w / ref_h))
     if cell_w == 0 or cell_h == 0: return None
-    
+
     grid_img = Image.new('RGB', (cols * cell_w, rows * cell_h), 'white')
     for i, img in enumerate(images):
         resized_img = img.resize((cell_w, cell_h), Image.Resampling.LANCZOS)
         row, col = divmod(i, cols)
         grid_img.paste(resized_img, (col * cell_w, row * cell_h))
-        
+
     return grid_img

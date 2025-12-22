@@ -1,7 +1,7 @@
 # ai-photo-processor/app_state.py
 
 import os
-import sys  # <--- IMPORT ADDED
+import sys
 import shutil
 import json
 import pandas as pd
@@ -24,6 +24,26 @@ SETTINGS_FILE = "settings.json"
 API_KEYS_FILE = "api_keys.txt"
 LAST_DIR_FILE = "last_dir.txt"
 
+# =============================================================================
+# DEFAULT VALUES - Single source of truth for all default settings
+# =============================================================================
+DEFAULTS = {
+    'images_per_prompt': 5,
+    'grid_rows': 3,
+    'grid_cols': 3,
+    'merged_img_height': 1080,
+    'main_column': 'CAM',
+    'rotation_angle': 180,
+    'review_items_per_page': 50,
+    'review_thumb_height': '720p',
+    'suffix_mode': 'Standard',
+    'custom_suffixes': 'd,v',
+    'crop_top': 0.1,
+    'crop_bottom': 0.0,
+    'crop_left': 0.0,
+    'crop_right': 0.5,
+}
+
 DEFAULT_PROMPT = """Extract CAM (CAM07xxxx) and notes (n) from the image.
 - 2 wing photos (dorsal and ventral) per individual (CAM) are arranged in a grid left to right, top to bottom.
 - If no CAMID is visible or image should be skipped, set skip: 'x', else skip: ''
@@ -41,8 +61,23 @@ DEFAULT_PROMPT = """Extract CAM (CAM07xxxx) and notes (n) from the image.
 }
 """
 
+def is_bundled() -> bool:
+    """Check if running as a PyInstaller bundled executable."""
+    return getattr(sys, 'frozen', False)
+
+
+def get_base_path() -> Path:
+    """Get the base path for application resources.
+
+    For bundled apps: returns the temp extraction directory (sys._MEIPASS)
+    For development: returns the directory containing the main script
+    """
+    if is_bundled():
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent
+
+
 class AppState:
-    """Manages the application's entire state, settings, and configuration persistence."""
 
     def __init__(self, logger: SimpleLogger):
         self.logger = logger
@@ -55,17 +90,30 @@ class AppState:
         self.available_models: List[str] = []
 
         self.settings: Dict[str, Any] = {
-            'batch_size': 9, 'merged_img_height': 1080, 'main_column': 'CAM',
-            'model_name': '', 'prompt_text': DEFAULT_PROMPT,
-            'exiftool_path': self._find_exiftool(), 'rotation_angle': 180,
-            'use_exif': True, 'preview_raw': False, 'review_crop_enabled': True,
-            'review_items_per_page': 50,
-            'review_thumb_height': '720p',
-            'suffix_mode': 'Standard',
-            'custom_suffixes': 'd,v',
+            'images_per_prompt': DEFAULTS['images_per_prompt'],
+            'grid_rows': DEFAULTS['grid_rows'],
+            'grid_cols': DEFAULTS['grid_cols'],
+            'merged_img_height': DEFAULTS['merged_img_height'],
+            'main_column': DEFAULTS['main_column'],
+            'model_name': '',
+            'prompt_text': DEFAULT_PROMPT,
+            'exiftool_path': self._find_exiftool(),
+            'rotation_angle': DEFAULTS['rotation_angle'],
+            'use_exif': True,
+            'preview_raw': False,
+            'review_crop_enabled': True,
+            'review_items_per_page': DEFAULTS['review_items_per_page'],
+            'review_thumb_height': DEFAULTS['review_thumb_height'],
+            'suffix_mode': DEFAULTS['suffix_mode'],
+            'custom_suffixes': DEFAULTS['custom_suffixes'],
             'crop_settings': {
-                'top': 0.1, 'bottom': 0.0, 'left': 0.0, 'right': 0.5,
-                'zoom': True, 'grayscale': True
+                'top': DEFAULTS['crop_top'],
+                'bottom': DEFAULTS['crop_bottom'],
+                'left': DEFAULTS['crop_left'],
+                'right': DEFAULTS['crop_right'],
+                'zoom': True,
+                'grayscale': False,
+                'prerotate': False
             }
         }
 
@@ -106,6 +154,14 @@ class AppState:
         except (json.JSONDecodeError, TypeError) as e:
             self.logger.warn(f"Could not parse {settings_path}. Using default settings. Error: {e}")
 
+        # IMPORTANT: When running as a bundled app, always refresh the exiftool path
+        # because the _MEIPASS temp folder changes on each run
+        if is_bundled():
+            fresh_exiftool = self._find_exiftool()
+            if fresh_exiftool:
+                self.settings['exiftool_path'] = fresh_exiftool
+                self.logger.info(f"Refreshed exiftool path for bundled app: {fresh_exiftool}")
+
         keys_path = self._config_path / API_KEYS_FILE
         if keys_path.exists():
             self.api_keys = [line.strip() for line in keys_path.read_text('utf-8').splitlines() if line.strip()]
@@ -142,7 +198,51 @@ class AppState:
         with open(path, 'w', encoding='utf-8') as f: f.write(directory)
 
     def _find_exiftool(self) -> Optional[str]:
-        path = shutil.which('exiftool')
-        if not path:
-             self.logger.warn("'exiftool' not found in system PATH. RAW file rotation may be disabled.")
-        return path
+        """Search for exiftool: bundled → app dir → PATH → common Windows paths."""
+        exe_name = 'exiftool.exe' if sys.platform == 'win32' else 'exiftool'
+        locations_checked = []
+
+        # 1. Check PyInstaller bundled location
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            bundled_path = Path(sys._MEIPASS) / exe_name
+            locations_checked.append(f"Bundled: {bundled_path}")
+            if bundled_path.is_file():
+                self.logger.info(f"Found exiftool (bundled): {bundled_path}")
+                return str(bundled_path)
+
+        # 2. Check next to executable (for portable/legacy installs)
+        if getattr(sys, 'frozen', False):
+            exe_dir_path = Path(sys.executable).parent / exe_name
+        else:
+            exe_dir_path = Path(__file__).resolve().parent / exe_name
+        locations_checked.append(f"App dir: {exe_dir_path}")
+        if exe_dir_path.is_file():
+            self.logger.info(f"Found exiftool (app directory): {exe_dir_path}")
+            return str(exe_dir_path)
+
+        # 3. Check system PATH
+        system_path = shutil.which('exiftool')
+        locations_checked.append("System PATH")
+        if system_path:
+            self.logger.info(f"Found exiftool (system PATH): {system_path}")
+            return system_path
+
+        # 4. Check common Windows installation locations
+        if sys.platform == 'win32':
+            common_locations = [
+                Path(os.environ.get('LOCALAPPDATA', '')) / 'exiftool' / exe_name,
+                Path('C:/Program Files/exiftool') / exe_name,
+                Path('C:/Program Files (x86)/exiftool') / exe_name,
+            ]
+            for loc in common_locations:
+                locations_checked.append(f"Common: {loc}")
+                if loc.is_file():
+                    self.logger.info(f"Found exiftool (common location): {loc}")
+                    return str(loc)
+
+        # Not found
+        self.logger.warn(
+            f"'exiftool' not found. RAW/HEIC rotation may be limited. "
+            f"Checked: {', '.join(locations_checked)}"
+        )
+        return None
