@@ -26,14 +26,13 @@ The AI Photo Processor is a desktop application designed to streamline the proce
 
 ## Download Standalone App
 
-Ready-to-use standalone applications are available for both Windows and macOS, with no installation required. Just download, unzip, and run!
+Ready-to-use standalone applications are available with no installation required. Just download, unzip, and run!
 
-[**Download Standalone Apps**](https://drive.google.com/drive/folders/1LnEkWZvFuysoqhRLQzDt3aqLw_tX2wW7?usp=sharing)
+[**Download Latest Release (v3.0)**](https://github.com/Fr4nzz/rename_photos_AI/releases/latest)
 
-- **Windows**: `(New_version)_Windows_Rename_Photos_AI_v2.zip`
-- **macOS**: `Rename_Photos_AI_macOS.zip`
+- **Windows**: `AIPhotoProcessor-windows-v3.0.zip`
 
-The prebuilt `.zip` file for Windows includes ExifTool v13.32 (downloaded from the official [ExifTool website](https://exiftool.org/)) so you can start processing RAW images right away.
+The Windows zip includes ExifTool v13.32 (from the official [ExifTool website](https://exiftool.org/)) so you can process RAW and HEIC images right away.
 
 **Windows zip contents:**
 ```
