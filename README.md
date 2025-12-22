@@ -105,7 +105,7 @@ python main.py
 
 #### Preview Selection
 - **Image**: Select an individual image to preview processing settings
-- **Message**: Select which message (grid of images) to preview before sending to Gemini
+- **Grid**: Select which grid (merged image) to preview before sending to Gemini
 
 #### Image Rotation
 | Option | Description |
@@ -126,8 +126,8 @@ python main.py
 | Option | Description |
 |--------|-------------|
 | **Model** | Select Gemini model (auto-populated with 2.5+ models, Flash models prioritized) |
-| **Images per Prompt** | Number of merged grids to send in a single API call (default: 5) |
-| **Grid Size** | Rows × Columns for the image grid (default: 3×3 = 9 images per grid) |
+| **Grids per Message** | Number of grids to send in a single API message (default: 5) |
+| **Grid Size** | Rows × Columns for each grid (default: 3×3 = 9 photos per grid) |
 | **Merged Height** | Target height in pixels for merged grid images (default: 1080) |
 | **Main Column** | Column name for the primary extracted data (default: CAM) |
 
@@ -192,7 +192,7 @@ Each image card displays:
 
 1. **Setup**: Add your Gemini API key in the API Keys tab
 2. **Select Folder**: Choose a folder with specimen photos
-3. **Configure**: Adjust rotation/cropping to focus on the label area; preview with Message selector
+3. **Configure**: Adjust rotation/cropping to focus on the label area; preview with Grid selector
 4. **Process**: Click "Ask Gemini (Start)" and wait for completion
 5. **Review**: Switch to Review Results tab, correct any OCR errors
 6. **Rename**: Click "Recalculate Final Names" then "Rename Files"
@@ -205,9 +205,9 @@ With a **free Gemini API key**, here's how many photos you can process:
 
 | Setting | Default Value |
 |---------|---------------|
-| Images per Prompt | 5 merged grids per message |
 | Grid Size | 3 × 3 = 9 photos per grid |
-| **Photos per message** | 5 × 9 = **45 photos** |
+| Grids per Message | 5 grids per API message |
+| **Photos per Message** | 5 × 9 = **45 photos** |
 | Free tier rate limit | ~20 messages/day/key |
 | **Daily capacity per key** | 20 × 45 = **900 photos** |
 
