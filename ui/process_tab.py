@@ -53,7 +53,7 @@ class ProcessImagesTab(QWidget):
         self.preview_raw_checkbox = QCheckBox("Process RAW Images")
         self.batch_preview_dropdown = QComboBox()
         selection_layout.addRow("Image:", self.preview_image_dropdown)
-        selection_layout.addRow("Message:", self.batch_preview_dropdown)
+        selection_layout.addRow("Grid:", self.batch_preview_dropdown)
         selection_layout.addRow(self.preview_raw_checkbox)
         settings_vbox.addWidget(selection_group)
 
@@ -94,9 +94,9 @@ class ProcessImagesTab(QWidget):
         self.model_dropdown = QComboBox()
         self.images_per_prompt_input = QLineEdit()
         self.images_per_prompt_input.setToolTip(
-            "Number of merged images to send in one API call.\n"
-            "Each merged image contains (rows × cols) individual photos.\n"
-            "Example: 10 images × 9 grid size = 90 photos per prompt."
+            "Number of grids to send in one API message.\n"
+            "Each grid contains (rows × cols) individual photos.\n"
+            "Example: 5 grids × 9 photos/grid = 45 photos per message."
         )
         # Grid Size: rows x columns configuration
         grid_size_widget = QWidget()
@@ -122,7 +122,7 @@ class ProcessImagesTab(QWidget):
         prompt_buttons_layout.addWidget(self.save_prompt_button)
         prompt_buttons_layout.addWidget(self.restore_prompt_button)
         api_layout.addRow("Model:", self.model_dropdown)
-        api_layout.addRow("Images per Prompt:", self.images_per_prompt_input)
+        api_layout.addRow("Grids per Message:", self.images_per_prompt_input)
         api_layout.addRow("Grid Size:", grid_size_widget)
         api_layout.addRow("Merged Height:", self.merged_img_height_input)
         api_layout.addRow("Main Column:", self.main_column_input)
@@ -144,7 +144,7 @@ class ProcessImagesTab(QWidget):
 
         previews_data = [
             ("Original", self.original_preview_label), ("Rotated", self.rotated_preview_label),
-            ("Processed (for Gemini)", self.processed_preview_label), ("Message Preview", self.combined_preview_label)
+            ("Processed (for Gemini)", self.processed_preview_label), ("Grid Preview", self.combined_preview_label)
         ]
         
         for i, (title, label) in enumerate(previews_data):

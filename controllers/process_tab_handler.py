@@ -211,7 +211,7 @@ class ProcessTabHandler(BaseTabHandler):
                 self.ui.batch_preview_dropdown.blockSignals(True)
                 self.ui.batch_preview_dropdown.clear()
                 if num_batches > 0:
-                    self.ui.batch_preview_dropdown.addItems([f"Message {i+1}" for i in range(num_batches)])
+                    self.ui.batch_preview_dropdown.addItems([f"Grid {i+1}" for i in range(num_batches)])
                     if 0 <= current_idx < num_batches:
                         self.ui.batch_preview_dropdown.setCurrentIndex(current_idx)
                 self.ui.batch_preview_dropdown.blockSignals(False)
@@ -474,7 +474,7 @@ class ProcessTabHandler(BaseTabHandler):
         self.ui.batch_preview_dropdown.blockSignals(True)
         self.ui.batch_preview_dropdown.clear()
         if num_batches > 0:
-            self.ui.batch_preview_dropdown.addItems([f"Message {i+1}" for i in range(num_batches)])
+            self.ui.batch_preview_dropdown.addItems([f"Grid {i+1}" for i in range(num_batches)])
             if 0 <= current_idx < num_batches: self.ui.batch_preview_dropdown.setCurrentIndex(current_idx)
         self.ui.batch_preview_dropdown.blockSignals(False)
 
