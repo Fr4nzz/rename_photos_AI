@@ -28,9 +28,9 @@ The AI Photo Processor is a desktop application designed to streamline the proce
 
 Ready-to-use standalone applications are available with no installation required. Just download, unzip, and run!
 
-[**Download Latest Release (v3.0)**](https://github.com/Fr4nzz/rename_photos_AI/releases/latest)
+[**⬇️ Direct Download: AIPhotoProcessor-windows-v3.0.zip**](https://github.com/Fr4nzz/rename_photos_AI/releases/download/v3.0/AIPhotoProcessor-windows-v3.0.zip)
 
-- **Windows**: `AIPhotoProcessor-windows-v3.0.zip`
+Or browse all releases: [GitHub Releases](https://github.com/Fr4nzz/rename_photos_AI/releases/latest)
 
 The Windows zip includes ExifTool v13.32 (from the official [ExifTool website](https://exiftool.org/)) so you can process RAW and HEIC images right away.
 
@@ -50,6 +50,15 @@ AIPhotoProcessor/
 - **Google Gemini API Key**: Required for AI features. Get your free key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 - **Python 3.9+** (source code users only): Required if running from source.
 - **ExifTool** (source code users only): Required for rotating RAW and HEIC files. Download from [exiftool.org](https://exiftool.org/). Bundled in the Windows standalone version.
+
+### Recommended Model
+
+**Gemini 3 Flash** is recommended for best results:
+- State-of-the-art vision capabilities for OCR tasks
+- Works with **free tier** API keys
+- Automatically selected as the default model
+
+> ⚠️ **Note**: Gemini 3 Pro requires a **paid API key**. The app prioritizes Flash models to ensure compatibility with free tier accounts.
 
 ---
 
