@@ -28,7 +28,7 @@ The AI Photo Processor is a desktop application designed to streamline the proce
 
 Ready-to-use standalone applications are available with no installation required. Just download, unzip, and run!
 
-[**⬇️ Direct Download: AIPhotoProcessor-windows-v3.0.zip**](https://github.com/Fr4nzz/rename_photos_AI/releases/download/v3.0/AIPhotoProcessor-windows-v3.0.zip)
+[**⬇️ Direct Download: AIPhotoProcessor-windows-v3.0-fixed.zip**](https://github.com/Fr4nzz/rename_photos_AI/releases/download/v3.0/AIPhotoProcessor-windows-v3.0-fixed.zip)
 
 Or browse all releases: [GitHub Releases](https://github.com/Fr4nzz/rename_photos_AI/releases/latest)
 
