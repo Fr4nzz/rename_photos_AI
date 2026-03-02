@@ -1,5 +1,7 @@
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, Crop, ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -7,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { useSettingsStore } from '@/stores/settingsStore'
 import type { FilterType, SortOption } from '@/hooks/useReviewTab'
 
 interface Props {
@@ -49,6 +52,8 @@ export function ReviewToolbar({
   sortOption,
   onSortChange,
 }: Props) {
+  const { reviewCropEnabled, reviewThumbSize, updateSetting } = useSettingsStore()
+
   return (
     <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
       <Select value={selectedCsv} onValueChange={onSelectCsv}>
@@ -95,6 +100,36 @@ export function ReviewToolbar({
           ))}
         </SelectContent>
       </Select>
+
+      <div className="mx-2 h-5 w-px bg-border" />
+
+      {/* Crop toggle */}
+      <div className="flex items-center gap-1.5">
+        <Checkbox
+          id="review-crop"
+          checked={reviewCropEnabled}
+          onCheckedChange={(c) => updateSetting('reviewCropEnabled', !!c)}
+        />
+        <Label htmlFor="review-crop" className="flex items-center gap-1 text-xs cursor-pointer">
+          <Crop className="h-3 w-3" />
+          Crop
+        </Label>
+      </div>
+
+      {/* Thumb size slider */}
+      <div className="flex items-center gap-1.5">
+        <ImageIcon className="h-3 w-3 text-muted-foreground" />
+        <input
+          type="range"
+          min={80}
+          max={320}
+          step={10}
+          value={reviewThumbSize}
+          onChange={(e) => updateSetting('reviewThumbSize', Number(e.target.value))}
+          className="h-1 w-20 cursor-pointer accent-primary"
+        />
+        <span className="text-[10px] text-muted-foreground w-7">{reviewThumbSize}</span>
+      </div>
     </div>
   )
 }

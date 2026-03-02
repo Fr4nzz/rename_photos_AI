@@ -23,6 +23,7 @@ export interface AppSettings {
   reviewCropEnabled: boolean
   reviewItemsPerPage: number
   reviewThumbHeight: string
+  reviewThumbSize: number
   suffixMode: SuffixMode
   customSuffixes: string
 }

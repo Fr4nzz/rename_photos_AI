@@ -5,6 +5,8 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { useProcessingStore } from '@/stores/processingStore'
+import { useSettingsStore } from '@/stores/settingsStore'
+import { cropCanvas } from '@/lib/imageProcessing'
 import type { PhotoRow } from '@/types'
 
 interface Props {
@@ -15,6 +17,7 @@ interface Props {
 
 export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
   const fileMap = useProcessingStore((s) => s.fileMap)
+  const { reviewCropEnabled, reviewThumbSize, cropSettings } = useSettingsStore()
   const [thumbUrl, setThumbUrl] = useState<string | null>(null)
 
   useEffect(() => {
@@ -23,10 +26,44 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
       setThumbUrl(null)
       return
     }
-    const url = URL.createObjectURL(file)
-    setThumbUrl(url)
-    return () => URL.revokeObjectURL(url)
-  }, [fileMap, row.from])
+
+    let cancelled = false
+    let urlToRevoke: string | null = null
+
+    if (reviewCropEnabled && cropSettings.zoom) {
+      // Load image → crop → blob URL
+      const img = new Image()
+      const rawUrl = URL.createObjectURL(file)
+      img.onload = () => {
+        if (cancelled) { URL.revokeObjectURL(rawUrl); return }
+        const canvas = document.createElement('canvas')
+        canvas.width = img.naturalWidth
+        canvas.height = img.naturalHeight
+        canvas.getContext('2d')!.drawImage(img, 0, 0)
+        URL.revokeObjectURL(rawUrl)
+
+        const cropped = cropCanvas(canvas, cropSettings)
+        cropped.toBlob((blob) => {
+          if (cancelled || !blob) return
+          const url = URL.createObjectURL(blob)
+          urlToRevoke = url
+          setThumbUrl(url)
+        }, 'image/jpeg', 0.85)
+      }
+      img.onerror = () => { URL.revokeObjectURL(rawUrl); setThumbUrl(null) }
+      img.src = rawUrl
+    } else {
+      // Direct blob URL (fast path)
+      const url = URL.createObjectURL(file)
+      urlToRevoke = url
+      setThumbUrl(url)
+    }
+
+    return () => {
+      cancelled = true
+      if (urlToRevoke) URL.revokeObjectURL(urlToRevoke)
+    }
+  }, [fileMap, row.from, reviewCropEnabled, cropSettings])
 
   const statusColor =
     row.status === 'Renamed'
@@ -34,6 +71,9 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
       : row.status === 'Missing'
         ? 'bg-red-500/10 text-red-600'
         : 'bg-muted text-muted-foreground'
+
+  // Proportional width: 4:3 ratio by default
+  const thumbWidth = Math.round(reviewThumbSize * 0.75)
 
   return (
     <Card className={`overflow-hidden${isDuplicate ? ' ring-2 ring-amber-500/50' : ''}`}>
@@ -64,7 +104,8 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
             <img
               src={thumbUrl}
               alt={row.from}
-              className="h-28 w-28 rounded-sm border object-cover"
+              style={{ height: reviewThumbSize, width: thumbWidth }}
+              className="rounded-sm border object-cover"
             />
           </div>
         )}

@@ -71,6 +71,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   reviewCropEnabled: true,
   reviewItemsPerPage: 50,
   reviewThumbHeight: '720p',
+  reviewThumbSize: 180,
   suffixMode: 'Standard',
   customSuffixes: 'd,v',
 }
