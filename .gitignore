@@ -32,4 +32,30 @@
 
 # Ignorar carpeta dist y build
 dist/
-build/ 
+build/
+
+# --- Web App ---
+# Include web-app source files
+!web-app/
+!web-app/**/*.ts
+!web-app/**/*.tsx
+!web-app/**/*.css
+!web-app/**/*.html
+!web-app/**/*.json
+!web-app/**/*.js
+!web-app/**/*.yml
+!web-app/**/*.yaml
+!web-app/**/*.svg
+!web-app/**/.gitkeep
+
+# Exclude web-app build artifacts and dependencies
+web-app/node_modules/
+web-app/dist/
+web-app/backend/node_modules/
+web-app/backend/dist/
+web-app/backend/bin/exiftool*
+!web-app/backend/bin/.gitkeep
+
+# --- GitHub Actions ---
+!.github/
+!.github/**/*.yml
