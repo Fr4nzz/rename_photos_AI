@@ -1,6 +1,6 @@
-import { useState, useCallback, useMemo, useEffect } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
-import type { PhotoRow, SuffixMode } from '@/types'
+import type { PhotoRow } from '@/types'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useProcessingStore } from '@/stores/processingStore'
 import { calculateFinalNames } from '@/lib/nameCalculator'
@@ -21,6 +21,7 @@ export type SortOption =
   | 'name-asc' | 'name-desc'
   | 'batch-asc' | 'batch-desc'
   | 'cam-asc' | 'cam-desc'
+  | 'date-asc' | 'date-desc'
 
 export function useReviewTab() {
   const { mainColumn, suffixMode, customSuffixes, reviewItemsPerPage } = useSettingsStore()
@@ -31,6 +32,10 @@ export function useReviewTab() {
   const [filter, setFilter] = useState<FilterType>('all')
   const [sortOption, setSortOption] = useState<SortOption>('name-asc')
   const [currentPage, setCurrentPage] = useState(1)
+
+  // Debounced autosave
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const prevRowsRef = useRef<PhotoRow[]>(photoRows)
 
   // Load CSV list on mount + auto-load last CSV if no data in store
   useEffect(() => {
@@ -49,6 +54,23 @@ export function useReviewTab() {
       })
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Autosave when photoRows change (debounced 2s)
+  useEffect(() => {
+    if (photoRows.length === 0 || photoRows === prevRowsRef.current) return
+    prevRowsRef.current = photoRows
+
+    clearTimeout(autosaveTimer.current)
+    autosaveTimer.current = setTimeout(async () => {
+      const csvName = selectedCsv || useProcessingStore.getState().currentCsvName
+      if (!csvName) return
+      const text = toCsvString(photoRows, mainColumn)
+      await saveCsvToStorage(csvName, text)
+      logger.info(`Auto-saved: ${csvName}`)
+    }, 2000)
+
+    return () => clearTimeout(autosaveTimer.current)
+  }, [photoRows, selectedCsv, mainColumn])
 
   const refreshCsvList = useCallback(async () => {
     const csvs = await listStoredCsvs()
@@ -71,6 +93,22 @@ export function useReviewTab() {
     [mainColumn, setPhotoRows]
   )
 
+  // Compute duplicate CAM+suffix pairs for warning display
+  const duplicatePairs = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const r of photoRows) {
+      if (r.mainValue?.trim() && r.suffix?.trim()) {
+        const key = `${r.mainValue.trim()}__${r.suffix.trim()}`
+        counts.set(key, (counts.get(key) ?? 0) + 1)
+      }
+    }
+    const dupes = new Set<string>()
+    for (const [key, count] of counts) {
+      if (count > 1) dupes.add(key)
+    }
+    return dupes
+  }, [photoRows])
+
   // Filter rows
   const filteredRows = useMemo(() => {
     let rows = photoRows
@@ -86,7 +124,6 @@ export function useReviewTab() {
         rows = rows.filter((r) => r.skip === 'x')
         break
       case 'mismatches': {
-        // IDs that don't appear exactly 2 times, or duplicate CAM+suffix combos
         const idCounts = new Map<string, number>()
         const suffixKeys = new Set<string>()
         const duplicateSuffix = new Set<number>()
@@ -123,6 +160,8 @@ export function useReviewTab() {
         case 'batch-desc': return b.batchNumber - a.batchNumber
         case 'cam-asc': return (a.mainValue ?? '').localeCompare(b.mainValue ?? '')
         case 'cam-desc': return (b.mainValue ?? '').localeCompare(a.mainValue ?? '')
+        case 'date-asc': return (a.captureDate ?? '').localeCompare(b.captureDate ?? '')
+        case 'date-desc': return (b.captureDate ?? '').localeCompare(a.captureDate ?? '')
         default: return 0
       }
     })
@@ -182,6 +221,7 @@ export function useReviewTab() {
     filteredRows,
     pagedRows,
     photoRows,
+    duplicatePairs,
     refreshCsvList,
     loadCsv,
     updateRow,

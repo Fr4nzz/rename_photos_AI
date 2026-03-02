@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { AppSettings, CropSettings, SuffixMode } from '@/types'
+import type { AppSettings, CropSettings } from '@/types'
 import { DEFAULT_SETTINGS, DEFAULT_PROMPT } from '@/lib/constants'
 
 interface SettingsState extends AppSettings {

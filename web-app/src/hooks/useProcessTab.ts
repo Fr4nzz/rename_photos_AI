@@ -21,7 +21,15 @@ import {
   canvasToBlobUrl,
 } from '@/lib/imageProcessing'
 import { AIClient, parseJsonResponse, responseHasData } from '@/lib/aiClient'
-import { saveCsvToStorage, toCsvString, saveLastCsvName, saveDirHandle, getSavedDirHandle } from '@/lib/csvHandler'
+import {
+  saveCsvToStorage,
+  loadCsvFromStorage,
+  parseCsv,
+  toCsvString,
+  saveLastCsvName,
+  saveDirHandle,
+  getSavedDirHandle,
+} from '@/lib/csvHandler'
 import { logger } from '@/lib/logger'
 
 export interface Previews {
@@ -195,6 +203,22 @@ export function useProcessTab() {
     updateGridPreview()
   }, [updateGridPreview])
 
+  // Parse retry message ranges like "1,3,5-7" → Set<number>
+  function parseRetryBatches(input: string): Set<number> {
+    const result = new Set<number>()
+    for (const part of input.split(',')) {
+      const trimmed = part.trim()
+      if (trimmed.includes('-')) {
+        const [start, end] = trimmed.split('-').map(Number)
+        for (let i = start; i <= end; i++) result.add(i)
+      } else {
+        const n = Number(trimmed)
+        if (!isNaN(n)) result.add(n)
+      }
+    }
+    return result
+  }
+
   // Start processing
   const startProcessing = useCallback(async () => {
     if (apiKeys.length === 0) {
@@ -209,6 +233,8 @@ export function useProcessTab() {
       toast.error('No model selected.')
       return
     }
+
+    const { runMode, retryMessages, continueCsvName } = useProcessingStore.getState()
 
     processing.setProcessing(true)
     processing.setProgress(0, 'Starting...')
@@ -236,6 +262,26 @@ export function useProcessTab() {
         captureDate: null,
         status: 'Original',
       }))
+
+      // Continue mode: merge existing CSV data into rows
+      if (runMode === 'continue' && continueCsvName) {
+        const csvText = await loadCsvFromStorage(continueCsvName)
+        if (csvText) {
+          const existingRows = parseCsv(csvText, settings.mainColumn)
+          const existingMap = new Map<string, PhotoRow>()
+          for (const r of existingRows) existingMap.set(r.from, r)
+
+          rows = rows.map((r) => {
+            const existing = existingMap.get(r.from)
+            if (existing && existing.mainValue?.trim()) {
+              return { ...r, ...existing, photoId: r.photoId }
+            }
+            return r
+          })
+          logger.info(`Continue mode: loaded ${existingRows.length} rows from ${continueCsvName}`)
+        }
+      }
+
       processing.setPhotoRows(rows)
 
       // Store file references for Review tab thumbnails
@@ -248,10 +294,30 @@ export function useProcessTab() {
       const totalBatches = Math.ceil(totalPhotos / photosPerApiCall)
       const failedBatches: number[] = []
 
+      // Determine which batches to process
+      const retrySet = runMode === 'retry_specific' ? parseRetryBatches(retryMessages) : null
+
       for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
         if (abortRef.current.signal.aborted) break
 
         const batchNum = batchIdx + 1
+
+        // Skip batches based on mode
+        if (retrySet && !retrySet.has(batchNum)) continue
+        if (runMode === 'continue') {
+          // Skip batches where all rows already have data
+          const batchStart = batchIdx * photosPerApiCall
+          const batchEnd = Math.min(batchStart + photosPerApiCall, totalPhotos)
+          const allHaveData = rows.slice(batchStart, batchEnd).every((r) => r.mainValue?.trim())
+          if (allHaveData) {
+            processing.setProgress(
+              Math.floor(((batchIdx + 1) / totalBatches) * 100),
+              `Skipping message ${batchNum}/${totalBatches} (already processed)`
+            )
+            continue
+          }
+        }
+
         const batchStart = batchIdx * photosPerApiCall
         const batchEnd = Math.min(batchStart + photosPerApiCall, totalPhotos)
 
@@ -352,18 +418,27 @@ export function useProcessTab() {
           Math.floor(((batchIdx + 1) / totalBatches) * 100),
           `Message ${batchNum}/${totalBatches} complete`
         )
+
+        // Auto-save intermediate results after each batch
+        if (rows.length > 0) {
+          const csvName = `${folderName || 'results'}_${new Date().toISOString().slice(0, 10)}.csv`
+          const csvText = toCsvString(rows, settings.mainColumn)
+          await saveCsvToStorage(csvName, csvText)
+          await saveLastCsvName(csvName)
+          processing.setCurrentCsvName(csvName)
+        }
       }
 
       processing.setFailedBatches(failedBatches)
 
-      // Auto-save results to IndexedDB
+      // Final save
       if (rows.length > 0 && !abortRef.current.signal.aborted) {
         const csvName = `${folderName || 'results'}_${new Date().toISOString().slice(0, 10)}.csv`
         const csvText = toCsvString(rows, settings.mainColumn)
         await saveCsvToStorage(csvName, csvText)
         await saveLastCsvName(csvName)
         processing.setCurrentCsvName(csvName)
-        logger.info(`Auto-saved results as: ${csvName}`)
+        logger.info(`Saved results as: ${csvName}`)
       }
 
       if (failedBatches.length > 0) {

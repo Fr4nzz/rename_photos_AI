@@ -8,12 +8,12 @@ import { useBackendStore } from '@/stores/backendStore'
 export function Header() {
   const { resolved, setTheme } = useTheme()
   const status = useBackendStore((s) => s.status)
-  const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   // Single check on mount, then poll with backoff using getState() to avoid re-render loops
   useEffect(() => {
     const schedule = () => {
-      const { failCount, checkHealth } = useBackendStore.getState()
+      const { checkHealth } = useBackendStore.getState()
       checkHealth().then(() => {
         const delay = useBackendStore.getState().failCount < 3 ? 10_000 : 60_000
         timerRef.current = setTimeout(schedule, delay)

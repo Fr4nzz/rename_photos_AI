@@ -4,7 +4,6 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { useProcessingStore } from '@/stores/processingStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import {
   Select,
@@ -24,6 +23,13 @@ import {
   downloadAsZip,
   getBrowserSaveAsInstructions,
 } from '@/lib/fileDownload'
+import {
+  saveRenameLog,
+  getRenameLog,
+  type RenameLogEntry,
+} from '@/lib/csvHandler'
+import { supportsDirectoryPicker } from '@/lib/fileAccess'
+import { logger } from '@/lib/logger'
 import type { SuffixMode } from '@/types'
 import {
   Calculator,
@@ -32,6 +38,8 @@ import {
   FolderDown,
   FileDown,
   Info,
+  FileEdit,
+  Undo2,
 } from 'lucide-react'
 
 interface Props {
@@ -48,18 +56,213 @@ export function ReviewActionBar({
   hasData,
 }: Props) {
   const { suffixMode, customSuffixes, updateSetting } = useSettingsStore()
-  const { photoRows } = useProcessingStore()
+  const { photoRows, fileMap, setPhotoRows } = useProcessingStore()
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null)
+  const [isRenaming, setIsRenaming] = useState(false)
   const { canSaveToFolder, tier } = getDownloadCapabilities()
 
+  // Build named blobs from fileMap using the 'to' field
+  function buildRenamedFiles(): { name: string; blob: Blob }[] {
+    const files: { name: string; blob: Blob }[] = []
+    for (const row of photoRows) {
+      if (!row.to?.trim() || row.skip === 'x') continue
+      const file = fileMap.get(row.from)
+      if (!file) continue
+      files.push({ name: row.to, blob: file })
+    }
+    return files
+  }
+
   const handleSaveToFolder = async () => {
-    // For now we'd need the actual file blobs — this is a placeholder
-    // In a full implementation, the original File objects from the input are used
-    toast.info('Save to Folder requires files loaded via Process tab')
+    const files = buildRenamedFiles()
+    if (files.length === 0) {
+      toast.error('No files to save. Make sure files are loaded and names are calculated.')
+      return
+    }
+
+    try {
+      setDownloadProgress(0)
+      const count = await saveToFolder(files, (current, total) => {
+        setDownloadProgress(Math.round((current / total) * 100))
+      })
+      toast.success(`Saved ${count} files to folder`)
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        toast.error(`Save failed: ${e.message}`)
+      }
+    } finally {
+      setDownloadProgress(null)
+    }
   }
 
   const handleDownloadZip = async () => {
-    toast.info('Download ZIP requires files loaded via Process tab')
+    const files = buildRenamedFiles()
+    if (files.length === 0) {
+      toast.error('No files to download. Make sure files are loaded and names are calculated.')
+      return
+    }
+
+    try {
+      setDownloadProgress(0)
+      await downloadAsZip(files, 'renamed-photos.zip', (percent) => {
+        setDownloadProgress(percent)
+      })
+      toast.success(`ZIP with ${files.length} files ready`)
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        toast.error(`Download failed: ${e.message}`)
+      }
+    } finally {
+      setDownloadProgress(null)
+    }
+  }
+
+  // Rename files in-place using File System Access API
+  const handleRenameFiles = async () => {
+    if (!supportsDirectoryPicker()) {
+      toast.error('File rename requires Chrome or Edge browser')
+      return
+    }
+
+    const rowsToRename = photoRows.filter((r) => r.to?.trim() && r.skip !== 'x' && r.status !== 'Renamed')
+    if (rowsToRename.length === 0) {
+      toast.error('No files to rename. Calculate names first.')
+      return
+    }
+
+    try {
+      const dirHandle: FileSystemDirectoryHandle = await (window as any).showDirectoryPicker({
+        id: 'photo-rename',
+        mode: 'readwrite',
+      })
+
+      setIsRenaming(true)
+      setDownloadProgress(0)
+
+      const renameLog: RenameLogEntry[] = []
+      let renamed = 0
+
+      for (let i = 0; i < rowsToRename.length; i++) {
+        const row = rowsToRename[i]
+        try {
+          // Read original file
+          const sourceHandle = await dirHandle.getFileHandle(row.currentPath)
+          const file = await sourceHandle.getFile()
+
+          // Write with new name
+          const destHandle = await dirHandle.getFileHandle(row.to, { create: true })
+          const writable = await destHandle.createWritable()
+          await writable.write(file)
+          await writable.close()
+
+          // Remove original if name changed
+          if (row.currentPath !== row.to) {
+            await dirHandle.removeEntry(row.currentPath)
+          }
+
+          renameLog.push({
+            original: row.currentPath,
+            renamed: row.to,
+            timestamp: new Date().toISOString(),
+          })
+          renamed++
+        } catch (err: any) {
+          logger.warn(`Could not rename ${row.currentPath}: ${err.message}`)
+        }
+
+        setDownloadProgress(Math.round(((i + 1) / rowsToRename.length) * 100))
+      }
+
+      // Save rename log for restore
+      const existingLog = await getRenameLog()
+      await saveRenameLog([...existingLog, ...renameLog])
+
+      // Update row statuses
+      const renamedSet = new Set(renameLog.map((e) => e.original))
+      const updatedRows = photoRows.map((r) => {
+        if (renamedSet.has(r.currentPath)) {
+          const entry = renameLog.find((e) => e.original === r.currentPath)
+          return { ...r, status: 'Renamed' as const, currentPath: entry?.renamed ?? r.currentPath }
+        }
+        return r
+      })
+      setPhotoRows(updatedRows)
+
+      toast.success(`Renamed ${renamed} files`)
+      logger.info(`Renamed ${renamed} files, ${rowsToRename.length - renamed} skipped`)
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        toast.error(`Rename failed: ${e.message}`)
+      }
+    } finally {
+      setIsRenaming(false)
+      setDownloadProgress(null)
+    }
+  }
+
+  // Restore original names using rename log
+  const handleRestore = async () => {
+    const log = await getRenameLog()
+    if (log.length === 0) {
+      toast.error('No rename log found. Nothing to restore.')
+      return
+    }
+
+    try {
+      const dirHandle: FileSystemDirectoryHandle = await (window as any).showDirectoryPicker({
+        id: 'photo-rename',
+        mode: 'readwrite',
+      })
+
+      setIsRenaming(true)
+      setDownloadProgress(0)
+
+      let restored = 0
+      for (let i = 0; i < log.length; i++) {
+        const entry = log[i]
+        try {
+          const sourceHandle = await dirHandle.getFileHandle(entry.renamed)
+          const file = await sourceHandle.getFile()
+
+          const destHandle = await dirHandle.getFileHandle(entry.original, { create: true })
+          const writable = await destHandle.createWritable()
+          await writable.write(file)
+          await writable.close()
+
+          if (entry.renamed !== entry.original) {
+            await dirHandle.removeEntry(entry.renamed)
+          }
+          restored++
+        } catch (err: any) {
+          logger.warn(`Could not restore ${entry.renamed}: ${err.message}`)
+        }
+
+        setDownloadProgress(Math.round(((i + 1) / log.length) * 100))
+      }
+
+      // Clear rename log after restore
+      await saveRenameLog([])
+
+      // Update row statuses back to Original
+      const restoredNames = new Set(log.map((e) => e.renamed))
+      const updatedRows = photoRows.map((r) => {
+        if (restoredNames.has(r.currentPath)) {
+          const entry = log.find((e) => e.renamed === r.currentPath)
+          return { ...r, status: 'Original' as const, currentPath: entry?.original ?? r.currentPath }
+        }
+        return r
+      })
+      setPhotoRows(updatedRows)
+
+      toast.success(`Restored ${restored} files to original names`)
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        toast.error(`Restore failed: ${e.message}`)
+      }
+    } finally {
+      setIsRenaming(false)
+      setDownloadProgress(null)
+    }
   }
 
   const saveAsInfo = getBrowserSaveAsInstructions()
@@ -135,17 +338,43 @@ export function ReviewActionBar({
 
         <div className="flex-1" />
 
-        {/* Download buttons */}
+        {/* Rename & Restore (FSA API) */}
         {canSaveToFolder && (
-          <Button
-            size="sm"
-            className="gap-1 text-xs"
-            onClick={handleSaveToFolder}
-            disabled={!hasData}
-          >
-            <FolderDown className="h-3.5 w-3.5" />
-            Save to Folder
-          </Button>
+          <>
+            <Button
+              size="sm"
+              className="gap-1 text-xs"
+              onClick={handleRenameFiles}
+              disabled={!hasData || isRenaming}
+            >
+              <FileEdit className="h-3.5 w-3.5" />
+              Rename Files
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1 text-xs"
+              onClick={handleRestore}
+              disabled={isRenaming}
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+              Restore
+            </Button>
+
+            <div className="mx-1 h-5 w-px bg-border" />
+
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1 text-xs"
+              onClick={handleSaveToFolder}
+              disabled={!hasData || isRenaming}
+            >
+              <FolderDown className="h-3.5 w-3.5" />
+              Save to Folder
+            </Button>
+          </>
         )}
 
         <Button
@@ -153,7 +382,7 @@ export function ReviewActionBar({
           size="sm"
           className="gap-1 text-xs"
           onClick={handleDownloadZip}
-          disabled={!hasData}
+          disabled={!hasData || isRenaming}
         >
           <Download className="h-3.5 w-3.5" />
           Download ZIP

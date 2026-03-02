@@ -1,7 +1,7 @@
 import { useSettingsStore } from '@/stores/settingsStore'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { RotateCcw, Save } from 'lucide-react'
+import { RotateCcw } from 'lucide-react'
 
 export function PromptEditor() {
   const { promptText, updateSetting, resetPrompt } = useSettingsStore()

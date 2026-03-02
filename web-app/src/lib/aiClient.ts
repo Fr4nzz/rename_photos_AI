@@ -94,7 +94,7 @@ export class AIClient {
  */
 export function parseJsonResponse(
   responseText: string,
-  mainColumn: string
+  _mainColumn: string
 ): Record<string, Record<string, string>> | null {
   const match = responseText.match(/```json\s*([\s\S]+?)\s*```/i)
   if (!match) return null

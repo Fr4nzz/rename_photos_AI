@@ -10,9 +10,10 @@ import type { PhotoRow } from '@/types'
 interface Props {
   row: PhotoRow
   onUpdate: (photoId: number, updates: Partial<PhotoRow>) => void
+  isDuplicate?: boolean
 }
 
-export function ReviewCard({ row, onUpdate }: Props) {
+export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
   const fileMap = useProcessingStore((s) => s.fileMap)
   const [thumbUrl, setThumbUrl] = useState<string | null>(null)
 
@@ -35,13 +36,18 @@ export function ReviewCard({ row, onUpdate }: Props) {
         : 'bg-muted text-muted-foreground'
 
   return (
-    <Card className="overflow-hidden">
+    <Card className={`overflow-hidden${isDuplicate ? ' ring-2 ring-amber-500/50' : ''}`}>
       <CardHeader className="px-3 py-2 pb-1">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="truncate text-xs font-medium">
             {row.from}
           </CardTitle>
           <div className="flex items-center gap-1 flex-shrink-0">
+            {isDuplicate && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-500 text-amber-600">
+                Duplicate
+              </Badge>
+            )}
             <Badge variant="outline" className="text-[10px] px-1.5 py-0">
               Msg {row.batchNumber}
             </Badge>

@@ -218,3 +218,19 @@ export function downloadCsv(csvText: string, filename: string) {
   a.click()
   URL.revokeObjectURL(url)
 }
+
+// --- Rename log storage ---
+
+export interface RenameLogEntry {
+  original: string
+  renamed: string
+  timestamp: string
+}
+
+export async function saveRenameLog(entries: RenameLogEntry[]): Promise<void> {
+  await setMeta('renameLog', entries)
+}
+
+export async function getRenameLog(): Promise<RenameLogEntry[]> {
+  return (await getMeta('renameLog')) ?? []
+}

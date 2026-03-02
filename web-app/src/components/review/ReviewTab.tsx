@@ -30,6 +30,7 @@ export function ReviewTab() {
       <ReviewGrid
         rows={hook.pagedRows}
         onUpdateRow={hook.updateRow}
+        duplicatePairs={hook.duplicatePairs}
       />
 
       <ReviewActionBar

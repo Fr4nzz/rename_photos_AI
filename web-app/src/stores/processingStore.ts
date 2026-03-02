@@ -9,6 +9,7 @@ interface ProcessingState {
   progress: { percent: number; message: string }
   runMode: RunMode
   retryMessages: string
+  continueCsvName: string
   currentCsvName: string
   failedBatches: number[]
 
@@ -19,6 +20,7 @@ interface ProcessingState {
   setProgress: (percent: number, message: string) => void
   setRunMode: (mode: RunMode) => void
   setRetryMessages: (messages: string) => void
+  setContinueCsvName: (name: string) => void
   setCurrentCsvName: (name: string) => void
   setFailedBatches: (batches: number[]) => void
   reset: () => void
@@ -31,6 +33,7 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
   progress: { percent: 0, message: '' },
   runMode: 'start_over',
   retryMessages: '',
+  continueCsvName: '',
   currentCsvName: '',
   failedBatches: [],
 
@@ -46,6 +49,7 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
   setProgress: (percent, message) => set({ progress: { percent, message } }),
   setRunMode: (mode) => set({ runMode: mode }),
   setRetryMessages: (messages) => set({ retryMessages: messages }),
+  setContinueCsvName: (name) => set({ continueCsvName: name }),
   setCurrentCsvName: (name) => set({ currentCsvName: name }),
   setFailedBatches: (batches) => set({ failedBatches: batches }),
   reset: () =>

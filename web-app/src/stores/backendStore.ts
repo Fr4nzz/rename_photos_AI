@@ -9,7 +9,7 @@ interface BackendState {
   checkHealth: () => Promise<void>
 }
 
-export const useBackendStore = create<BackendState>()((set, get) => ({
+export const useBackendStore = create<BackendState>()((set) => ({
   status: { connected: false, url: BACKEND_URL },
   failCount: 0,
 

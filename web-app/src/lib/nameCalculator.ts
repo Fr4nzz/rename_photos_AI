@@ -34,7 +34,7 @@ function generateSuffixes(
 
 export function calculateFinalNames(
   rows: PhotoRow[],
-  mainColumn: string,
+  _mainColumn: string,
   suffixMode: SuffixMode,
   customSuffixesStr: string
 ): PhotoRow[] {

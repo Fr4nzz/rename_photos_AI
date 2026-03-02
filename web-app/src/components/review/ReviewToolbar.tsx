@@ -35,6 +35,8 @@ const SORT_OPTIONS: { label: string; value: SortOption }[] = [
   { label: 'Batch N-1', value: 'batch-desc' },
   { label: 'CAM A-Z', value: 'cam-asc' },
   { label: 'CAM Z-A', value: 'cam-desc' },
+  { label: 'Date (New-Old)', value: 'date-desc' },
+  { label: 'Date (Old-New)', value: 'date-asc' },
 ]
 
 export function ReviewToolbar({

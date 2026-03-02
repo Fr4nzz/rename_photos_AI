@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useApiKeysStore } from '@/stores/apiKeysStore'
 import { useProcessingStore } from '@/stores/processingStore'
@@ -12,6 +13,7 @@ import {
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Play, Square } from 'lucide-react'
+import { listStoredCsvs } from '@/lib/csvHandler'
 import type { RunMode } from '@/types'
 
 interface Props {
@@ -28,9 +30,19 @@ export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
     progress,
     runMode,
     retryMessages,
+    continueCsvName,
     setRunMode,
     setRetryMessages,
+    setContinueCsvName,
   } = useProcessingStore()
+
+  const [csvFiles, setCsvFiles] = useState<string[]>([])
+
+  useEffect(() => {
+    if (runMode === 'continue') {
+      listStoredCsvs().then(setCsvFiles)
+    }
+  }, [runMode])
 
   const canStart = hasImages && apiKeys.length > 0 && !!modelName && !isProcessing
 
@@ -47,9 +59,27 @@ export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="start_over" className="text-xs">Start Over</SelectItem>
+            <SelectItem value="continue" className="text-xs">Continue from CSV</SelectItem>
             <SelectItem value="retry_specific" className="text-xs">Retry Specific Messages</SelectItem>
           </SelectContent>
         </Select>
+
+        {runMode === 'continue' && (
+          <Select
+            value={continueCsvName}
+            onValueChange={setContinueCsvName}
+            disabled={isProcessing}
+          >
+            <SelectTrigger className="h-8 w-56 text-xs">
+              <SelectValue placeholder="Select CSV..." />
+            </SelectTrigger>
+            <SelectContent>
+              {csvFiles.map((f) => (
+                <SelectItem key={f} value={f} className="text-xs">{f}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         {runMode === 'retry_specific' && (
           <Input
