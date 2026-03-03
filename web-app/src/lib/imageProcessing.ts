@@ -53,32 +53,50 @@ export async function loadImage(file: File): Promise<HTMLImageElement> {
  * Fast preview loader: decodes at reduced resolution using createImageBitmap.
  * Returns an oriented canvas at most `maxSize` px wide — skips the expensive
  * full-resolution decode that loadImage + fixOrientation perform.
+ * Results are promise-cached: concurrent/repeated calls for the same file
+ * share one decode operation (also deduplicates React Strict Mode double-mounts).
  */
+const previewCache = new Map<string, Promise<HTMLCanvasElement>>()
+
+export function clearPreviewCache() {
+  previewCache.clear()
+}
+
 export async function loadImagePreview(
   file: File,
   maxSize: number,
   applyExif = true
 ): Promise<HTMLCanvasElement> {
-  const ext = '.' + file.name.split('.').pop()!.toLowerCase()
-  let source: Blob = file
+  const key = `${file.name}|${file.size}|${file.lastModified}|${maxSize}|${applyExif ? 1 : 0}`
+  const cached = previewCache.get(key)
+  if (cached) return cached
 
-  if (SUPPORTED_RAW_EXTENSIONS.has(ext)) {
-    const thumb = await exifr.thumbnail(file)
-    if (!thumb) throw new Error(`No thumbnail in RAW file: ${file.name}`)
-    source = new Blob([thumb], { type: 'image/jpeg' })
-  }
+  const promise = (async () => {
+    const ext = '.' + file.name.split('.').pop()!.toLowerCase()
+    let source: Blob = file
 
-  const bmp = await createImageBitmap(source, {
-    resizeWidth: maxSize,
-    resizeQuality: 'medium',
-    imageOrientation: applyExif ? 'from-image' : 'none',
-  })
-  const c = document.createElement('canvas')
-  c.width = bmp.width
-  c.height = bmp.height
-  c.getContext('2d')!.drawImage(bmp, 0, 0)
-  bmp.close()
-  return c
+    if (SUPPORTED_RAW_EXTENSIONS.has(ext)) {
+      const thumb = await exifr.thumbnail(file)
+      if (!thumb) throw new Error(`No thumbnail in RAW file: ${file.name}`)
+      source = new Blob([thumb], { type: 'image/jpeg' })
+    }
+
+    const bmp = await createImageBitmap(source, {
+      resizeWidth: maxSize,
+      resizeQuality: 'medium',
+      imageOrientation: applyExif ? 'from-image' : 'none',
+    })
+    const c = document.createElement('canvas')
+    c.width = bmp.width
+    c.height = bmp.height
+    c.getContext('2d')!.drawImage(bmp, 0, 0)
+    bmp.close()
+    return c
+  })()
+
+  promise.catch(() => previewCache.delete(key))
+  previewCache.set(key, promise)
+  return promise
 }
 
 /**

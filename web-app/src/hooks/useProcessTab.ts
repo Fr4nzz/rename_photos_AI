@@ -14,6 +14,7 @@ import {
 import {
   loadImage,
   loadImagePreview,
+  clearPreviewCache,
   fixOrientation,
   rotateCanvas,
   preprocessImage,
@@ -134,6 +135,7 @@ export function useProcessTab() {
     try {
       if (supportsDirectoryPicker()) {
         const handle = await openDirectoryPicker()
+        clearPreviewCache()
         setDirHandle(handle)
         setFolderName(handle.name)
         processing.setDirHandle(handle)
@@ -185,7 +187,7 @@ export function useProcessTab() {
     try {
       logger.time('Preview: generate')
       const entry = imageFiles[selectedImageIndex]
-      const oriented = await loadImagePreview(entry.file, 800)
+      const oriented = await loadImagePreview(entry.file, 600)
 
       const originalUrl = await canvasToBlobUrl(oriented)
       const rotated = rotateCanvas(oriented, settings.rotationAngle)
@@ -196,7 +198,7 @@ export function useProcessTab() {
       if (settings.cropSettings.prerotate) {
         const source = settings.useExif
           ? oriented
-          : await loadImagePreview(entry.file, 800, false)
+          : await loadImagePreview(entry.file, 600, false)
         forGemini = rotateCanvas(source, settings.rotationAngle)
       } else {
         forGemini = oriented
@@ -228,7 +230,7 @@ export function useProcessTab() {
       const endIdx = Math.min(startIdx + gridSize, imageFiles.length)
       const canvases = await Promise.all(
         imageFiles.slice(startIdx, endIdx).map(async (entry, k) => {
-          const oriented = await loadImagePreview(entry.file, 800)
+          const oriented = await loadImagePreview(entry.file, 600)
           const forGemini = settings.cropSettings.prerotate
             ? rotateCanvas(oriented, settings.rotationAngle)
             : oriented
