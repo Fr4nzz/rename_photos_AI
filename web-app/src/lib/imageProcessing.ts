@@ -1,5 +1,6 @@
 import exifr from 'exifr'
 import { SUPPORTED_RAW_EXTENSIONS } from './constants'
+import { logger } from './logger'
 import type { CropSettings } from '@/types'
 
 /**
@@ -24,6 +25,7 @@ export async function getOrientationAngle(file: File): Promise<number> {
  * For RAW files, extracts the embedded JPEG thumbnail via exifr.
  */
 export async function loadImage(file: File): Promise<HTMLImageElement> {
+  const t0 = performance.now()
   const ext = '.' + file.name.split('.').pop()!.toLowerCase()
   let url: string
 
@@ -37,10 +39,46 @@ export async function loadImage(file: File): Promise<HTMLImageElement> {
 
   return new Promise((resolve, reject) => {
     const img = new Image()
-    img.onload = () => resolve(img)
+    img.onload = () => {
+      const elapsed = performance.now() - t0
+      if (elapsed > 100) logger.info(`loadImage(${file.name}): ${Math.round(elapsed)}ms`)
+      resolve(img)
+    }
     img.onerror = () => reject(new Error(`Failed to load: ${file.name}`))
     img.src = url
   })
+}
+
+/**
+ * Fast preview loader: decodes at reduced resolution using createImageBitmap.
+ * Returns an oriented canvas at most `maxSize` px wide — skips the expensive
+ * full-resolution decode that loadImage + fixOrientation perform.
+ */
+export async function loadImagePreview(
+  file: File,
+  maxSize: number,
+  applyExif = true
+): Promise<HTMLCanvasElement> {
+  const ext = '.' + file.name.split('.').pop()!.toLowerCase()
+  let source: Blob = file
+
+  if (SUPPORTED_RAW_EXTENSIONS.has(ext)) {
+    const thumb = await exifr.thumbnail(file)
+    if (!thumb) throw new Error(`No thumbnail in RAW file: ${file.name}`)
+    source = new Blob([thumb], { type: 'image/jpeg' })
+  }
+
+  const bmp = await createImageBitmap(source, {
+    resizeWidth: maxSize,
+    resizeQuality: 'medium',
+    imageOrientation: applyExif ? 'from-image' : 'none',
+  })
+  const c = document.createElement('canvas')
+  c.width = bmp.width
+  c.height = bmp.height
+  c.getContext('2d')!.drawImage(bmp, 0, 0)
+  bmp.close()
+  return c
 }
 
 /**
@@ -217,6 +255,7 @@ export function mergeImages(
   gridCols: number
 ): HTMLCanvasElement | null {
   if (canvases.length === 0) return null
+  const t0 = performance.now()
 
   const rows = gridRows
   const cols = gridCols
@@ -242,6 +281,9 @@ export function mergeImages(
     const col = i % cols
     ctx.drawImage(canvases[i], col * cellW, row * cellH, cellW, cellH)
   }
+
+  const elapsed = performance.now() - t0
+  if (elapsed > 50) logger.info(`mergeImages(${canvases.length} canvases, ${grid.width}x${grid.height}): ${Math.round(elapsed)}ms`)
 
   return grid
 }

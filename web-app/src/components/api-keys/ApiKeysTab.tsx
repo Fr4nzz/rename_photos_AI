@@ -21,6 +21,18 @@ export function ApiKeysTab() {
     setKeysText(apiKeys.join('\n'))
   }, [apiKeys])
 
+  // Auto-refresh model list on mount when keys already exist
+  useEffect(() => {
+    if (apiKeys.length === 0) return
+    let cancelled = false
+    fetchAvailableModels(apiKeys[0]).then((models) => {
+      if (!cancelled && models.length > 0) {
+        setAvailableModels(models)
+      }
+    })
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSave = async () => {
     const keys = keysText
       .split('\n')

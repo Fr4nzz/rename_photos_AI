@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { VisuallyHidden } from 'radix-ui'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import type { Previews } from '@/hooks/useProcessTab'
 
 interface Props {
@@ -44,7 +45,10 @@ export function PreviewPanel({ previews }: Props) {
       </div>
 
       <Dialog open={!!enlarged} onOpenChange={() => setEnlarged(null)}>
-        <DialogContent className="max-w-4xl p-2">
+        <DialogContent className="max-w-4xl p-2" aria-describedby={undefined}>
+          <VisuallyHidden.Root>
+            <DialogTitle>Enlarged preview</DialogTitle>
+          </VisuallyHidden.Root>
           {enlarged && (
             <img
               src={enlarged}

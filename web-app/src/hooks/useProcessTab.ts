@@ -13,6 +13,7 @@ import {
 } from '@/lib/fileAccess'
 import {
   loadImage,
+  loadImagePreview,
   fixOrientation,
   rotateCanvas,
   preprocessImage,
@@ -29,6 +30,9 @@ import {
   saveLastCsvName,
   saveDirHandle,
   getSavedDirHandle,
+  saveCsvToFolder,
+  listCsvsFromFolder,
+  loadCsvFromFolder,
 } from '@/lib/csvHandler'
 import { logger } from '@/lib/logger'
 
@@ -57,27 +61,71 @@ export function useProcessTab() {
 
   const fileType = settings.previewRaw ? 'all' : 'compressed'
 
+  // Import folder CSVs into IndexedDB + auto-load latest
+  const importFolderCsvs = useCallback(async (handle: FileSystemDirectoryHandle) => {
+    logger.time('Import folder CSVs')
+    const folderCsvs = await listCsvsFromFolder(handle)
+    if (folderCsvs.length === 0) { logger.timeEnd('Import folder CSVs'); return }
+
+    // Import each CSV from folder into IndexedDB
+    for (const name of folderCsvs) {
+      const text = await loadCsvFromFolder(handle, name)
+      if (text) await saveCsvToStorage(name, text)
+    }
+
+    // Auto-load the most recent CSV (last alphabetically, since names include dates)
+    const latest = folderCsvs[folderCsvs.length - 1]
+    const text = await loadCsvFromFolder(handle, latest)
+    if (text) {
+      const { mainColumn } = useSettingsStore.getState()
+      const rows = parseCsv(text, mainColumn)
+      if (rows.length > 0) {
+        processing.setPhotoRows(rows)
+        processing.setCurrentCsvName(latest)
+        await saveLastCsvName(latest)
+        toast.success(`Loaded ${rows.length} rows from ${latest}`)
+        logger.info(`Auto-loaded CSV from rename_files/: ${latest} (${rows.length} rows)`)
+      }
+    }
+    logger.timeEnd('Import folder CSVs')
+  }, [processing])
+
   // Load saved directory handle on mount
   useEffect(() => {
     if (!supportsDirectoryPicker()) return
+    logger.time('Startup: restore folder')
     getSavedDirHandle().then(async (handle) => {
-      if (!handle) return
+      if (!handle) { logger.timeEnd('Startup: restore folder'); return }
       try {
         const perm = await (handle as any).queryPermission({ mode: 'read' })
         if (perm === 'granted') {
           setDirHandle(handle)
           setFolderName(handle.name)
+          processing.setDirHandle(handle)
+
+          logger.time('Startup: list image files')
           const files = await getImageFilesFromHandle(handle, fileType)
+          logger.timeEnd('Startup: list image files')
+
           setImageFiles(files)
           // Also populate fileMap for Review tab thumbnails
+          logger.time('Startup: build fileMap')
           const fMap = new Map<string, File>()
           for (const entry of files) fMap.set(entry.name, entry.file)
           processing.setFileMap(fMap)
+          logger.timeEnd('Startup: build fileMap')
+
           logger.info(`Restored folder: ${handle.name} (${files.length} images)`)
+
+          // Import CSVs from rename_files/ if no data loaded yet
+          if (useProcessingStore.getState().photoRows.length === 0) {
+            await importFolderCsvs(handle)
+          }
         }
       } catch {
         // Permission denied or handle invalid — ignore
       }
+      logger.timeEnd('Startup: restore folder')
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -88,19 +136,27 @@ export function useProcessTab() {
         const handle = await openDirectoryPicker()
         setDirHandle(handle)
         setFolderName(handle.name)
+        processing.setDirHandle(handle)
+
+        logger.time('Open folder: list images')
         const files = await getImageFilesFromHandle(handle, fileType)
+        logger.timeEnd('Open folder: list images')
+
         setImageFiles(files)
         setSelectedImageIndex(0)
         setSelectedGridIndex(0)
         saveDirHandle(handle).catch(() => {})
         logger.info(`Opened folder: ${handle.name} (${files.length} images)`)
+
+        // Import CSVs from rename_files/ subfolder
+        await importFolderCsvs(handle)
       }
     } catch (e: any) {
       if (e.name !== 'AbortError') {
         toast.error(`Failed to open folder: ${e.message}`)
       }
     }
-  }, [fileType])
+  }, [fileType, importFolderCsvs])
 
   // Handle fallback file input
   const handleFileInput = useCallback(
@@ -127,9 +183,9 @@ export function useProcessTab() {
     }
 
     try {
+      logger.time('Preview: generate')
       const entry = imageFiles[selectedImageIndex]
-      const img = await loadImage(entry.file)
-      const oriented = await fixOrientation(img, entry.file)
+      const oriented = await loadImagePreview(entry.file, 800)
 
       const originalUrl = await canvasToBlobUrl(oriented)
       const rotated = rotateCanvas(oriented, settings.rotationAngle)
@@ -138,10 +194,10 @@ export function useProcessTab() {
       // Processed: apply prerotate logic then preprocess
       let forGemini: HTMLCanvasElement
       if (settings.cropSettings.prerotate) {
-        forGemini = rotateCanvas(
-          settings.useExif ? oriented : await toPlainCanvas(img),
-          settings.rotationAngle
-        )
+        const source = settings.useExif
+          ? oriented
+          : await loadImagePreview(entry.file, 800, false)
+        forGemini = rotateCanvas(source, settings.rotationAngle)
       } else {
         forGemini = oriented
       }
@@ -154,6 +210,7 @@ export function useProcessTab() {
         rotated: rotatedUrl,
         processed: processedUrl,
       }))
+      logger.timeEnd('Preview: generate')
     } catch (e: any) {
       logger.error(`Preview error: ${e.message}`)
     }
@@ -167,28 +224,24 @@ export function useProcessTab() {
     const startIdx = selectedGridIndex * gridSize
 
     try {
-      const canvases: HTMLCanvasElement[] = []
-      for (let i = startIdx; i < Math.min(startIdx + gridSize, imageFiles.length); i++) {
-        const entry = imageFiles[i]
-        const img = await loadImage(entry.file)
-        const oriented = await fixOrientation(img, entry.file)
-
-        let forGemini: HTMLCanvasElement
-        if (settings.cropSettings.prerotate) {
-          forGemini = rotateCanvas(oriented, settings.rotationAngle)
-        } else {
-          forGemini = oriented
-        }
-        canvases.push(
-          preprocessImage(forGemini, String(i + 1), settings.cropSettings)
-        )
-      }
+      logger.time('Grid preview: generate')
+      const endIdx = Math.min(startIdx + gridSize, imageFiles.length)
+      const canvases = await Promise.all(
+        imageFiles.slice(startIdx, endIdx).map(async (entry, k) => {
+          const oriented = await loadImagePreview(entry.file, 800)
+          const forGemini = settings.cropSettings.prerotate
+            ? rotateCanvas(oriented, settings.rotationAngle)
+            : oriented
+          return preprocessImage(forGemini, String(startIdx + k + 1), settings.cropSettings)
+        })
+      )
 
       const merged = mergeImages(canvases, settings.mergedImgHeight, settings.gridRows, settings.gridCols)
       if (merged) {
         const url = await canvasToBlobUrl(merged)
         setPreviews((prev) => ({ ...prev, grid: url }))
       }
+      logger.timeEnd('Grid preview: generate')
     } catch (e: any) {
       logger.error(`Grid preview error: ${e.message}`)
     }
@@ -240,6 +293,7 @@ export function useProcessTab() {
     processing.setProgress(0, 'Starting...')
     processing.setFailedBatches([])
     abortRef.current = new AbortController()
+    logger.time('Total processing')
 
     try {
       const client = new AIClient(apiKeys, settings.modelName)
@@ -324,6 +378,7 @@ export function useProcessTab() {
         const mergedImages: string[] = []
         const labelRanges: [number, number][] = []
 
+        logger.time(`Batch ${batchNum}: image processing`)
         for (let imgIdx = 0; imgIdx < settings.imagesPerPrompt; imgIdx++) {
           if (abortRef.current.signal.aborted) break
 
@@ -348,6 +403,7 @@ export function useProcessTab() {
             )
           }
 
+          logger.time(`Batch ${batchNum}: merge grid ${imgIdx + 1}`)
           const merged = mergeImages(
             canvases,
             settings.mergedImgHeight,
@@ -358,6 +414,7 @@ export function useProcessTab() {
             mergedImages.push(canvasToBase64(merged))
             labelRanges.push([segStart + 1, segEnd])
           }
+          logger.timeEnd(`Batch ${batchNum}: merge grid ${imgIdx + 1}`)
 
           const step = batchIdx * settings.imagesPerPrompt + imgIdx + 1
           const totalSteps = totalBatches * (settings.imagesPerPrompt + 1)
@@ -366,6 +423,7 @@ export function useProcessTab() {
             `Merging image ${imgIdx + 1}/${settings.imagesPerPrompt} for message ${batchNum}`
           )
         }
+        logger.timeEnd(`Batch ${batchNum}: image processing`)
 
         if (abortRef.current.signal.aborted || mergedImages.length === 0) continue
 
@@ -379,10 +437,12 @@ export function useProcessTab() {
           .join(', ')
         const prompt = `${settings.promptText}\n\nAnalyze ${mergedImages.length} images. ${labelDesc}.`
 
+        logger.time(`Batch ${batchNum}: API call`)
         const { text: responseText, success } = await client.sendRequest(
           prompt,
           mergedImages
         )
+        logger.timeEnd(`Batch ${batchNum}: API call`)
 
         if (!success) {
           toast.error(`Message ${batchNum} failed: ${responseText}`)
@@ -419,25 +479,30 @@ export function useProcessTab() {
           `Message ${batchNum}/${totalBatches} complete`
         )
 
-        // Auto-save intermediate results after each batch
+        // Auto-save intermediate results after each batch (IndexedDB + folder)
         if (rows.length > 0) {
           const csvName = `${folderName || 'results'}_${new Date().toISOString().slice(0, 10)}.csv`
           const csvText = toCsvString(rows, settings.mainColumn)
           await saveCsvToStorage(csvName, csvText)
           await saveLastCsvName(csvName)
           processing.setCurrentCsvName(csvName)
+          // Also persist to rename_files/ on disk
+          const dh = useProcessingStore.getState().dirHandle
+          if (dh) await saveCsvToFolder(dh, csvName, csvText)
         }
       }
 
       processing.setFailedBatches(failedBatches)
 
-      // Final save
+      // Final save (IndexedDB + folder)
       if (rows.length > 0 && !abortRef.current.signal.aborted) {
         const csvName = `${folderName || 'results'}_${new Date().toISOString().slice(0, 10)}.csv`
         const csvText = toCsvString(rows, settings.mainColumn)
         await saveCsvToStorage(csvName, csvText)
         await saveLastCsvName(csvName)
         processing.setCurrentCsvName(csvName)
+        const dh = useProcessingStore.getState().dirHandle
+        if (dh) await saveCsvToFolder(dh, csvName, csvText)
         logger.info(`Saved results as: ${csvName}`)
       }
 
@@ -452,6 +517,7 @@ export function useProcessTab() {
       toast.error(`Processing failed: ${e.message}`)
       logger.error(`Processing error: ${e.message}`)
     } finally {
+      logger.timeEnd('Total processing')
       processing.setProcessing(false)
     }
   }, [apiKeys, imageFiles, settings, processing, folderName])

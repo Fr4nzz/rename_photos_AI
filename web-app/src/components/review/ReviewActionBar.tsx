@@ -42,6 +42,59 @@ import {
   Undo2,
 } from 'lucide-react'
 
+/**
+ * Get a readwrite directory handle, reusing the stored one if available.
+ * Falls back to showing a directory picker if no stored handle exists.
+ */
+async function getReadWriteDirHandle(): Promise<FileSystemDirectoryHandle> {
+  const stored = useProcessingStore.getState().dirHandle
+  if (stored) {
+    // Ensure we have readwrite permission
+    const perm = await (stored as any).queryPermission({ mode: 'readwrite' })
+    if (perm === 'granted') return stored
+    // Request readwrite if only read was granted
+    const req = await (stored as any).requestPermission({ mode: 'readwrite' })
+    if (req === 'granted') return stored
+  }
+  // Fallback: ask user to pick the folder
+  return await (window as any).showDirectoryPicker({
+    id: 'photo-rename',
+    mode: 'readwrite',
+  })
+}
+
+/**
+ * Rename a file in-place within a directory.
+ * Tries move() API first (efficient O(1) rename), falls back to copy-and-delete.
+ */
+async function renameFileInDir(
+  dirHandle: FileSystemDirectoryHandle,
+  oldName: string,
+  newName: string
+): Promise<void> {
+  if (oldName === newName) return
+
+  const sourceHandle = await dirHandle.getFileHandle(oldName)
+
+  // Try native move() first (Chrome may support it for local files)
+  if (typeof (sourceHandle as any).move === 'function') {
+    try {
+      await (sourceHandle as any).move(newName)
+      return
+    } catch {
+      // move() not supported for local files — fall through to copy-and-delete
+    }
+  }
+
+  // Fallback: read → write new → delete original
+  const file = await sourceHandle.getFile()
+  const destHandle = await dirHandle.getFileHandle(newName, { create: true })
+  const writable = await destHandle.createWritable()
+  await writable.write(file)
+  await writable.close()
+  await dirHandle.removeEntry(oldName)
+}
+
 interface Props {
   onRecalculate: () => void
   onSave: () => void
@@ -131,10 +184,7 @@ export function ReviewActionBar({
     }
 
     try {
-      const dirHandle: FileSystemDirectoryHandle = await (window as any).showDirectoryPicker({
-        id: 'photo-rename',
-        mode: 'readwrite',
-      })
+      const dirHandle = await getReadWriteDirHandle()
 
       setIsRenaming(true)
       setDownloadProgress(0)
@@ -145,20 +195,7 @@ export function ReviewActionBar({
       for (let i = 0; i < rowsToRename.length; i++) {
         const row = rowsToRename[i]
         try {
-          // Read original file
-          const sourceHandle = await dirHandle.getFileHandle(row.currentPath)
-          const file = await sourceHandle.getFile()
-
-          // Write with new name
-          const destHandle = await dirHandle.getFileHandle(row.to, { create: true })
-          const writable = await destHandle.createWritable()
-          await writable.write(file)
-          await writable.close()
-
-          // Remove original if name changed
-          if (row.currentPath !== row.to) {
-            await dirHandle.removeEntry(row.currentPath)
-          }
+          await renameFileInDir(dirHandle, row.currentPath, row.to)
 
           renameLog.push({
             original: row.currentPath,
@@ -188,7 +225,7 @@ export function ReviewActionBar({
       })
       setPhotoRows(updatedRows)
 
-      toast.success(`Renamed ${renamed} files`)
+      toast.success(`Renamed ${renamed} files in-place`)
       logger.info(`Renamed ${renamed} files, ${rowsToRename.length - renamed} skipped`)
     } catch (e: any) {
       if (e.name !== 'AbortError') {
@@ -209,10 +246,7 @@ export function ReviewActionBar({
     }
 
     try {
-      const dirHandle: FileSystemDirectoryHandle = await (window as any).showDirectoryPicker({
-        id: 'photo-rename',
-        mode: 'readwrite',
-      })
+      const dirHandle = await getReadWriteDirHandle()
 
       setIsRenaming(true)
       setDownloadProgress(0)
@@ -221,17 +255,7 @@ export function ReviewActionBar({
       for (let i = 0; i < log.length; i++) {
         const entry = log[i]
         try {
-          const sourceHandle = await dirHandle.getFileHandle(entry.renamed)
-          const file = await sourceHandle.getFile()
-
-          const destHandle = await dirHandle.getFileHandle(entry.original, { create: true })
-          const writable = await destHandle.createWritable()
-          await writable.write(file)
-          await writable.close()
-
-          if (entry.renamed !== entry.original) {
-            await dirHandle.removeEntry(entry.renamed)
-          }
+          await renameFileInDir(dirHandle, entry.renamed, entry.original)
           restored++
         } catch (err: any) {
           logger.warn(`Could not restore ${entry.renamed}: ${err.message}`)

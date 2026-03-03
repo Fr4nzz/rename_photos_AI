@@ -13,6 +13,7 @@ import {
   downloadCsv,
   getLastCsvName,
   saveLastCsvName,
+  saveCsvToFolder,
 } from '@/lib/csvHandler'
 import { logger } from '@/lib/logger'
 
@@ -41,16 +42,18 @@ export function useReviewTab() {
   useEffect(() => {
     refreshCsvList()
     if (photoRows.length === 0) {
+      logger.time('Startup: auto-load CSV')
       getLastCsvName().then(async (name) => {
-        if (!name) return
+        if (!name) { logger.timeEnd('Startup: auto-load CSV'); return }
         const text = await loadCsvFromStorage(name)
-        if (!text) return
+        if (!text) { logger.timeEnd('Startup: auto-load CSV'); return }
         const rows = parseCsv(text, mainColumn)
         if (rows.length > 0) {
           setPhotoRows(rows)
           setSelectedCsv(name)
           logger.info(`Auto-loaded last CSV: ${name} (${rows.length} rows)`)
         }
+        logger.timeEnd('Startup: auto-load CSV')
       })
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -62,10 +65,13 @@ export function useReviewTab() {
 
     clearTimeout(autosaveTimer.current)
     autosaveTimer.current = setTimeout(async () => {
-      const csvName = selectedCsv || useProcessingStore.getState().currentCsvName
+      const { currentCsvName, dirHandle } = useProcessingStore.getState()
+      const csvName = selectedCsv || currentCsvName
       if (!csvName) return
       const text = toCsvString(photoRows, mainColumn)
       await saveCsvToStorage(csvName, text)
+      // Also persist to rename_files/ on disk
+      if (dirHandle) await saveCsvToFolder(dirHandle, csvName, text)
       logger.info(`Auto-saved: ${csvName}`)
     }, 2000)
 
@@ -196,6 +202,9 @@ export function useReviewTab() {
     const text = toCsvString(photoRows, mainColumn)
     await saveCsvToStorage(csvName, text)
     await saveLastCsvName(csvName)
+    // Also persist to rename_files/ on disk
+    const dh = useProcessingStore.getState().dirHandle
+    if (dh) await saveCsvToFolder(dh, csvName, text)
     setSelectedCsv(csvName)
     await refreshCsvList()
     toast.success(`Saved: ${csvName}`)

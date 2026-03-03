@@ -234,3 +234,74 @@ export async function saveRenameLog(entries: RenameLogEntry[]): Promise<void> {
 export async function getRenameLog(): Promise<RenameLogEntry[]> {
   return (await getMeta('renameLog')) ?? []
 }
+
+// --- Filesystem CSV persistence (rename_files subfolder) ---
+
+const RENAME_FILES_DIR = 'rename_files'
+
+/**
+ * Get or create the rename_files subdirectory within the given directory handle.
+ */
+async function getRenameFilesDir(
+  dirHandle: FileSystemDirectoryHandle
+): Promise<FileSystemDirectoryHandle> {
+  return await dirHandle.getDirectoryHandle(RENAME_FILES_DIR, { create: true })
+}
+
+/**
+ * Save a CSV to the rename_files/ subfolder on disk.
+ * Silently ignores errors (e.g. permission denied, non-Chrome browser).
+ */
+export async function saveCsvToFolder(
+  dirHandle: FileSystemDirectoryHandle,
+  csvName: string,
+  csvText: string
+): Promise<void> {
+  try {
+    const subDir = await getRenameFilesDir(dirHandle)
+    const fileHandle = await subDir.getFileHandle(csvName, { create: true })
+    const writable = await fileHandle.createWritable()
+    await writable.write(csvText)
+    await writable.close()
+  } catch {
+    // Silently fail — filesystem save is best-effort
+  }
+}
+
+/**
+ * List all CSV files in the rename_files/ subfolder.
+ * Returns empty array if the folder doesn't exist.
+ */
+export async function listCsvsFromFolder(
+  dirHandle: FileSystemDirectoryHandle
+): Promise<string[]> {
+  try {
+    const subDir = await dirHandle.getDirectoryHandle(RENAME_FILES_DIR)
+    const names: string[] = []
+    for await (const [name, handle] of (subDir as any).entries()) {
+      if (handle.kind === 'file' && name.endsWith('.csv')) {
+        names.push(name)
+      }
+    }
+    return names.sort()
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Load a specific CSV from the rename_files/ subfolder.
+ */
+export async function loadCsvFromFolder(
+  dirHandle: FileSystemDirectoryHandle,
+  csvName: string
+): Promise<string | null> {
+  try {
+    const subDir = await dirHandle.getDirectoryHandle(RENAME_FILES_DIR)
+    const fileHandle = await subDir.getFileHandle(csvName)
+    const file = await fileHandle.getFile()
+    return await file.text()
+  } catch {
+    return null
+  }
+}

@@ -5,6 +5,8 @@ interface ProcessingState {
   photoRows: PhotoRow[]
   /** Map of filename → File object for thumbnail display in Review tab */
   fileMap: Map<string, File>
+  /** Directory handle for filesystem CSV persistence */
+  dirHandle: FileSystemDirectoryHandle | null
   isProcessing: boolean
   progress: { percent: number; message: string }
   runMode: RunMode
@@ -15,6 +17,7 @@ interface ProcessingState {
 
   setPhotoRows: (rows: PhotoRow[]) => void
   setFileMap: (map: Map<string, File>) => void
+  setDirHandle: (handle: FileSystemDirectoryHandle | null) => void
   updateRow: (index: number, updates: Partial<PhotoRow>) => void
   setProcessing: (value: boolean) => void
   setProgress: (percent: number, message: string) => void
@@ -29,6 +32,7 @@ interface ProcessingState {
 export const useProcessingStore = create<ProcessingState>()((set) => ({
   photoRows: [],
   fileMap: new Map(),
+  dirHandle: null,
   isProcessing: false,
   progress: { percent: 0, message: '' },
   runMode: 'start_over',
@@ -39,6 +43,7 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
 
   setPhotoRows: (rows) => set({ photoRows: rows }),
   setFileMap: (map) => set({ fileMap: map }),
+  setDirHandle: (handle) => set({ dirHandle: handle }),
   updateRow: (index, updates) =>
     set((state) => {
       const rows = [...state.photoRows]

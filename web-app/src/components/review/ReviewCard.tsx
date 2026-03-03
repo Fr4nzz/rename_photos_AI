@@ -31,15 +31,20 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
     let urlToRevoke: string | null = null
 
     if (reviewCropEnabled && cropSettings.zoom) {
-      // Load image → crop → blob URL
+      // Load image → scale down → crop → blob URL
       const img = new Image()
       const rawUrl = URL.createObjectURL(file)
       img.onload = () => {
         if (cancelled) { URL.revokeObjectURL(rawUrl); return }
+        // Scale down to max 800px before cropping (avoids slow canvas ops on full-res images)
+        const MAX_DIM = 800
+        const scale = Math.min(1, MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight))
+        const w = Math.round(img.naturalWidth * scale)
+        const h = Math.round(img.naturalHeight * scale)
         const canvas = document.createElement('canvas')
-        canvas.width = img.naturalWidth
-        canvas.height = img.naturalHeight
-        canvas.getContext('2d')!.drawImage(img, 0, 0)
+        canvas.width = w
+        canvas.height = h
+        canvas.getContext('2d')!.drawImage(img, 0, 0, w, h)
         URL.revokeObjectURL(rawUrl)
 
         const cropped = cropCanvas(canvas, cropSettings)
@@ -72,9 +77,6 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
         ? 'bg-red-500/10 text-red-600'
         : 'bg-muted text-muted-foreground'
 
-  // Proportional width: 4:3 ratio by default
-  const thumbWidth = Math.round(reviewThumbSize * 0.75)
-
   return (
     <Card className={`overflow-hidden${isDuplicate ? ' ring-2 ring-amber-500/50' : ''}`}>
       <CardHeader className="px-3 py-2 pb-1">
@@ -98,14 +100,14 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
         </div>
       </CardHeader>
       <CardContent className="flex gap-3 px-3 pb-2">
-        {/* Thumbnail */}
+        {/* Thumbnail — auto width from natural aspect ratio */}
         {thumbUrl && (
-          <div className="flex-shrink-0">
+          <div className="flex-shrink-0" style={{ maxWidth: '50%' }}>
             <img
               src={thumbUrl}
               alt={row.from}
-              style={{ height: reviewThumbSize, width: thumbWidth }}
-              className="rounded-sm border object-cover"
+              style={{ height: reviewThumbSize, width: 'auto' }}
+              className="rounded-sm border"
             />
           </div>
         )}
@@ -122,7 +124,7 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
                 className="h-7 text-xs"
               />
             </div>
-            <div className="w-16 space-y-0.5">
+            <div className="w-14 space-y-0.5">
               <Label className="text-[10px] text-muted-foreground">Suffix</Label>
               <Input
                 value={row.suffix}
