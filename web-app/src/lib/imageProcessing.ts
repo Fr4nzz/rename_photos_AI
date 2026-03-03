@@ -1,6 +1,12 @@
 import exifr from 'exifr'
 import { SUPPORTED_RAW_EXTENSIONS } from './constants'
 import { logger } from './logger'
+import {
+  thumbnailCacheKey,
+  getCachedThumbnail,
+  setCachedThumbnail,
+} from './thumbnailCache'
+import type { DecodeRequest, DecodeResponse } from './decodeWorker'
 import type { CropSettings } from '@/types'
 
 /**
@@ -50,12 +56,54 @@ export async function loadImage(file: File): Promise<HTMLImageElement> {
 }
 
 /**
- * Fast preview loader: decodes at reduced resolution using createImageBitmap.
- * Returns an oriented canvas at most `maxSize` px wide — skips the expensive
- * full-resolution decode that loadImage + fixOrientation perform.
- * Results are promise-cached: concurrent/repeated calls for the same file
- * share one decode operation (also deduplicates React Strict Mode double-mounts).
+ * Fast preview loader with two-tier caching:
+ * 1. In-memory promise cache (instant for same session / React Strict Mode)
+ * 2. Persistent IndexedDB blob cache (fast on return visits, ~5-50ms per image)
+ *
+ * Decoding is offloaded to a small Web Worker pool so the main thread stays
+ * responsive during parallel image loads.
  */
+
+// ── Worker pool ──────────────────────────────────────────────────────────────
+const POOL_SIZE = navigator.hardwareConcurrency
+  ? Math.min(navigator.hardwareConcurrency, 4)
+  : 2
+
+let workers: Worker[] | null = null
+let nextWorker = 0
+let msgId = 0
+const pending = new Map<number, { resolve: (bmp: ImageBitmap) => void; reject: (e: Error) => void }>()
+
+function getWorkerPool(): Worker[] {
+  if (workers) return workers
+  workers = Array.from({ length: POOL_SIZE }, () => {
+    const w = new Worker(
+      new URL('./decodeWorker.ts', import.meta.url),
+      { type: 'module' }
+    )
+    w.onmessage = (e: MessageEvent<DecodeResponse>) => {
+      const cb = pending.get(e.data.id)
+      if (!cb) return
+      pending.delete(e.data.id)
+      if (e.data.error) cb.reject(new Error(e.data.error))
+      else cb.resolve(e.data.bitmap!)
+    }
+    return w
+  })
+  return workers
+}
+
+function decodeInWorker(blob: Blob, maxSize: number, applyExif: boolean): Promise<ImageBitmap> {
+  const pool = getWorkerPool()
+  const id = msgId++
+  const worker = pool[nextWorker++ % POOL_SIZE]
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject })
+    worker.postMessage({ id, blob, maxSize, applyExif } satisfies DecodeRequest)
+  })
+}
+
+// ── In-memory promise cache ─────────────────────────────────────────────────
 const previewCache = new Map<string, Promise<HTMLCanvasElement>>()
 
 export function clearPreviewCache() {
@@ -67,30 +115,46 @@ export async function loadImagePreview(
   maxSize: number,
   applyExif = true
 ): Promise<HTMLCanvasElement> {
-  const key = `${file.name}|${file.size}|${file.lastModified}|${maxSize}|${applyExif ? 1 : 0}`
+  const key = thumbnailCacheKey(file.name, file.size, file.lastModified, maxSize, applyExif)
   const cached = previewCache.get(key)
   if (cached) return cached
 
   const promise = (async () => {
+    // 1. Check persistent IndexedDB cache
+    const cachedBlob = await getCachedThumbnail(key)
+    if (cachedBlob) {
+      const bmp = await createImageBitmap(cachedBlob)
+      const c = document.createElement('canvas')
+      c.width = bmp.width
+      c.height = bmp.height
+      c.getContext('2d')!.drawImage(bmp, 0, 0)
+      bmp.close()
+      return c
+    }
+
+    // 2. Prepare source blob (extract RAW thumbnail if needed)
     const ext = '.' + file.name.split('.').pop()!.toLowerCase()
     let source: Blob = file
 
     if (SUPPORTED_RAW_EXTENSIONS.has(ext)) {
       const thumb = await exifr.thumbnail(file)
       if (!thumb) throw new Error(`No thumbnail in RAW file: ${file.name}`)
-      source = new Blob([thumb], { type: 'image/jpeg' })
+      source = new Blob([thumb.buffer as ArrayBuffer], { type: 'image/jpeg' })
     }
 
-    const bmp = await createImageBitmap(source, {
-      resizeWidth: maxSize,
-      resizeQuality: 'medium',
-      imageOrientation: applyExif ? 'from-image' : 'none',
-    })
+    // 3. Decode in Web Worker (off main thread)
+    const bmp = await decodeInWorker(source, maxSize, applyExif)
     const c = document.createElement('canvas')
     c.width = bmp.width
     c.height = bmp.height
     c.getContext('2d')!.drawImage(bmp, 0, 0)
     bmp.close()
+
+    // 4. Persist to IndexedDB for next visit (fire-and-forget)
+    c.toBlob((blob) => {
+      if (blob) setCachedThumbnail(key, blob)
+    }, 'image/jpeg', 0.85)
+
     return c
   })()
 

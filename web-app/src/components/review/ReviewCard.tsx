@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { useProcessingStore } from '@/stores/processingStore'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { cropCanvas } from '@/lib/imageProcessing'
+import { loadImagePreview, cropCanvas } from '@/lib/imageProcessing'
 import type { PhotoRow } from '@/types'
 
 interface Props {
@@ -30,39 +30,26 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
     let cancelled = false
     let urlToRevoke: string | null = null
 
-    if (reviewCropEnabled && cropSettings.zoom) {
-      // Load image → scale down → crop → blob URL
-      const img = new Image()
-      const rawUrl = URL.createObjectURL(file)
-      img.onload = () => {
-        if (cancelled) { URL.revokeObjectURL(rawUrl); return }
-        // Scale down to max 800px before cropping (avoids slow canvas ops on full-res images)
-        const MAX_DIM = 800
-        const scale = Math.min(1, MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight))
-        const w = Math.round(img.naturalWidth * scale)
-        const h = Math.round(img.naturalHeight * scale)
-        const canvas = document.createElement('canvas')
-        canvas.width = w
-        canvas.height = h
-        canvas.getContext('2d')!.drawImage(img, 0, 0, w, h)
-        URL.revokeObjectURL(rawUrl)
+    // Use loadImagePreview (worker + IDB cache) instead of full-res decode
+    ;(async () => {
+      try {
+        const canvas = await loadImagePreview(file, 800)
+        if (cancelled) return
 
-        const cropped = cropCanvas(canvas, cropSettings)
-        cropped.toBlob((blob) => {
+        const output = reviewCropEnabled && cropSettings.zoom
+          ? cropCanvas(canvas, cropSettings)
+          : canvas
+
+        output.toBlob((blob) => {
           if (cancelled || !blob) return
           const url = URL.createObjectURL(blob)
           urlToRevoke = url
           setThumbUrl(url)
         }, 'image/jpeg', 0.85)
+      } catch {
+        if (!cancelled) setThumbUrl(null)
       }
-      img.onerror = () => { URL.revokeObjectURL(rawUrl); setThumbUrl(null) }
-      img.src = rawUrl
-    } else {
-      // Direct blob URL (fast path)
-      const url = URL.createObjectURL(file)
-      urlToRevoke = url
-      setThumbUrl(url)
-    }
+    })()
 
     return () => {
       cancelled = true

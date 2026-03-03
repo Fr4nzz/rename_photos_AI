@@ -187,7 +187,7 @@ export function useProcessTab() {
     try {
       logger.time('Preview: generate')
       const entry = imageFiles[selectedImageIndex]
-      const oriented = await loadImagePreview(entry.file, 600)
+      const oriented = await loadImagePreview(entry.file, 800)
 
       const originalUrl = await canvasToBlobUrl(oriented)
       const rotated = rotateCanvas(oriented, settings.rotationAngle)
@@ -198,7 +198,7 @@ export function useProcessTab() {
       if (settings.cropSettings.prerotate) {
         const source = settings.useExif
           ? oriented
-          : await loadImagePreview(entry.file, 600, false)
+          : await loadImagePreview(entry.file, 800, false)
         forGemini = rotateCanvas(source, settings.rotationAngle)
       } else {
         forGemini = oriented
@@ -230,7 +230,7 @@ export function useProcessTab() {
       const endIdx = Math.min(startIdx + gridSize, imageFiles.length)
       const canvases = await Promise.all(
         imageFiles.slice(startIdx, endIdx).map(async (entry, k) => {
-          const oriented = await loadImagePreview(entry.file, 600)
+          const oriented = await loadImagePreview(entry.file, 800)
           const forGemini = settings.cropSettings.prerotate
             ? rotateCanvas(oriented, settings.rotationAngle)
             : oriented
@@ -550,12 +550,4 @@ export function useProcessTab() {
     startProcessing,
     stopProcessing,
   }
-}
-
-async function toPlainCanvas(img: HTMLImageElement): Promise<HTMLCanvasElement> {
-  const c = document.createElement('canvas')
-  c.width = img.naturalWidth
-  c.height = img.naturalHeight
-  c.getContext('2d')!.drawImage(img, 0, 0)
-  return c
 }
