@@ -26,7 +26,13 @@ export type SortOption =
 
 export function useReviewTab() {
   const { mainColumn, suffixMode, customSuffixes, reviewItemsPerPage } = useSettingsStore()
-  const { photoRows, setPhotoRows } = useProcessingStore()
+  const {
+    photoRows,
+    selectedImageNames,
+    reviewSelectedOnly,
+    setPhotoRows,
+    setReviewSelectedOnly,
+  } = useProcessingStore()
 
   const [csvFiles, setCsvFiles] = useState<string[]>([])
   const [selectedCsv, setSelectedCsv] = useState('')
@@ -117,7 +123,9 @@ export function useReviewTab() {
 
   // Filter rows
   const filteredRows = useMemo(() => {
-    let rows = photoRows
+    let rows = reviewSelectedOnly
+      ? photoRows.filter((row) => selectedImageNames.has(row.from))
+      : photoRows
 
     switch (filter) {
       case 'crossedOut':
@@ -173,7 +181,7 @@ export function useReviewTab() {
     })
 
     return sorted
-  }, [photoRows, filter, sortOption])
+  }, [photoRows, filter, sortOption, reviewSelectedOnly, selectedImageNames])
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / reviewItemsPerPage))
   const pagedRows = filteredRows.slice(
@@ -230,6 +238,8 @@ export function useReviewTab() {
     filteredRows,
     pagedRows,
     photoRows,
+    reviewSelectedOnly,
+    setReviewSelectedOnly,
     duplicatePairs,
     refreshCsvList,
     loadCsv,

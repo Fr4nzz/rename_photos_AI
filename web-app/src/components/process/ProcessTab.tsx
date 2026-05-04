@@ -1,5 +1,4 @@
 import { useProcessTab } from '@/hooks/useProcessTab'
-import { FolderSelector } from './FolderSelector'
 import { PreviewSelector } from './PreviewSelector'
 import { RotationSettings } from './RotationSettings'
 import { CropSettings } from './CropSettings'
@@ -16,11 +15,15 @@ export function ProcessTab() {
       <div className="flex min-h-0 flex-1">
         {/* Left panel: Settings */}
         <div className="w-80 flex-shrink-0 overflow-y-auto border-r p-3 space-y-3">
-          <FolderSelector
-            folderName={hook.folderName}
-            onSelect={hook.selectDirectory}
-            onFileInput={hook.handleFileInput}
-          />
+          <div className="rounded border bg-card p-3">
+            <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Selected Images
+            </div>
+            <div className="mt-1 text-2xl font-semibold">{hook.imageFiles.length}</div>
+            <div className="text-xs text-muted-foreground">
+              Use Select Images to change the active set.
+            </div>
+          </div>
           <PreviewSelector
             imageFiles={hook.imageFiles}
             selectedImageIndex={hook.selectedImageIndex}
@@ -29,7 +32,7 @@ export function ProcessTab() {
             onSelectGrid={hook.setSelectedGridIndex}
             gridCount={hook.gridCount}
           />
-          <RotationSettings backendConnected={hook.backendConnected} />
+          <RotationSettings />
           <CropSettings />
           <ApiSettings />
         </div>

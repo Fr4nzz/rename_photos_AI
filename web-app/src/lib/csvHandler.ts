@@ -1,4 +1,4 @@
-import type { PhotoRow } from '@/types'
+import type { PhotoRow, RotationLogEntry } from '@/types'
 
 const DB_NAME = 'ai-photo-processor'
 const STORE_NAME = 'csvFiles'
@@ -233,6 +233,14 @@ export async function saveRenameLog(entries: RenameLogEntry[]): Promise<void> {
 
 export async function getRenameLog(): Promise<RenameLogEntry[]> {
   return (await getMeta<RenameLogEntry[]>('renameLog')) ?? []
+}
+
+export async function saveRotationLog(entries: RotationLogEntry[]): Promise<void> {
+  await setMeta('rotationLog', entries)
+}
+
+export async function getRotationLog(): Promise<RotationLogEntry[]> {
+  return (await getMeta<RotationLogEntry[]>('rotationLog')) ?? []
 }
 
 // --- Filesystem CSV persistence (rename_files subfolder) ---

@@ -1,6 +1,6 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { toast } from 'sonner'
-import type { FileEntry, PhotoRow } from '@/types'
+import type { PhotoRow } from '@/types'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useApiKeysStore } from '@/stores/apiKeysStore'
 import { useProcessingStore } from '@/stores/processingStore'
@@ -15,6 +15,7 @@ import {
   loadImagePreview,
   clearPreviewCache,
   rotateCanvas,
+  rotateBrowserImageFile,
   preprocessImage,
   mergeImages,
   canvasToBase64,
@@ -33,7 +34,9 @@ import {
   listCsvsFromFolder,
   loadCsvFromFolder,
 } from '@/lib/csvHandler'
+import { BROWSER_ROTATABLE_EXTENSIONS } from '@/lib/constants'
 import { getErrorMessage, getErrorName } from '@/lib/errors'
+import { getSelectedImageFiles } from '@/lib/selection'
 import { logger } from '@/lib/logger'
 
 export interface Previews {
@@ -49,7 +52,10 @@ export function useProcessTab() {
   const processing = useProcessingStore()
   const { status: backendStatus } = useBackendStore()
 
-  const [imageFiles, setImageFiles] = useState<FileEntry[]>([])
+  const imageFiles = useMemo(
+    () => getSelectedImageFiles(processing.imageFiles, processing.selectedImageNames),
+    [processing.imageFiles, processing.selectedImageNames]
+  )
   const [selectedImageIndex, setSelectedImageIndex] = useState(0)
   const [selectedGridIndex, setSelectedGridIndex] = useState(0)
   const [previews, setPreviews] = useState<Previews>({
@@ -107,7 +113,7 @@ export function useProcessTab() {
           const files = await getImageFilesFromHandle(handle, fileType)
           logger.timeEnd('Startup: list image files')
 
-          setImageFiles(files)
+          processing.setImageFiles(files, true)
           // Also populate fileMap for Review tab thumbnails
           logger.time('Startup: build fileMap')
           const fMap = new Map<string, File>()
@@ -143,7 +149,7 @@ export function useProcessTab() {
         const files = await getImageFilesFromHandle(handle, fileType)
         logger.timeEnd('Open folder: list images')
 
-        setImageFiles(files)
+        processing.setImageFiles(files, true)
         setSelectedImageIndex(0)
         setSelectedGridIndex(0)
         // Build fileMap for Review tab thumbnails
@@ -167,7 +173,7 @@ export function useProcessTab() {
   const handleFileInput = useCallback(
     (fileList: FileList) => {
       const files = getImageFilesFromInput(fileList, fileType)
-      setImageFiles(files)
+      processing.setImageFiles(files, true)
       setSelectedImageIndex(0)
       setSelectedGridIndex(0)
       if (files.length > 0) {
@@ -177,8 +183,86 @@ export function useProcessTab() {
       }
       logger.info(`Selected ${files.length} images via file input`)
     },
-    [fileType]
+    [fileType, processing]
   )
+
+  const applyRotationToFiles = useCallback(async () => {
+    if (!dirHandle) {
+      toast.error('Open a folder first so the app can write rotated files.')
+      return
+    }
+    if (settings.rotationAngle === 0) {
+      toast.info('Rotation is set to 0°, so no files need changes.')
+      return
+    }
+
+    const rotatableFiles = imageFiles.filter((entry) =>
+      BROWSER_ROTATABLE_EXTENSIONS.has(entry.extension)
+    )
+    const skippedCount = imageFiles.length - rotatableFiles.length
+
+    if (rotatableFiles.length === 0) {
+      toast.error('No JPEG or PNG files are loaded for browser rotation.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Rotate ${rotatableFiles.length} JPEG/PNG file(s) in place? ` +
+      'This rewrites image pixels and may remove some metadata. Keep your originals backed up.'
+    )
+    if (!confirmed) return
+
+    processing.setProcessing(true)
+    processing.setProgress(0, 'Applying rotation to files...')
+
+    let rotatedCount = 0
+    const failed: string[] = []
+
+    for (let i = 0; i < rotatableFiles.length; i++) {
+      const entry = rotatableFiles[i]
+      try {
+        const fileHandle = await dirHandle.getFileHandle(entry.path)
+        const latestFile = await fileHandle.getFile()
+        const rotatedBlob = await rotateBrowserImageFile(
+          latestFile,
+          settings.rotationAngle,
+          settings.useExif
+        )
+        if (!rotatedBlob) continue
+
+        const writable = await fileHandle.createWritable()
+        await writable.write(rotatedBlob)
+        await writable.close()
+        rotatedCount++
+      } catch (error: unknown) {
+        failed.push(`${entry.name}: ${getErrorMessage(error)}`)
+        logger.warn(`Could not rotate ${entry.name}: ${getErrorMessage(error)}`)
+      }
+
+      processing.setProgress(
+        Math.round(((i + 1) / rotatableFiles.length) * 100),
+        `Rotated ${i + 1}/${rotatableFiles.length} browser-supported files`
+      )
+    }
+
+    clearPreviewCache()
+    const refreshedFiles = await getImageFilesFromHandle(dirHandle, fileType)
+    processing.setImageFiles(refreshedFiles, false)
+    const fMap = new Map<string, File>()
+    for (const entry of refreshedFiles) fMap.set(entry.name, entry.file)
+    processing.setFileMap(fMap)
+
+    processing.setProcessing(false)
+    processing.setProgress(100, 'Rotation complete')
+
+    if (failed.length > 0) {
+      toast.warning(`Rotated ${rotatedCount} file(s); ${failed.length} failed. Check console logs.`)
+    } else if (skippedCount > 0) {
+      toast.success(`Rotated ${rotatedCount} JPEG/PNG file(s). Skipped ${skippedCount} unsupported file(s).`)
+    } else {
+      toast.success(`Rotated ${rotatedCount} JPEG/PNG file(s).`)
+    }
+  }, [dirHandle, fileType, imageFiles, processing, settings.rotationAngle, settings.useExif])
 
   // Update previews when selection or settings change
   const updatePreviews = useCallback(async () => {
@@ -287,8 +371,9 @@ export function useProcessTab() {
     let files = imageFiles
     const currentDirHandle = useProcessingStore.getState().dirHandle
     if (currentDirHandle) {
-      files = await getImageFilesFromHandle(currentDirHandle, fileType)
-      setImageFiles(files)
+      const refreshed = await getImageFilesFromHandle(currentDirHandle, fileType)
+      processing.setImageFiles(refreshed, false)
+      files = getSelectedImageFiles(refreshed, useProcessingStore.getState().selectedImageNames)
     }
 
     if (files.length === 0) {
@@ -562,8 +647,12 @@ export function useProcessTab() {
     dirHandle,
     gridCount,
     backendConnected: backendStatus.connected,
+    canApplyBrowserRotation: !!dirHandle && settings.rotationAngle !== 0 && imageFiles.some((entry) =>
+      BROWSER_ROTATABLE_EXTENSIONS.has(entry.extension)
+    ),
     selectDirectory,
     handleFileInput,
+    applyRotationToFiles,
     startProcessing,
     stopProcessing,
   }

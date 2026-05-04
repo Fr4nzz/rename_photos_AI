@@ -1,5 +1,5 @@
 import exifr from 'exifr'
-import { SUPPORTED_RAW_EXTENSIONS } from './constants'
+import { BROWSER_ROTATABLE_EXTENSIONS, SUPPORTED_RAW_EXTENSIONS } from './constants'
 import { logger } from './logger'
 import {
   thumbnailCacheKey,
@@ -216,6 +216,33 @@ export function rotateCanvas(
   ctx.rotate((angle * Math.PI) / 180)
   ctx.drawImage(source, -source.width / 2, -source.height / 2)
   return canvas
+}
+
+function getBrowserRotationMimeType(fileName: string): string | null {
+  const ext = '.' + fileName.split('.').pop()!.toLowerCase()
+  if (!BROWSER_ROTATABLE_EXTENSIONS.has(ext)) return null
+  return ext === '.png' ? 'image/png' : 'image/jpeg'
+}
+
+export async function rotateBrowserImageFile(
+  file: File,
+  angle: number,
+  applyExif: boolean
+): Promise<Blob | null> {
+  const mimeType = getBrowserRotationMimeType(file.name)
+  if (!mimeType || angle === 0) return null
+
+  const bitmap = await createImageBitmap(file, {
+    imageOrientation: applyExif ? 'from-image' : 'none',
+  })
+  const source = document.createElement('canvas')
+  source.width = bitmap.width
+  source.height = bitmap.height
+  source.getContext('2d')!.drawImage(bitmap, 0, 0)
+  bitmap.close()
+
+  const rotated = rotateCanvas(source, angle)
+  return await canvasToBlob(rotated, mimeType, mimeType === 'image/jpeg' ? 0.95 : undefined)
 }
 
 /**

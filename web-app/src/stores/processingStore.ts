@@ -1,8 +1,14 @@
 import { create } from 'zustand'
-import type { PhotoRow, RunMode } from '@/types'
+import type { FileEntry, PhotoRow, RotationLogEntry, RunMode } from '@/types'
+import { selectAllImageNames } from '@/lib/selection'
 
 interface ProcessingState {
   photoRows: PhotoRow[]
+  imageFiles: FileEntry[]
+  selectedImageNames: Set<string>
+  reviewSelectedOnly: boolean
+  renameCompanions: boolean
+  rotationLog: RotationLogEntry[]
   /** Map of filename → File object for thumbnail display in Review tab */
   fileMap: Map<string, File>
   /** Directory handle for filesystem CSV persistence */
@@ -16,6 +22,12 @@ interface ProcessingState {
   failedBatches: number[]
 
   setPhotoRows: (rows: PhotoRow[]) => void
+  setImageFiles: (files: FileEntry[], selectAll?: boolean) => void
+  setSelectedImageNames: (names: Set<string>) => void
+  toggleSelectedImage: (name: string) => void
+  setReviewSelectedOnly: (value: boolean) => void
+  setRenameCompanions: (value: boolean) => void
+  setRotationLog: (entries: RotationLogEntry[]) => void
   setFileMap: (map: Map<string, File>) => void
   setDirHandle: (handle: FileSystemDirectoryHandle | null) => void
   updateRow: (index: number, updates: Partial<PhotoRow>) => void
@@ -31,6 +43,11 @@ interface ProcessingState {
 
 export const useProcessingStore = create<ProcessingState>()((set) => ({
   photoRows: [],
+  imageFiles: [],
+  selectedImageNames: new Set(),
+  reviewSelectedOnly: false,
+  renameCompanions: true,
+  rotationLog: [],
   fileMap: new Map(),
   dirHandle: null,
   isProcessing: false,
@@ -42,6 +59,22 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
   failedBatches: [],
 
   setPhotoRows: (rows) => set({ photoRows: rows }),
+  setImageFiles: (files, selectAll = true) =>
+    set({
+      imageFiles: files,
+      selectedImageNames: selectAll ? selectAllImageNames(files) : new Set(),
+    }),
+  setSelectedImageNames: (names) => set({ selectedImageNames: new Set(names) }),
+  toggleSelectedImage: (name) =>
+    set((state) => {
+      const selected = new Set(state.selectedImageNames)
+      if (selected.has(name)) selected.delete(name)
+      else selected.add(name)
+      return { selectedImageNames: selected }
+    }),
+  setReviewSelectedOnly: (value) => set({ reviewSelectedOnly: value }),
+  setRenameCompanions: (value) => set({ renameCompanions: value }),
+  setRotationLog: (entries) => set({ rotationLog: entries }),
   setFileMap: (map) => set({ fileMap: map }),
   setDirHandle: (handle) => set({ dirHandle: handle }),
   updateRow: (index, updates) =>
@@ -66,6 +99,8 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
   reset: () =>
     set({
       photoRows: [],
+      imageFiles: [],
+      selectedImageNames: new Set(),
       isProcessing: false,
       progress: { percent: 0, message: '' },
       failedBatches: [],

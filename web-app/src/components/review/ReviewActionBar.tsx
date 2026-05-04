@@ -3,7 +3,9 @@ import { toast } from 'sonner'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useProcessingStore } from '@/stores/processingStore'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import {
   Select,
@@ -146,6 +148,7 @@ interface Props {
   onSave: () => void
   onExportCsv: () => void
   hasData: boolean
+  rowsToActOn: PhotoRow[]
 }
 
 export function ReviewActionBar({
@@ -153,9 +156,10 @@ export function ReviewActionBar({
   onSave,
   onExportCsv,
   hasData,
+  rowsToActOn,
 }: Props) {
   const { suffixMode, customSuffixes, updateSetting } = useSettingsStore()
-  const { photoRows, fileMap, setPhotoRows } = useProcessingStore()
+  const { photoRows, fileMap, renameCompanions, setPhotoRows, setRenameCompanions } = useProcessingStore()
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null)
   const [isRenaming, setIsRenaming] = useState(false)
   const { canSaveToFolder, tier } = getDownloadCapabilities()
@@ -163,7 +167,7 @@ export function ReviewActionBar({
   // Build named blobs from fileMap using the 'to' field
   function buildRenamedFiles(): { name: string; blob: Blob }[] {
     const files: { name: string; blob: Blob }[] = []
-    for (const row of photoRows) {
+    for (const row of rowsToActOn) {
       if (!row.to?.trim() || row.skip === 'x') continue
       const file = fileMap.get(row.from)
       if (!file) continue
@@ -223,7 +227,7 @@ export function ReviewActionBar({
       return
     }
 
-    const rowsToRename = photoRows.filter((r) => r.to?.trim() && r.skip !== 'x' && r.status !== 'Renamed')
+    const rowsToRename = rowsToActOn.filter((r) => r.to?.trim() && r.skip !== 'x' && r.status !== 'Renamed')
     if (rowsToRename.length === 0) {
       toast.error('No files to rename. Calculate names first.')
       return
@@ -241,12 +245,14 @@ export function ReviewActionBar({
 
       for (const row of rowsToRename) {
         plan.push({ src: row.currentPath, dst: row.to, orig: row.currentPath })
-        // Find and include RAW companion files
-        const newStem = row.to.replace(/\.[^.]+$/, '')
-        const companions = await findRawCompanions(dirHandle, row.currentPath)
-        for (const rawName of companions) {
-          const rawExt = rawName.slice(rawName.lastIndexOf('.'))
-          plan.push({ src: rawName, dst: newStem + rawExt, orig: rawName })
+        if (renameCompanions) {
+          // Find and include RAW companion files
+          const newStem = row.to.replace(/\.[^.]+$/, '')
+          const companions = await findRawCompanions(dirHandle, row.currentPath)
+          for (const rawName of companions) {
+            const rawExt = rawName.slice(rawName.lastIndexOf('.'))
+            plan.push({ src: rawName, dst: newStem + rawExt, orig: rawName })
+          }
         }
       }
       setDownloadProgress(10)
@@ -422,6 +428,19 @@ export function ReviewActionBar({
             className="h-8 w-28 text-xs"
           />
         )}
+
+        <div className="mx-1 h-5 w-px bg-border" />
+
+        <div className="flex items-center gap-1.5">
+          <Checkbox
+            id="rename-companions"
+            checked={renameCompanions}
+            onCheckedChange={(checked) => setRenameCompanions(!!checked)}
+          />
+          <Label htmlFor="rename-companions" className="text-xs cursor-pointer">
+            Rename companion RAW/sidecar files
+          </Label>
+        </div>
 
         <div className="mx-1 h-5 w-px bg-border" />
 

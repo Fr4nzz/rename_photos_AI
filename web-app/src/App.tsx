@@ -5,10 +5,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ThemeProvider } from '@/components/ThemeProvider'
 import { Header } from '@/components/layout/Header'
 import { ProcessTab } from '@/components/process/ProcessTab'
+import { SelectImagesTab } from '@/components/select/SelectImagesTab'
 import { ReviewTab } from '@/components/review/ReviewTab'
 import { ApiKeysTab } from '@/components/api-keys/ApiKeysTab'
 import { useProcessingStore } from '@/stores/processingStore'
-import { Camera, ClipboardCheck, Key } from 'lucide-react'
+import { Camera, ClipboardCheck, Images, Key } from 'lucide-react'
 
 function App() {
   const handleTabChange = (value: string) => {
@@ -23,9 +24,13 @@ function App() {
         <div className="flex h-screen flex-col bg-background text-foreground">
           <Header />
 
-          <Tabs defaultValue="process" className="flex min-h-0 flex-1 flex-col" onValueChange={handleTabChange}>
+          <Tabs defaultValue="select" className="flex min-h-0 flex-1 flex-col" onValueChange={handleTabChange}>
             <div className="border-b px-4">
               <TabsList className="h-10">
+                <TabsTrigger value="select" className="gap-1.5">
+                  <Images className="h-3.5 w-3.5" />
+                  Select Images
+                </TabsTrigger>
                 <TabsTrigger value="process" className="gap-1.5">
                   <Camera className="h-3.5 w-3.5" />
                   Process Images
@@ -41,6 +46,9 @@ function App() {
               </TabsList>
             </div>
 
+            <TabsContent forceMount value="select" className="mt-0 flex-1 overflow-hidden data-[state=inactive]:hidden">
+              <SelectImagesTab />
+            </TabsContent>
             <TabsContent forceMount value="process" className="mt-0 flex-1 overflow-hidden data-[state=inactive]:hidden">
               <ProcessTab />
             </TabsContent>

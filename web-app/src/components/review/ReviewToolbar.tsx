@@ -21,6 +21,8 @@ interface Props {
   onFilterChange: (f: FilterType) => void
   sortOption: SortOption
   onSortChange: (s: SortOption) => void
+  selectedOnly: boolean
+  onSelectedOnlyChange: (value: boolean) => void
 }
 
 const FILTERS: { label: string; value: FilterType }[] = [
@@ -51,6 +53,8 @@ export function ReviewToolbar({
   onFilterChange,
   sortOption,
   onSortChange,
+  selectedOnly,
+  onSelectedOnlyChange,
 }: Props) {
   const { reviewCropEnabled, reviewThumbSize, updateSetting } = useSettingsStore()
 
@@ -100,6 +104,19 @@ export function ReviewToolbar({
           ))}
         </SelectContent>
       </Select>
+
+      <div className="mx-2 h-5 w-px bg-border" />
+
+      <div className="flex items-center gap-1.5">
+        <Checkbox
+          id="review-selected"
+          checked={selectedOnly}
+          onCheckedChange={(checked) => onSelectedOnlyChange(!!checked)}
+        />
+        <Label htmlFor="review-selected" className="text-xs cursor-pointer">
+          Selected only
+        </Label>
+      </div>
 
       <div className="mx-2 h-5 w-px bg-border" />
 

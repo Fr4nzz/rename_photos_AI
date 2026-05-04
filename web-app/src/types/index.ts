@@ -44,6 +44,13 @@ export interface PhotoRow {
   status: 'Original' | 'Renamed' | 'New' | 'Missing'
 }
 
+export interface RotationLogEntry {
+  original: string
+  backup: string
+  angle: number
+  timestamp: string
+}
+
 export type SuffixMode = 'Standard' | 'Wing Clips' | 'Custom'
 
 export type RunMode = 'start_over' | 'continue' | 'retry_specific'

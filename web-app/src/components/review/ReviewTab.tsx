@@ -18,6 +18,8 @@ export function ReviewTab() {
         onFilterChange={hook.setFilter}
         sortOption={hook.sortOption}
         onSortChange={hook.setSortOption}
+        selectedOnly={hook.reviewSelectedOnly}
+        onSelectedOnlyChange={hook.setReviewSelectedOnly}
       />
 
       <ReviewPagination
@@ -38,6 +40,7 @@ export function ReviewTab() {
         onSave={hook.saveChanges}
         onExportCsv={hook.exportCsv}
         hasData={hook.photoRows.length > 0}
+        rowsToActOn={hook.filteredRows}
       />
     </div>
   )

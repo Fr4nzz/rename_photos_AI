@@ -8,9 +8,6 @@ import {
 } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { RotateCcw } from 'lucide-react'
 
 const ROTATION_OPTIONS = [
   { label: '0° (No Change)', value: 0 },
@@ -19,11 +16,7 @@ const ROTATION_OPTIONS = [
   { label: '90° CW', value: 270 },
 ]
 
-interface Props {
-  backendConnected: boolean
-}
-
-export function RotationSettings({ backendConnected }: Props) {
+export function RotationSettings() {
   const { rotationAngle, useExif, updateSetting } = useSettingsStore()
 
   return (
@@ -59,26 +52,9 @@ export function RotationSettings({ backendConnected }: Props) {
         </Label>
       </div>
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full gap-1.5 text-xs"
-              disabled={!backendConnected}
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              Apply Rotation to Files
-            </Button>
-          </div>
-        </TooltipTrigger>
-        {!backendConnected && (
-          <TooltipContent>
-            Requires local backend for RAW/HEIC file rotation
-          </TooltipContent>
-        )}
-      </Tooltip>
+      <p className="text-xs text-muted-foreground">
+        File rotation is handled in Select Images so it can use the current selection and undo log.
+      </p>
     </div>
   )
 }

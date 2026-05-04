@@ -4,6 +4,10 @@ export const SUPPORTED_COMPRESSED_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.heic', '.heif',
 ])
 
+export const BROWSER_ROTATABLE_EXTENSIONS = new Set([
+  '.jpg', '.jpeg', '.png',
+])
+
 export const SUPPORTED_RAW_EXTENSIONS = new Set([
   '.cr2', '.orf', '.tif', '.tiff', '.nef', '.arw', '.dng', '.raf',
 ])
