@@ -1,232 +1,83 @@
 # AI Photo Processor
 
-The AI Photo Processor is a desktop application designed to streamline the process of cataloging large batches of photos, particularly for scientific specimen collections. It leverages **Google's Gemini API** to automatically extract handwritten data (like specimen IDs, notes, and labels) from images using OCR and provides a powerful interface to review, correct, and rename the corresponding files.
+AI Photo Processor is a browser app for cataloging specimen photo batches. It helps select and rotate images, build preview grids, send images to Gemini for label extraction, review the results, and rename files with undo support.
+
+Live app: https://fr4nzz.github.io/rename_photos_AI/
 
 ![AI Photo Processor Screenshot](screenshots/2025-07-17.png)
 
-## Key Features
+## What It Does
 
-### AI-Powered Data Extraction
-- **Gemini OCR**: Extract specimen IDs, handwritten notes, and other data from photos using Google's Gemini API (`google-genai` SDK) with fully customizable prompts
-- **Smart Model Selection**: Automatically filters to Gemini 2.5+ models, prioritizing Flash models for free-tier compatibility
-- **Batch Processing**: Process entire folders with real-time progress tracking and multi-API key rotation for rate limit handling
-- **Auto-Retry**: Automatically retries failed API calls with empty responses
+- Selects an image folder and lets you choose exactly which images are active for processing.
+- Rotates selected JPEG/PNG images in the browser and keeps an undo log for reversible changes.
+- Builds cropped image grids for Gemini OCR with configurable rows, columns, merged height, and messages in parallel.
+- Reviews extracted fields in a paginated table with thumbnails, filters, sorting, autosave, and CSV export.
+- Renames selected files safely, with optional companion RAW/sidecar renaming when files share the same basename.
 
-### Image Processing
-- **Live Previews**: Preview rotation, cropping, and message grids before sending to the API
-- **EXIF-Safe Rotation**: Modify orientation tags (not pixels) for JPEG (piexif), HEIC/HEIF (pillow-heif + exiftool), and RAW formats (exiftool)
-- **Pre-processing Options**: Crop to focus area, grayscale filter, and pre-rotation for improved OCR accuracy
+## Hosted Web App
 
-### Review & Rename
-- **Smart Review Grid**: Images grouped by ID with pair verification and mismatch highlighting
-- **In-Line Editing**: Edit data directly with autosave; paginated view with adjustable thumbnail quality
-- **Safe Renaming**: Generate filenames from extracted IDs, rename with RAW file pairing, full undo via logged restore
+Open the app here:
 
----
+https://fr4nzz.github.io/rename_photos_AI/
 
-## Download Standalone App
+The hosted version works directly in a modern browser. Browser-supported formats such as JPEG and PNG can be previewed, processed, and rotated from the web app. RAW formats such as CR2 and ORF can be included in the naming workflow, but direct RAW rotation requires the optional local backend because browsers cannot rewrite RAW metadata safely on their own.
 
-Ready-to-use standalone applications are available with no installation required. Just download, unzip, and run!
+Gemini API keys are saved locally in your browser.
 
-[**⬇️ Direct Download: AIPhotoProcessor-windows-v3.0-fixed.zip**](https://github.com/Fr4nzz/rename_photos_AI/releases/download/v3.0/AIPhotoProcessor-windows-v3.0-fixed.zip)
+## Recommended Workflow
 
-Or browse all releases: [GitHub Releases](https://github.com/Fr4nzz/rename_photos_AI/releases/latest)
+1. Open the app and add your Gemini API key in the API Keys tab.
+2. Use Select & Rotate Images to open a folder, filter images by filename/type, choose the active selection, and rotate JPEG/PNG files if needed.
+3. Use Process Images to configure crop, grid size, model, prompt, and parallel messages before sending batches to Gemini.
+4. Use Review Results to inspect thumbnails, correct extracted fields, create or load CSV files, and export results.
+5. Recalculate names, then rename files when the review looks correct.
 
-The Windows zip includes ExifTool v13.32 (from the official [ExifTool website](https://exiftool.org/)) so you can process RAW and HEIC images right away.
+## Current Defaults
 
-**Windows zip contents:**
-```
-AIPhotoProcessor/
-├── AIPhotoProcessor.exe
-├── exiftool.exe
-└── exiftool_files/
-    └── ... (Perl libraries required by exiftool)
-```
+The web app is tuned for small Gemini messages that work well with Gemini 3.1 Flash Lite:
 
----
+| Setting | Default |
+| --- | --- |
+| Model | `gemini-3.1-flash-lite-preview` |
+| Grids per message | `1` |
+| Grid rows | `2` |
+| Grid columns | `2` |
+| Merged image height | `1600` |
+| Parallel messages | `5` |
+| Main column | `CAM` |
 
-## Prerequisites
+The app includes rate-limit pacing so parallel requests do not exceed the configured model family limit.
 
-- **Google Gemini API Key**: Required for AI features. Get your free key from [Google AI Studio](https://aistudio.google.com/app/apikey).
-- **Python 3.9+** (source code users only): Required if running from source.
-- **ExifTool** (source code users only): Required for rotating RAW and HEIC files. Download from [exiftool.org](https://exiftool.org/). Bundled in the Windows standalone version.
+## Run Locally
 
-### Recommended Model
-
-**Gemini 3 Flash** is recommended for best results:
-- State-of-the-art vision capabilities for OCR tasks
-- Works with **free tier** API keys
-- Automatically selected as the default model
-
-> ⚠️ **Note**: Gemini 3 Pro requires a **paid API key**. The app prioritizes Flash models to ensure compatibility with free tier accounts.
-
----
-
-## Installation (From Source)
-
-### 1. Clone the Repository
 ```bash
 git clone https://github.com/Fr4nzz/rename_photos_AI.git
-cd rename_photos_AI
+cd rename_photos_AI/web-app
+npm install
+npm run dev
 ```
 
-### 2. Create Virtual Environment (Recommended)
+## Verify Before Deploying
+
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+cd web-app
+npm run lint
+npm run build
 ```
 
-### 3. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
+GitHub Pages deployment is handled by `.github/workflows/deploy-frontend.yml` when changes are pushed to `main`.
 
-### 4. Run the Application
-```bash
-python main.py
-```
+## Legacy Desktop App
 
----
+Older Python desktop builds are still available from GitHub Releases:
 
-## User Interface Guide
+https://github.com/Fr4nzz/rename_photos_AI/releases
 
-### API Keys Tab
-1. Paste your Google Gemini API key(s), one per line
-2. Click **Save API Keys**
-3. Multiple keys enable automatic rotation when rate limits are hit
+Those builds bundled ExifTool for local file metadata operations. The current hosted web app is the preferred version for ordinary browser-based processing, while RAW rotation remains a local-backend/desktop capability.
 
----
-
-### Process Images Tab
-
-#### Input Folder
-- **Browse**: Select the folder containing your images (JPEG, HEIC, RAW formats supported)
-- **ExifTool Path**: Specify path to exiftool executable (required for RAW/HEIC rotation)
-
-#### Preview Selection
-- **Image**: Select an individual image to preview processing settings
-- **Grid**: Select which grid (merged image) to preview before sending to Gemini
-
-#### Image Rotation
-| Option | Description |
-|--------|-------------|
-| **Rotation** | Manual rotation angle: 0°, 90° CCW, 180°, or 90° CW |
-| **Use EXIF rotation** | Apply the camera's orientation tag when displaying images |
-| **Apply Rotation to Files** | Permanently modify EXIF orientation tags on disk (non-destructive to pixels) |
-
-#### Cropping & Filters
-| Option | Description |
-|--------|-------------|
-| **Enable Cropping** | Crop images before sending to Gemini (useful to focus on label area) |
-| **Convert to Grayscale** | Convert to grayscale for potentially better OCR |
-| **Pre-rotate images for Gemini** | Apply the selected rotation angle to images before merging into the grid. When enabled, respects the "Use EXIF rotation" setting. When disabled, EXIF rotation is always applied. |
-| **Top/Bottom/Left/Right %** | Percentage of image to crop from each edge (0.0 = no crop, 0.5 = crop 50%) |
-
-#### API Settings
-| Option | Description |
-|--------|-------------|
-| **Model** | Select Gemini model (auto-populated with 2.5+ models, Flash models prioritized) |
-| **Grids per Message** | Number of grids to send in a single API message (default: 5) |
-| **Grid Size** | Rows × Columns for each grid (default: 3×3 = 9 photos per grid) |
-| **Merged Height** | Target height in pixels for merged grid images (default: 1080) |
-| **Main Column** | Column name for the primary extracted data (default: CAM) |
-
-#### Prompt
-Customize the instructions sent to Gemini. The default prompt is designed for extracting specimen IDs (CAM numbers) from wing photos, but you can modify it for any OCR task.
-
-#### Run Mode
-| Mode | Description |
-|------|-------------|
-| **Start Over** | Begin fresh processing of all images in the folder |
-| **Continue from [CSV]** | Resume from a previous session's progress |
-| **Retry specific messages** | Re-process specific message numbers (e.g., "1,3,5-7") using an existing CSV |
-
-#### Progress
-- **Ask Gemini (Start)**: Begin processing
-- **Stop**: Cancel processing (progress is saved)
-- Progress bar shows current message number and percentage
-
----
-
-### Review Results Tab
-
-#### Loading Data
-- **CSV Dropdown**: Select which output CSV to review
-- **Load Selected CSV**: Load the chosen file for review
-
-#### Filtering & Sorting
-| Filter | Description |
-|--------|-------------|
-| **Show All** | Display all images |
-| **Show Empty [Column]** | Show only images missing data in the main column |
-| **Show Filled [Column]** | Show only images with data in the main column |
-
-| Sort Option | Description |
-|-------------|-------------|
-| **File Name (A-Z / Z-A)** | Sort alphabetically by filename |
-| **Capture Date (New-Old / Old-New)** | Sort by EXIF capture date |
-| **CAM ID (A-Z / Z-A)** | Sort by extracted specimen ID |
-| **Message (1-N / N-1)** | Sort by the message number from processing |
-
-#### Pagination
-- **Items per page**: Adjust how many images to show (fewer = faster loading)
-- **Navigation**: Use Previous/Next or type a page number directly
-
-#### Review Grid
-Each image card displays:
-- **Thumbnail**: Click to open full image in default viewer
-- **Message N**: Blue label showing which API message this image was in
-- **Editable fields**: CAM (specimen ID), co (correction), n (notes), skip (x to skip)
-- **Status indicators**: Warnings for missing pairs, duplicates, etc.
-
-#### Actions
-| Button | Description |
-|--------|-------------|
-| **Recalculate Final Names** | Generate 'to' filenames based on extracted IDs. Creates a "_checked" CSV version |
-| **Rename Files** | Apply the generated filenames to actual files on disk |
-| **Undo Last Rename** | Restore files to their original names using the rename log |
-
----
-
-## Workflow Example
-
-1. **Setup**: Add your Gemini API key in the API Keys tab
-2. **Select Folder**: Choose a folder with specimen photos
-3. **Configure**: Adjust rotation/cropping to focus on the label area; preview with Grid selector
-4. **Process**: Click "Ask Gemini (Start)" and wait for completion
-5. **Review**: Switch to Review Results tab, correct any OCR errors
-6. **Rename**: Click "Recalculate Final Names" then "Rename Files"
-
----
-
-## Free Tier Capacity
-
-With a **free Gemini API key**, here's how many photos you can process:
-
-| Setting | Default Value |
-|---------|---------------|
-| Grid Size | 3 × 3 = 9 photos per grid |
-| Grids per Message | 5 grids per API message |
-| **Photos per Message** | 5 × 9 = **45 photos** |
-| Free tier rate limit | ~20 messages/day/key |
-| **Daily capacity per key** | 20 × 45 = **900 photos** |
-
-> 💡 **Tip**: Add multiple API keys to multiply your capacity. With 5 keys, you can process **4,500 photos/day**. The app automatically rotates between keys to maximize throughput.
-
----
-
-## Tips
-
-- **Grid Size**: Larger grids (e.g., 4×4) process more images per API call but may reduce OCR accuracy for small text
-- **Cropping**: If labels are in a consistent position, crop to just that area for better results
-- **Multiple API Keys**: Add several keys to avoid rate limiting during large batch processing
-- **Pre-rotate**: Use this if your photos need rotation AND you want control over EXIF behavior
-- **Message numbers**: If some messages fail, note their numbers and use "Retry specific messages" mode
-
----
-
-## License
+## License Notes
 
 This project uses:
-- [ExifTool](https://exiftool.org/) by Phil Harvey (Perl Artistic License / GPL)
-- [Google Generative AI SDK](https://github.com/google/generative-ai-python) (Apache 2.0)
+
+- ExifTool by Phil Harvey for local metadata workflows.
+- Google Gemini APIs for AI image extraction.

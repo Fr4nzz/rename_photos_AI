@@ -46,6 +46,35 @@ export interface Previews {
   grid: string | null
 }
 
+function getMaxParallelRequests(modelName: string, configuredParallelRequests: number): number {
+  const normalized = modelName.toLowerCase()
+  const configured = Math.max(1, configuredParallelRequests)
+  if (/gemini-3(?:\.\d+)?-.*flash/.test(normalized)) return configured
+  return 2
+}
+
+function getRequestsPerMinuteLimit(modelName: string): number {
+  const normalized = modelName.toLowerCase()
+  if (normalized.includes('gemini-3.1') && normalized.includes('flash-lite')) return 15
+  if (/gemini-3(?:\.\d+)?-.*flash/.test(normalized)) return 5
+  return 2
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(resolve, ms)
+    signal.addEventListener(
+      'abort',
+      () => {
+        window.clearTimeout(timeout)
+        resolve()
+      },
+      { once: true }
+    )
+  })
+}
+
 export function useProcessTab() {
   const settings = useSettingsStore()
   const { apiKeys } = useApiKeysStore()
@@ -372,8 +401,10 @@ export function useProcessTab() {
     const currentDirHandle = useProcessingStore.getState().dirHandle
     if (currentDirHandle) {
       const refreshed = await getImageFilesFromHandle(currentDirHandle, fileType)
+      const selectedNames = useProcessingStore.getState().selectedImageNames
       processing.setImageFiles(refreshed, false)
-      files = getSelectedImageFiles(refreshed, useProcessingStore.getState().selectedImageNames)
+      processing.setSelectedImageNames(selectedNames)
+      files = getSelectedImageFiles(refreshed, selectedNames)
     }
 
     if (files.length === 0) {
@@ -467,134 +498,178 @@ export function useProcessTab() {
         activeBatches.push(batchIdx)
       }
 
-      // Process batches in parallel groups (respects Gemini RPM limits)
-      const MAX_PARALLEL = 2
+      // Sliding worker queue: starts the next message as soon as one finishes.
+      const requestsPerMinuteLimit = getRequestsPerMinuteLimit(settings.modelName)
+      const maxParallelRequests = Math.min(
+        getMaxParallelRequests(settings.modelName, settings.parallelRequests ?? 5),
+        requestsPerMinuteLimit
+      )
+      const requestStartTimes: number[] = []
       let hadFailure = false
+      let nextActiveBatchIndex = 0
+      let completedBatches = 0
 
-      for (let g = 0; g < activeBatches.length; g += MAX_PARALLEL) {
-        if (abortController.signal.aborted || hadFailure) break
-        const group = activeBatches.slice(g, g + MAX_PARALLEL)
-
-        await Promise.all(group.map(async (batchIdx) => {
-          if (abortController.signal.aborted || hadFailure) return
-          const batchNum = batchIdx + 1
-          const batchStart = batchIdx * photosPerApiCall
-          const batchEnd = Math.min(batchStart + photosPerApiCall, totalPhotos)
-
-          // Build + process all grids in parallel
-          const gridTasks: { idx: number; segStart: number; segEnd: number }[] = []
-          for (let imgIdx = 0; imgIdx < settings.imagesPerPrompt; imgIdx++) {
-            const segStart = batchStart + imgIdx * gridSize
-            const segEnd = Math.min(segStart + gridSize, batchEnd)
-            if (segStart >= batchEnd) break
-            gridTasks.push({ idx: imgIdx, segStart, segEnd })
+      async function waitForRequestSlot(batchNum: number) {
+        while (!abortController.signal.aborted && !hadFailure) {
+          const now = Date.now()
+          while (requestStartTimes.length > 0 && now - requestStartTimes[0] >= 60_000) {
+            requestStartTimes.shift()
           }
 
-          logger.time(`Batch ${batchNum}: image processing`)
-          const gridResults = await Promise.all(
-            gridTasks.map(async ({ idx, segStart, segEnd }) => {
-              if (abortController.signal.aborted) return null
-              const gridLabel = `Batch ${batchNum} grid ${idx + 1}`
-              logger.time(`${gridLabel}: load+preprocess`)
-              const results = await Promise.all(
-                files.slice(segStart, segEnd).map(async (entry, k) => {
-                  try {
-                    const oriented = await loadImagePreview(entry.file, settings.mergedImgHeight)
-                    const forGemini = settings.cropSettings.prerotate
-                      ? rotateCanvas(oriented, settings.rotationAngle)
-                      : oriented
-                    return preprocessImage(forGemini, String(segStart + k + 1), settings.cropSettings)
-                  } catch (e: unknown) {
-                    logger.warn(`Skipping ${entry.name}: ${getErrorMessage(e)}`)
-                    return null
-                  }
-                })
-              )
-              const canvases = results.filter((c): c is HTMLCanvasElement => c !== null)
-              logger.timeEnd(`${gridLabel}: load+preprocess`)
-
-              logger.time(`${gridLabel}: merge+encode`)
-              const merged = canvases.length > 0
-                ? mergeImages(canvases, settings.mergedImgHeight, settings.gridRows, settings.gridCols)
-                : null
-              const base64 = merged ? canvasToBase64(merged, 'image/jpeg') : null
-              logger.timeEnd(`${gridLabel}: merge+encode`)
-
-              return base64 ? { base64, range: [segStart + 1, segEnd] as [number, number] } : null
-            })
-          )
-          logger.timeEnd(`Batch ${batchNum}: image processing`)
-
-          const mergedImages: string[] = []
-          const labelRanges: [number, number][] = []
-          for (const r of gridResults) {
-            if (r) { mergedImages.push(r.base64); labelRanges.push(r.range) }
-          }
-
-          if (abortController.signal.aborted || mergedImages.length === 0) return
-
-          processing.setProgress(
-            useProcessingStore.getState().progress.percent,
-            `Sending message ${batchNum}/${totalBatches}...`
-          )
-
-          const labelDesc = labelRanges
-            .map(([s, e], i) => `Image ${i + 1}: labels ${s}-${e}`)
-            .join(', ')
-          const prompt = `${settings.promptText}\n\nAnalyze ${mergedImages.length} images. ${labelDesc}.`
-
-          logger.time(`Batch ${batchNum}: API call`)
-          const { text: responseText, success } = await client.sendRequest(prompt, mergedImages)
-          logger.timeEnd(`Batch ${batchNum}: API call`)
-
-          if (!success) {
-            toast.error(`Message ${batchNum} failed: ${responseText}`)
-            hadFailure = true
+          if (requestStartTimes.length < requestsPerMinuteLimit) {
+            requestStartTimes.push(now)
             return
           }
 
-          if (!responseHasData(responseText, settings.mainColumn)) {
-            failedBatches.push(batchNum)
-            logger.warn(`Message ${batchNum} returned empty response`)
-          }
-
-          // Each batch updates different photoId ranges — no conflicts
-          const data = parseJsonResponse(responseText)
-          if (data) {
-            rows = rows.map((r) => {
-              const itemData = data[String(r.photoId)]
-              if (itemData) {
-                return {
-                  ...r,
-                  mainValue: itemData[settings.mainColumn] ?? '',
-                  co: itemData.co ?? '',
-                  n: itemData.n ?? '',
-                  skip: itemData.skip ?? '',
-                  batchNumber: batchNum,
-                }
-              }
-              return r
-            })
-            processing.setPhotoRows(rows)
-          }
-
+          const waitMs = Math.max(250, 60_000 - (now - requestStartTimes[0]))
+          const waitSeconds = Math.ceil(waitMs / 1000)
           processing.setProgress(
-            Math.floor(((batchIdx + 1) / totalBatches) * 100),
-            `Message ${batchNum}/${totalBatches} complete`
+            useProcessingStore.getState().progress.percent,
+            `Waiting ${waitSeconds}s for Gemini rate limit before message ${batchNum}/${totalBatches}...`
           )
-
-          // Auto-save after each batch completes
-          if (rows.length > 0) {
-            const csvName = `${folderName || 'results'}_${new Date().toISOString().slice(0, 10)}.csv`
-            const csvText = toCsvString(rows, settings.mainColumn)
-            await saveCsvToStorage(csvName, csvText)
-            await saveLastCsvName(csvName)
-            processing.setCurrentCsvName(csvName)
-            const dh = useProcessingStore.getState().dirHandle
-            if (dh) await saveCsvToFolder(dh, csvName, csvText)
-          }
-        }))
+          await sleep(waitMs, abortController.signal)
+        }
       }
+
+      async function processBatch(batchIdx: number) {
+        if (abortController.signal.aborted || hadFailure) return
+        const batchNum = batchIdx + 1
+        const batchStart = batchIdx * photosPerApiCall
+        const batchEnd = Math.min(batchStart + photosPerApiCall, totalPhotos)
+
+        // Build + process all grids in parallel
+        const gridTasks: { idx: number; segStart: number; segEnd: number }[] = []
+        for (let imgIdx = 0; imgIdx < settings.imagesPerPrompt; imgIdx++) {
+          const segStart = batchStart + imgIdx * gridSize
+          const segEnd = Math.min(segStart + gridSize, batchEnd)
+          if (segStart >= batchEnd) break
+          gridTasks.push({ idx: imgIdx, segStart, segEnd })
+        }
+
+        logger.time(`Batch ${batchNum}: image processing`)
+        const gridResults = await Promise.all(
+          gridTasks.map(async ({ idx, segStart, segEnd }) => {
+            if (abortController.signal.aborted) return null
+            const gridLabel = `Batch ${batchNum} grid ${idx + 1}`
+            logger.time(`${gridLabel}: load+preprocess`)
+            const results = await Promise.all(
+              files.slice(segStart, segEnd).map(async (entry, k) => {
+                try {
+                  const oriented = await loadImagePreview(entry.file, settings.mergedImgHeight)
+                  const forGemini = settings.cropSettings.prerotate
+                    ? rotateCanvas(oriented, settings.rotationAngle)
+                    : oriented
+                  return preprocessImage(forGemini, String(segStart + k + 1), settings.cropSettings)
+                } catch (e: unknown) {
+                  logger.warn(`Skipping ${entry.name}: ${getErrorMessage(e)}`)
+                  return null
+                }
+              })
+            )
+            const canvases = results.filter((c): c is HTMLCanvasElement => c !== null)
+            logger.timeEnd(`${gridLabel}: load+preprocess`)
+
+            logger.time(`${gridLabel}: merge+encode`)
+            const merged = canvases.length > 0
+              ? mergeImages(canvases, settings.mergedImgHeight, settings.gridRows, settings.gridCols)
+              : null
+            const base64 = merged ? canvasToBase64(merged, 'image/jpeg') : null
+            logger.timeEnd(`${gridLabel}: merge+encode`)
+
+            return base64 ? { base64, range: [segStart + 1, segEnd] as [number, number] } : null
+          })
+        )
+        logger.timeEnd(`Batch ${batchNum}: image processing`)
+
+        const mergedImages: string[] = []
+        const labelRanges: [number, number][] = []
+        for (const r of gridResults) {
+          if (r) { mergedImages.push(r.base64); labelRanges.push(r.range) }
+        }
+
+        if (abortController.signal.aborted || mergedImages.length === 0) return
+
+        processing.setProgress(
+          useProcessingStore.getState().progress.percent,
+          `Sending message ${batchNum}/${totalBatches} (${maxParallelRequests} parallel)...`
+        )
+
+        const labelDesc = labelRanges
+          .map(([s, e], i) => `Image ${i + 1}: labels ${s}-${e}`)
+          .join(', ')
+        const prompt = `${settings.promptText}\n\nAnalyze ${mergedImages.length} images. ${labelDesc}.`
+
+        await waitForRequestSlot(batchNum)
+        if (abortController.signal.aborted || hadFailure) return
+
+        logger.time(`Batch ${batchNum}: API call`)
+        const { text: responseText, success } = await client.sendRequest(prompt, mergedImages)
+        logger.timeEnd(`Batch ${batchNum}: API call`)
+
+        if (!success) {
+          toast.error(`Message ${batchNum} failed: ${responseText}`)
+          hadFailure = true
+          return
+        }
+
+        if (!responseHasData(responseText, settings.mainColumn)) {
+          failedBatches.push(batchNum)
+          logger.warn(`Message ${batchNum} returned empty response`)
+        }
+
+        // Each batch updates different photoId ranges — no conflicts
+        const data = parseJsonResponse(responseText)
+        if (data) {
+          rows = rows.map((r) => {
+            const itemData = data[String(r.photoId)]
+            if (itemData) {
+              return {
+                ...r,
+                mainValue: itemData[settings.mainColumn] ?? '',
+                co: itemData.co ?? '',
+                n: itemData.n ?? '',
+                skip: itemData.skip ?? '',
+                batchNumber: batchNum,
+              }
+            }
+            return r
+          })
+          processing.setPhotoRows(rows)
+        }
+
+        completedBatches += 1
+        processing.setProgress(
+          Math.floor((completedBatches / Math.max(activeBatches.length, 1)) * 100),
+          `Message ${batchNum}/${totalBatches} complete`
+        )
+
+        // Auto-save after each batch completes
+        if (rows.length > 0) {
+          const csvName = `${folderName || 'results'}_${new Date().toISOString().slice(0, 10)}.csv`
+          const csvText = toCsvString(rows, settings.mainColumn)
+          await saveCsvToStorage(csvName, csvText)
+          await saveLastCsvName(csvName)
+          processing.setCurrentCsvName(csvName)
+          const dh = useProcessingStore.getState().dirHandle
+          if (dh) await saveCsvToFolder(dh, csvName, csvText)
+        }
+      }
+
+      async function batchWorker() {
+        while (!abortController.signal.aborted && !hadFailure) {
+          const batchIdx = activeBatches[nextActiveBatchIndex]
+          nextActiveBatchIndex += 1
+          if (batchIdx === undefined) return
+          await processBatch(batchIdx)
+        }
+      }
+
+      await Promise.all(
+        Array.from(
+          { length: Math.min(maxParallelRequests, activeBatches.length) },
+          () => batchWorker()
+        )
+      )
 
       processing.setFailedBatches(failedBatches)
 

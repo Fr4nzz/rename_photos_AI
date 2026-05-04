@@ -29,7 +29,7 @@ function App() {
               <TabsList className="h-10">
                 <TabsTrigger value="select" className="gap-1.5">
                   <Images className="h-3.5 w-3.5" />
-                  Select Images
+                  Select & Rotate Images
                 </TabsTrigger>
                 <TabsTrigger value="process" className="gap-1.5">
                   <Camera className="h-3.5 w-3.5" />

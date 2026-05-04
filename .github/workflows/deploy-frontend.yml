@@ -2,11 +2,13 @@ name: Deploy Frontend to GitHub Pages
 
 on:
   push:
-    branches: [web-app]
+    branches: [main]
     paths:
+      - '.github/workflows/deploy-frontend.yml'
       - 'web-app/src/**'
       - 'web-app/public/**'
       - 'web-app/package.json'
+      - 'web-app/package-lock.json'
       - 'web-app/vite.config.ts'
       - 'web-app/index.html'
 

@@ -13,6 +13,7 @@ export interface AppSettings {
   gridRows: number
   gridCols: number
   mergedImgHeight: number
+  parallelRequests: number
   mainColumn: string
   modelName: string
   promptText: string

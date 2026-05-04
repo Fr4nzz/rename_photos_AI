@@ -13,6 +13,9 @@ import {
 export function ApiSettings() {
   const settings = useSettingsStore()
   const { availableModels } = useApiKeysStore()
+  const modelOptions = settings.modelName && !availableModels.includes(settings.modelName)
+    ? [settings.modelName, ...availableModels]
+    : availableModels
 
   return (
     <div className="space-y-2">
@@ -30,7 +33,7 @@ export function ApiSettings() {
             <SelectValue placeholder="Select a model..." />
           </SelectTrigger>
           <SelectContent>
-            {availableModels.map((m) => (
+            {modelOptions.map((m) => (
               <SelectItem key={m} value={m} className="text-xs">
                 {m}
               </SelectItem>
@@ -53,6 +56,22 @@ export function ApiSettings() {
           />
         </div>
         <div className="space-y-0.5">
+          <Label className="text-xs text-muted-foreground">Parallel Messages</Label>
+          <Input
+            type="number"
+            min={1}
+            max={10}
+            value={settings.parallelRequests ?? 5}
+            onChange={(e) =>
+              settings.updateSetting('parallelRequests', parseInt(e.target.value) || 1)
+            }
+            className="h-7 text-xs"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-0.5">
           <Label className="text-xs text-muted-foreground">Merged Height</Label>
           <Input
             type="number"
@@ -65,9 +84,6 @@ export function ApiSettings() {
             className="h-7 text-xs"
           />
         </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
         <div className="space-y-0.5">
           <Label className="text-xs text-muted-foreground">Grid Rows</Label>
           <Input
@@ -81,6 +97,9 @@ export function ApiSettings() {
             className="h-7 text-xs"
           />
         </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
         <div className="space-y-0.5">
           <Label className="text-xs text-muted-foreground">Grid Cols</Label>
           <Input

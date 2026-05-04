@@ -61,12 +61,13 @@ export const DEFAULT_PROMPT = `Extract CAM (CAM07xxxx) and notes (n) from the im
 }`
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  imagesPerPrompt: 5,
-  gridRows: 3,
-  gridCols: 3,
+  imagesPerPrompt: 1,
+  gridRows: 2,
+  gridCols: 2,
   mergedImgHeight: 1600,
+  parallelRequests: 5,
   mainColumn: 'CAM',
-  modelName: '',
+  modelName: 'gemini-3.1-flash-lite-preview',
   promptText: DEFAULT_PROMPT,
   rotationAngle: 180,
   useExif: true,
