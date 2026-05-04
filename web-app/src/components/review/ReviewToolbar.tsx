@@ -145,13 +145,13 @@ export function ReviewToolbar({
         <input
           type="range"
           min={80}
-          max={320}
+          max={640}
           step={10}
           value={reviewThumbSize}
           onChange={(e) => updateSetting('reviewThumbSize', Number(e.target.value))}
-          className="h-1 w-20 cursor-pointer accent-primary"
+          className="h-1 w-40 cursor-pointer accent-primary"
         />
-        <span className="text-[10px] text-muted-foreground w-7">{reviewThumbSize}</span>
+        <span className="text-[10px] text-muted-foreground w-8">{reviewThumbSize}</span>
       </div>
     </div>
   )
