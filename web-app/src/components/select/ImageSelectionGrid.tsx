@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Check } from 'lucide-react'
 import { loadImagePreview, canvasToBlobUrl } from '@/lib/imageProcessing'
 import { getErrorMessage } from '@/lib/errors'
 import type { FileEntry } from '@/types'
@@ -51,8 +51,13 @@ function ImageSelectionCard({ entry, selected, onToggle }: CardProps) {
             No preview
           </div>
         )}
-        <div className="absolute left-2 top-2 rounded bg-background/85 p-1">
-          <Checkbox checked={selected} aria-label={`Select ${entry.name}`} />
+        <div
+          aria-label={`Select ${entry.name}`}
+          aria-checked={selected}
+          role="checkbox"
+          className={`absolute left-2 top-2 flex size-7 items-center justify-center rounded border ${selected ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background/85 text-transparent'}`}
+        >
+          <Check className="size-4" />
         </div>
       </div>
       <div className="space-y-0.5 p-2">
@@ -75,7 +80,7 @@ export function ImageSelectionGrid({ files, selectedNames, onToggle }: Props) {
   if (files.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-        Open a folder to select images.
+        No images match the current filters.
       </div>
     )
   }

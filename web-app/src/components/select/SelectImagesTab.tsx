@@ -59,11 +59,15 @@ export function SelectImagesTab() {
   const [busy, setBusy] = useState(false)
 
   const visibleFiles = useMemo(() => {
-    const filtered = extensionFilter === 'all'
+    const normalizedQuery = query.trim().toLowerCase()
+    const typeFiltered = extensionFilter === 'all'
       ? imageFiles
       : imageFiles.filter((entry) => entry.extension === extensionFilter)
+    const filtered = normalizedQuery
+      ? typeFiltered.filter((entry) => entry.name.toLowerCase().includes(normalizedQuery))
+      : typeFiltered
     return sortImageFiles(filtered, sortOption)
-  }, [extensionFilter, imageFiles, sortOption])
+  }, [extensionFilter, imageFiles, query, sortOption])
 
   const extensions = useMemo(
     () => Array.from(new Set(imageFiles.map((entry) => entry.extension))).sort(),
