@@ -1,5 +1,6 @@
 import JSZip from 'jszip'
 import type { DownloadTier } from '@/types'
+import { getErrorName } from '@/lib/errors'
 
 export interface NamedBlob {
   name: string
@@ -31,7 +32,11 @@ export async function saveToFolder(
   files: NamedBlob[],
   onProgress?: (current: number, total: number) => void
 ): Promise<number> {
-  const dirHandle = await (window as any).showDirectoryPicker({
+  if (!window.showDirectoryPicker) {
+    throw new Error('Directory picker is not supported in this browser.')
+  }
+
+  const dirHandle = await window.showDirectoryPicker({
     id: 'photo-output',
     mode: 'readwrite',
     startIn: 'pictures',
@@ -74,9 +79,9 @@ export async function downloadAsZip(
  * Save a blob using File System Access API when available, fallback to <a download>.
  */
 async function saveBlob(blob: Blob, suggestedName: string): Promise<void> {
-  if ('showSaveFilePicker' in window) {
+  if (window.showSaveFilePicker) {
     try {
-      const handle = await (window as any).showSaveFilePicker({
+      const handle = await window.showSaveFilePicker({
         suggestedName,
         types: [
           {
@@ -90,8 +95,8 @@ async function saveBlob(blob: Blob, suggestedName: string): Promise<void> {
       await writable.write(blob)
       await writable.close()
       return
-    } catch (err: any) {
-      if (err.name === 'AbortError') return
+    } catch (err: unknown) {
+      if (getErrorName(err) === 'AbortError') return
     }
   }
 

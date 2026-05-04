@@ -21,7 +21,10 @@ function getExtension(name: string): string {
 }
 
 export async function openDirectoryPicker(): Promise<FileSystemDirectoryHandle> {
-  return await (window as any).showDirectoryPicker({ mode: 'readwrite' })
+  if (!window.showDirectoryPicker) {
+    throw new Error('Directory picker is not supported in this browser.')
+  }
+  return await window.showDirectoryPicker({ mode: 'readwrite' })
 }
 
 export async function getImageFilesFromHandle(
@@ -31,8 +34,9 @@ export async function getImageFilesFromHandle(
   const allowed = extensionSets[type]
   const entries: FileEntry[] = []
 
-  for await (const [name, fileHandle] of (handle as any).entries()) {
-    if (fileHandle.kind !== 'file') continue
+  for await (const [name, entryHandle] of handle.entries()) {
+    if (entryHandle.kind !== 'file') continue
+    const fileHandle = entryHandle as FileSystemFileHandle
     const ext = getExtension(name)
     if (!allowed.has(ext)) continue
     const file = await fileHandle.getFile()
@@ -55,7 +59,7 @@ export function getImageFilesFromInput(
     if (!allowed.has(ext)) continue
     entries.push({
       name: file.name,
-      path: (file as any).webkitRelativePath || file.name,
+      path: (file as FileWithRelativePath).webkitRelativePath || file.name,
       file,
       extension: ext,
     })

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Sun, Moon, Wifi, WifiOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useTheme } from '@/components/ThemeProvider'
+import { useTheme } from '@/components/ThemeProviderHook'
 import { useBackendStore } from '@/stores/backendStore'
 
 export function Header() {
@@ -10,13 +10,18 @@ export function Header() {
   const status = useBackendStore((s) => s.status)
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
-  // Single check on mount, then poll with backoff using getState() to avoid re-render loops
+  // Single check on mount, then poll with backoff; stop after 3 failures to avoid console noise
   useEffect(() => {
     const schedule = () => {
       const { checkHealth } = useBackendStore.getState()
       checkHealth().then(() => {
-        const delay = useBackendStore.getState().failCount < 3 ? 10_000 : 60_000
-        timerRef.current = setTimeout(schedule, delay)
+        const { failCount, status: s } = useBackendStore.getState()
+        if (s.connected) {
+          timerRef.current = setTimeout(schedule, 60_000)
+        } else if (failCount < 3) {
+          timerRef.current = setTimeout(schedule, 10_000)
+        }
+        // After 3 failures, stop polling to avoid ERR_CONNECTION_REFUSED noise
       })
     }
     schedule()

@@ -12,10 +12,8 @@ import {
   getImageFilesFromInput,
 } from '@/lib/fileAccess'
 import {
-  loadImage,
   loadImagePreview,
   clearPreviewCache,
-  fixOrientation,
   rotateCanvas,
   preprocessImage,
   mergeImages,
@@ -35,6 +33,7 @@ import {
   listCsvsFromFolder,
   loadCsvFromFolder,
 } from '@/lib/csvHandler'
+import { getErrorMessage, getErrorName } from '@/lib/errors'
 import { logger } from '@/lib/logger'
 
 export interface Previews {
@@ -98,7 +97,7 @@ export function useProcessTab() {
     getSavedDirHandle().then(async (handle) => {
       if (!handle) { logger.timeEnd('Startup: restore folder'); return }
       try {
-        const perm = await (handle as any).queryPermission({ mode: 'read' })
+        const perm = await handle.queryPermission?.({ mode: 'read' })
         if (perm === 'granted') {
           setDirHandle(handle)
           setFolderName(handle.name)
@@ -147,18 +146,22 @@ export function useProcessTab() {
         setImageFiles(files)
         setSelectedImageIndex(0)
         setSelectedGridIndex(0)
+        // Build fileMap for Review tab thumbnails
+        const fMap = new Map<string, File>()
+        for (const entry of files) fMap.set(entry.name, entry.file)
+        processing.setFileMap(fMap)
         saveDirHandle(handle).catch(() => {})
         logger.info(`Opened folder: ${handle.name} (${files.length} images)`)
 
         // Import CSVs from rename_files/ subfolder
         await importFolderCsvs(handle)
       }
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
-        toast.error(`Failed to open folder: ${e.message}`)
+    } catch (e: unknown) {
+      if (getErrorName(e) !== 'AbortError') {
+        toast.error(`Failed to open folder: ${getErrorMessage(e)}`)
       }
     }
-  }, [fileType, importFolderCsvs])
+  }, [fileType, importFolderCsvs, processing])
 
   // Handle fallback file input
   const handleFileInput = useCallback(
@@ -168,7 +171,7 @@ export function useProcessTab() {
       setSelectedImageIndex(0)
       setSelectedGridIndex(0)
       if (files.length > 0) {
-        const path = (files[0].file as any).webkitRelativePath || ''
+        const path = (files[0].file as FileWithRelativePath).webkitRelativePath || ''
         const folder = path.split('/')[0] || 'Selected folder'
         setFolderName(folder)
       }
@@ -213,8 +216,8 @@ export function useProcessTab() {
         processed: processedUrl,
       }))
       logger.timeEnd('Preview: generate')
-    } catch (e: any) {
-      logger.error(`Preview error: ${e.message}`)
+    } catch (e: unknown) {
+      logger.error(`Preview error: ${getErrorMessage(e)}`)
     }
   }, [imageFiles, selectedImageIndex, settings.rotationAngle, settings.useExif, settings.cropSettings])
 
@@ -244,8 +247,8 @@ export function useProcessTab() {
         setPreviews((prev) => ({ ...prev, grid: url }))
       }
       logger.timeEnd('Grid preview: generate')
-    } catch (e: any) {
-      logger.error(`Grid preview error: ${e.message}`)
+    } catch (e: unknown) {
+      logger.error(`Grid preview error: ${getErrorMessage(e)}`)
     }
   }, [imageFiles, selectedGridIndex, settings.gridRows, settings.gridCols, settings.mergedImgHeight, settings.rotationAngle, settings.cropSettings])
 
@@ -280,7 +283,15 @@ export function useProcessTab() {
       toast.error('No API keys configured. Go to the API Keys tab.')
       return
     }
-    if (imageFiles.length === 0) {
+    // Re-read directory for fresh File objects (handles renamed/restored files)
+    let files = imageFiles
+    const currentDirHandle = useProcessingStore.getState().dirHandle
+    if (currentDirHandle) {
+      files = await getImageFilesFromHandle(currentDirHandle, fileType)
+      setImageFiles(files)
+    }
+
+    if (files.length === 0) {
       toast.error('No images loaded. Select a folder first.')
       return
     }
@@ -294,17 +305,18 @@ export function useProcessTab() {
     processing.setProcessing(true)
     processing.setProgress(0, 'Starting...')
     processing.setFailedBatches([])
-    abortRef.current = new AbortController()
+    const abortController = new AbortController()
+    abortRef.current = abortController
     logger.time('Total processing')
 
     try {
       const client = new AIClient(apiKeys, settings.modelName)
       const gridSize = settings.gridRows * settings.gridCols
       const photosPerApiCall = settings.imagesPerPrompt * gridSize
-      const totalPhotos = imageFiles.length
+      const totalPhotos = files.length
 
       // Build initial photo rows — keep local ref to avoid stale closure reads
-      let rows: PhotoRow[] = imageFiles.map((entry, i) => ({
+      let rows: PhotoRow[] = files.map((entry, i) => ({
         from: entry.name,
         currentPath: entry.name,
         photoId: i + 1,
@@ -342,7 +354,7 @@ export function useProcessTab() {
 
       // Store file references for Review tab thumbnails
       const fMap = new Map<string, File>()
-      for (const entry of imageFiles) {
+      for (const entry of files) {
         fMap.set(entry.name, entry.file)
       }
       processing.setFileMap(fMap)
@@ -352,152 +364,157 @@ export function useProcessTab() {
 
       // Determine which batches to process
       const retrySet = runMode === 'retry_specific' ? parseRetryBatches(retryMessages) : null
+      const activeBatches: number[] = []
 
       for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
-        if (abortRef.current.signal.aborted) break
-
-        const batchNum = batchIdx + 1
-
-        // Skip batches based on mode
-        if (retrySet && !retrySet.has(batchNum)) continue
+        if (retrySet && !retrySet.has(batchIdx + 1)) continue
         if (runMode === 'continue') {
-          // Skip batches where all rows already have data
-          const batchStart = batchIdx * photosPerApiCall
-          const batchEnd = Math.min(batchStart + photosPerApiCall, totalPhotos)
-          const allHaveData = rows.slice(batchStart, batchEnd).every((r) => r.mainValue?.trim())
-          if (allHaveData) {
+          const bStart = batchIdx * photosPerApiCall
+          const bEnd = Math.min(bStart + photosPerApiCall, totalPhotos)
+          if (rows.slice(bStart, bEnd).every((r) => r.mainValue?.trim())) {
             processing.setProgress(
               Math.floor(((batchIdx + 1) / totalBatches) * 100),
-              `Skipping message ${batchNum}/${totalBatches} (already processed)`
+              `Skipping message ${batchIdx + 1}/${totalBatches} (already processed)`
             )
             continue
           }
         }
+        activeBatches.push(batchIdx)
+      }
 
-        const batchStart = batchIdx * photosPerApiCall
-        const batchEnd = Math.min(batchStart + photosPerApiCall, totalPhotos)
+      // Process batches in parallel groups (respects Gemini RPM limits)
+      const MAX_PARALLEL = 2
+      let hadFailure = false
 
-        const mergedImages: string[] = []
-        const labelRanges: [number, number][] = []
+      for (let g = 0; g < activeBatches.length; g += MAX_PARALLEL) {
+        if (abortController.signal.aborted || hadFailure) break
+        const group = activeBatches.slice(g, g + MAX_PARALLEL)
 
-        logger.time(`Batch ${batchNum}: image processing`)
-        for (let imgIdx = 0; imgIdx < settings.imagesPerPrompt; imgIdx++) {
-          if (abortRef.current.signal.aborted) break
+        await Promise.all(group.map(async (batchIdx) => {
+          if (abortController.signal.aborted || hadFailure) return
+          const batchNum = batchIdx + 1
+          const batchStart = batchIdx * photosPerApiCall
+          const batchEnd = Math.min(batchStart + photosPerApiCall, totalPhotos)
 
-          const segStart = batchStart + imgIdx * gridSize
-          const segEnd = Math.min(segStart + gridSize, batchEnd)
-          if (segStart >= batchEnd) break
-
-          const canvases: HTMLCanvasElement[] = []
-          for (let i = segStart; i < segEnd; i++) {
-            const entry = imageFiles[i]
-            const img = await loadImage(entry.file)
-            const oriented = await fixOrientation(img, entry.file)
-
-            let forGemini: HTMLCanvasElement
-            if (settings.cropSettings.prerotate) {
-              forGemini = rotateCanvas(oriented, settings.rotationAngle)
-            } else {
-              forGemini = oriented
-            }
-            canvases.push(
-              preprocessImage(forGemini, String(i + 1), settings.cropSettings)
-            )
+          // Build + process all grids in parallel
+          const gridTasks: { idx: number; segStart: number; segEnd: number }[] = []
+          for (let imgIdx = 0; imgIdx < settings.imagesPerPrompt; imgIdx++) {
+            const segStart = batchStart + imgIdx * gridSize
+            const segEnd = Math.min(segStart + gridSize, batchEnd)
+            if (segStart >= batchEnd) break
+            gridTasks.push({ idx: imgIdx, segStart, segEnd })
           }
 
-          logger.time(`Batch ${batchNum}: merge grid ${imgIdx + 1}`)
-          const merged = mergeImages(
-            canvases,
-            settings.mergedImgHeight,
-            settings.gridRows,
-            settings.gridCols
+          logger.time(`Batch ${batchNum}: image processing`)
+          const gridResults = await Promise.all(
+            gridTasks.map(async ({ idx, segStart, segEnd }) => {
+              if (abortController.signal.aborted) return null
+              const gridLabel = `Batch ${batchNum} grid ${idx + 1}`
+              logger.time(`${gridLabel}: load+preprocess`)
+              const results = await Promise.all(
+                files.slice(segStart, segEnd).map(async (entry, k) => {
+                  try {
+                    const oriented = await loadImagePreview(entry.file, settings.mergedImgHeight)
+                    const forGemini = settings.cropSettings.prerotate
+                      ? rotateCanvas(oriented, settings.rotationAngle)
+                      : oriented
+                    return preprocessImage(forGemini, String(segStart + k + 1), settings.cropSettings)
+                  } catch (e: unknown) {
+                    logger.warn(`Skipping ${entry.name}: ${getErrorMessage(e)}`)
+                    return null
+                  }
+                })
+              )
+              const canvases = results.filter((c): c is HTMLCanvasElement => c !== null)
+              logger.timeEnd(`${gridLabel}: load+preprocess`)
+
+              logger.time(`${gridLabel}: merge+encode`)
+              const merged = canvases.length > 0
+                ? mergeImages(canvases, settings.mergedImgHeight, settings.gridRows, settings.gridCols)
+                : null
+              const base64 = merged ? canvasToBase64(merged, 'image/jpeg') : null
+              logger.timeEnd(`${gridLabel}: merge+encode`)
+
+              return base64 ? { base64, range: [segStart + 1, segEnd] as [number, number] } : null
+            })
           )
-          if (merged) {
-            mergedImages.push(canvasToBase64(merged))
-            labelRanges.push([segStart + 1, segEnd])
-          }
-          logger.timeEnd(`Batch ${batchNum}: merge grid ${imgIdx + 1}`)
+          logger.timeEnd(`Batch ${batchNum}: image processing`)
 
-          const step = batchIdx * settings.imagesPerPrompt + imgIdx + 1
-          const totalSteps = totalBatches * (settings.imagesPerPrompt + 1)
+          const mergedImages: string[] = []
+          const labelRanges: [number, number][] = []
+          for (const r of gridResults) {
+            if (r) { mergedImages.push(r.base64); labelRanges.push(r.range) }
+          }
+
+          if (abortController.signal.aborted || mergedImages.length === 0) return
+
           processing.setProgress(
-            Math.floor((step / totalSteps) * 100),
-            `Merging image ${imgIdx + 1}/${settings.imagesPerPrompt} for message ${batchNum}`
+            useProcessingStore.getState().progress.percent,
+            `Sending message ${batchNum}/${totalBatches}...`
           )
-        }
-        logger.timeEnd(`Batch ${batchNum}: image processing`)
 
-        if (abortRef.current.signal.aborted || mergedImages.length === 0) continue
+          const labelDesc = labelRanges
+            .map(([s, e], i) => `Image ${i + 1}: labels ${s}-${e}`)
+            .join(', ')
+          const prompt = `${settings.promptText}\n\nAnalyze ${mergedImages.length} images. ${labelDesc}.`
 
-        processing.setProgress(
-          useProcessingStore.getState().progress.percent,
-          `Sending ${mergedImages.length} images to AI...`
-        )
+          logger.time(`Batch ${batchNum}: API call`)
+          const { text: responseText, success } = await client.sendRequest(prompt, mergedImages)
+          logger.timeEnd(`Batch ${batchNum}: API call`)
 
-        const labelDesc = labelRanges
-          .map(([s, e], i) => `Image ${i + 1}: labels ${s}-${e}`)
-          .join(', ')
-        const prompt = `${settings.promptText}\n\nAnalyze ${mergedImages.length} images. ${labelDesc}.`
+          if (!success) {
+            toast.error(`Message ${batchNum} failed: ${responseText}`)
+            hadFailure = true
+            return
+          }
 
-        logger.time(`Batch ${batchNum}: API call`)
-        const { text: responseText, success } = await client.sendRequest(
-          prompt,
-          mergedImages
-        )
-        logger.timeEnd(`Batch ${batchNum}: API call`)
+          if (!responseHasData(responseText, settings.mainColumn)) {
+            failedBatches.push(batchNum)
+            logger.warn(`Message ${batchNum} returned empty response`)
+          }
 
-        if (!success) {
-          toast.error(`Message ${batchNum} failed: ${responseText}`)
-          break
-        }
-
-        if (!responseHasData(responseText, settings.mainColumn)) {
-          failedBatches.push(batchNum)
-          logger.warn(`Message ${batchNum} returned empty response`)
-        }
-
-        // Parse and update rows using local `rows` to avoid stale closure
-        const data = parseJsonResponse(responseText, settings.mainColumn)
-        if (data) {
-          rows = rows.map((r) => {
-            const itemData = data[String(r.photoId)]
-            if (itemData) {
-              return {
-                ...r,
-                mainValue: itemData[settings.mainColumn] ?? '',
-                co: itemData.co ?? '',
-                n: itemData.n ?? '',
-                skip: itemData.skip ?? '',
-                batchNumber: batchNum,
+          // Each batch updates different photoId ranges — no conflicts
+          const data = parseJsonResponse(responseText)
+          if (data) {
+            rows = rows.map((r) => {
+              const itemData = data[String(r.photoId)]
+              if (itemData) {
+                return {
+                  ...r,
+                  mainValue: itemData[settings.mainColumn] ?? '',
+                  co: itemData.co ?? '',
+                  n: itemData.n ?? '',
+                  skip: itemData.skip ?? '',
+                  batchNumber: batchNum,
+                }
               }
-            }
-            return r
-          })
-          processing.setPhotoRows(rows)
-        }
+              return r
+            })
+            processing.setPhotoRows(rows)
+          }
 
-        processing.setProgress(
-          Math.floor(((batchIdx + 1) / totalBatches) * 100),
-          `Message ${batchNum}/${totalBatches} complete`
-        )
+          processing.setProgress(
+            Math.floor(((batchIdx + 1) / totalBatches) * 100),
+            `Message ${batchNum}/${totalBatches} complete`
+          )
 
-        // Auto-save intermediate results after each batch (IndexedDB + folder)
-        if (rows.length > 0) {
-          const csvName = `${folderName || 'results'}_${new Date().toISOString().slice(0, 10)}.csv`
-          const csvText = toCsvString(rows, settings.mainColumn)
-          await saveCsvToStorage(csvName, csvText)
-          await saveLastCsvName(csvName)
-          processing.setCurrentCsvName(csvName)
-          // Also persist to rename_files/ on disk
-          const dh = useProcessingStore.getState().dirHandle
-          if (dh) await saveCsvToFolder(dh, csvName, csvText)
-        }
+          // Auto-save after each batch completes
+          if (rows.length > 0) {
+            const csvName = `${folderName || 'results'}_${new Date().toISOString().slice(0, 10)}.csv`
+            const csvText = toCsvString(rows, settings.mainColumn)
+            await saveCsvToStorage(csvName, csvText)
+            await saveLastCsvName(csvName)
+            processing.setCurrentCsvName(csvName)
+            const dh = useProcessingStore.getState().dirHandle
+            if (dh) await saveCsvToFolder(dh, csvName, csvText)
+          }
+        }))
       }
 
       processing.setFailedBatches(failedBatches)
 
       // Final save (IndexedDB + folder)
-      if (rows.length > 0 && !abortRef.current.signal.aborted) {
+      if (rows.length > 0 && !abortController.signal.aborted) {
         const csvName = `${folderName || 'results'}_${new Date().toISOString().slice(0, 10)}.csv`
         const csvText = toCsvString(rows, settings.mainColumn)
         await saveCsvToStorage(csvName, csvText)
@@ -512,17 +529,17 @@ export function useProcessTab() {
         toast.warning(
           `Processing complete. Messages with empty responses: ${failedBatches.join(', ')}`
         )
-      } else if (!abortRef.current.signal.aborted) {
+      } else if (!abortController.signal.aborted) {
         toast.success('Processing complete! Results saved.')
       }
-    } catch (e: any) {
-      toast.error(`Processing failed: ${e.message}`)
-      logger.error(`Processing error: ${e.message}`)
+    } catch (e: unknown) {
+      toast.error(`Processing failed: ${getErrorMessage(e)}`)
+      logger.error(`Processing error: ${getErrorMessage(e)}`)
     } finally {
       logger.timeEnd('Total processing')
       processing.setProcessing(false)
     }
-  }, [apiKeys, imageFiles, settings, processing, folderName])
+  }, [apiKeys, imageFiles, settings, processing, folderName, fileType])
 
   const stopProcessing = useCallback(() => {
     abortRef.current?.abort()

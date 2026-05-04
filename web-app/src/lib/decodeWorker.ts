@@ -28,8 +28,9 @@ ctx.onmessage = async (e: MessageEvent<DecodeRequest>) => {
       resizeQuality: 'medium',
       imageOrientation: applyExif ? 'from-image' : 'none',
     })
-    ctx.postMessage({ id, bitmap: bmp } satisfies DecodeResponse, [bmp] as any)
-  } catch (err: any) {
-    ctx.postMessage({ id, error: err.message ?? 'decode failed' } satisfies DecodeResponse)
+    ctx.postMessage({ id, bitmap: bmp } satisfies DecodeResponse, [bmp])
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'decode failed'
+    ctx.postMessage({ id, error: message } satisfies DecodeResponse)
   }
 }

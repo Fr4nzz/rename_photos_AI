@@ -28,9 +28,11 @@ import {
   getRenameLog,
   type RenameLogEntry,
 } from '@/lib/csvHandler'
-import { supportsDirectoryPicker } from '@/lib/fileAccess'
+import { supportsDirectoryPicker, getImageFilesFromHandle } from '@/lib/fileAccess'
+import { SUPPORTED_RAW_EXTENSIONS } from '@/lib/constants'
+import { getErrorMessage, getErrorName } from '@/lib/errors'
 import { logger } from '@/lib/logger'
-import type { SuffixMode } from '@/types'
+import type { PhotoRow, SuffixMode } from '@/types'
 import {
   Calculator,
   Save,
@@ -50,14 +52,17 @@ async function getReadWriteDirHandle(): Promise<FileSystemDirectoryHandle> {
   const stored = useProcessingStore.getState().dirHandle
   if (stored) {
     // Ensure we have readwrite permission
-    const perm = await (stored as any).queryPermission({ mode: 'readwrite' })
+    const perm = await stored.queryPermission?.({ mode: 'readwrite' })
     if (perm === 'granted') return stored
     // Request readwrite if only read was granted
-    const req = await (stored as any).requestPermission({ mode: 'readwrite' })
+    const req = await stored.requestPermission?.({ mode: 'readwrite' })
     if (req === 'granted') return stored
   }
   // Fallback: ask user to pick the folder
-  return await (window as any).showDirectoryPicker({
+  if (!window.showDirectoryPicker) {
+    throw new Error('Directory picker is not supported in this browser.')
+  }
+  return await window.showDirectoryPicker({
     id: 'photo-rename',
     mode: 'readwrite',
   })
@@ -77,9 +82,9 @@ async function renameFileInDir(
   const sourceHandle = await dirHandle.getFileHandle(oldName)
 
   // Try native move() first (Chrome may support it for local files)
-  if (typeof (sourceHandle as any).move === 'function') {
+  if (sourceHandle.move) {
     try {
-      await (sourceHandle as any).move(newName)
+      await sourceHandle.move(newName)
       return
     } catch {
       // move() not supported for local files — fall through to copy-and-delete
@@ -93,6 +98,47 @@ async function renameFileInDir(
   await writable.write(file)
   await writable.close()
   await dirHandle.removeEntry(oldName)
+}
+
+/**
+ * Find RAW companion files for a given image in the directory.
+ * E.g., "DSC_0001.JPG" → looks for "DSC_0001.cr2", "DSC_0001.orf", etc.
+ */
+async function findRawCompanions(
+  dirHandle: FileSystemDirectoryHandle,
+  fileName: string
+): Promise<string[]> {
+  const stem = fileName.replace(/\.[^.]+$/, '')
+  const companions: string[] = []
+  for (const ext of SUPPORTED_RAW_EXTENSIONS) {
+    for (const variant of [ext.toLowerCase(), ext.toUpperCase()]) {
+      try {
+        await dirHandle.getFileHandle(stem + variant)
+        companions.push(stem + variant)
+      } catch { /* file doesn't exist */ }
+    }
+  }
+  return companions
+}
+
+/**
+ * Re-read directory and rebuild fileMap so Review tab thumbnails
+ * use fresh File objects after rename/restore.
+ */
+async function refreshFileMapFromDir(
+  dirHandle: FileSystemDirectoryHandle,
+  rows: PhotoRow[]
+) {
+  const entries = await getImageFilesFromHandle(dirHandle, 'all')
+  const filesByName = new Map<string, File>()
+  for (const e of entries) filesByName.set(e.name, e.file)
+  const newFileMap = new Map<string, File>()
+  for (const row of rows) {
+    const file = filesByName.get(row.currentPath)
+    if (file) newFileMap.set(row.from, file)
+  }
+  useProcessingStore.getState().setFileMap(newFileMap)
+  logger.info(`Refreshed fileMap: ${newFileMap.size} entries`)
 }
 
 interface Props {
@@ -139,9 +185,9 @@ export function ReviewActionBar({
         setDownloadProgress(Math.round((current / total) * 100))
       })
       toast.success(`Saved ${count} files to folder`)
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
-        toast.error(`Save failed: ${e.message}`)
+    } catch (e: unknown) {
+      if (getErrorName(e) !== 'AbortError') {
+        toast.error(`Save failed: ${getErrorMessage(e)}`)
       }
     } finally {
       setDownloadProgress(null)
@@ -161,9 +207,9 @@ export function ReviewActionBar({
         setDownloadProgress(percent)
       })
       toast.success(`ZIP with ${files.length} files ready`)
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
-        toast.error(`Download failed: ${e.message}`)
+    } catch (e: unknown) {
+      if (getErrorName(e) !== 'AbortError') {
+        toast.error(`Download failed: ${getErrorMessage(e)}`)
       }
     } finally {
       setDownloadProgress(null)
@@ -189,26 +235,71 @@ export function ReviewActionBar({
       setIsRenaming(true)
       setDownloadProgress(0)
 
+      // Build rename plan including RAW companions
+      interface RenameOp { src: string; dst: string; orig: string }
+      const plan: RenameOp[] = []
+
+      for (const row of rowsToRename) {
+        plan.push({ src: row.currentPath, dst: row.to, orig: row.currentPath })
+        // Find and include RAW companion files
+        const newStem = row.to.replace(/\.[^.]+$/, '')
+        const companions = await findRawCompanions(dirHandle, row.currentPath)
+        for (const rawName of companions) {
+          const rawExt = rawName.slice(rawName.lastIndexOf('.'))
+          plan.push({ src: rawName, dst: newStem + rawExt, orig: rawName })
+        }
+      }
+      setDownloadProgress(10)
+
+      // Execute plan with conflict resolution (handles circular renames)
       const renameLog: RenameLogEntry[] = []
-      let renamed = 0
+      let remaining = [...plan]
+      let totalDone = 0
+      let maxPasses = remaining.length + 1
 
-      for (let i = 0; i < rowsToRename.length; i++) {
-        const row = rowsToRename[i]
-        try {
-          await renameFileInDir(dirHandle, row.currentPath, row.to)
+      while (remaining.length > 0 && maxPasses-- > 0) {
+        const runnable: RenameOp[] = []
+        const blocked: RenameOp[] = []
 
-          renameLog.push({
-            original: row.currentPath,
-            renamed: row.to,
-            timestamp: new Date().toISOString(),
-          })
-          renamed++
-        } catch (err: any) {
-          logger.warn(`Could not rename ${row.currentPath}: ${err.message}`)
+        for (const op of remaining) {
+          let dstExists = false
+          try { await dirHandle.getFileHandle(op.dst); dstExists = true } catch { /* free */ }
+          ;(dstExists ? blocked : runnable).push(op)
         }
 
-        setDownloadProgress(Math.round(((i + 1) / rowsToRename.length) * 100))
+        for (const op of runnable) {
+          try {
+            await renameFileInDir(dirHandle, op.src, op.dst)
+            renameLog.push({ original: op.orig, renamed: op.dst, timestamp: new Date().toISOString() })
+            totalDone++
+          } catch (err: unknown) {
+            logger.warn(`Could not rename ${op.src}: ${getErrorMessage(err)}`)
+          }
+        }
+
+        remaining = blocked
+
+        // Break deadlock: move first blocked destination to a temp name
+        if (remaining.length > 0 && runnable.length === 0) {
+          const op = remaining[0]
+          const tempName = `${op.dst}.tmp_rename`
+          try {
+            await renameFileInDir(dirHandle, op.dst, tempName)
+            renameLog.push({ original: op.dst, renamed: tempName, timestamp: new Date().toISOString() })
+            // Update any op whose source was the blocked destination
+            for (const other of remaining) {
+              if (other.src === op.dst) other.src = tempName
+            }
+          } catch (err: unknown) {
+            logger.warn(`Deadlock break failed for ${op.dst}: ${getErrorMessage(err)}`)
+            break
+          }
+        }
+
+        setDownloadProgress(10 + Math.round((totalDone / plan.length) * 85))
       }
+
+      const renamed = renameLog.filter(e => !e.renamed.endsWith('.tmp_rename')).length
 
       // Save rename log for restore
       const existingLog = await getRenameLog()
@@ -225,11 +316,14 @@ export function ReviewActionBar({
       })
       setPhotoRows(updatedRows)
 
+      // Refresh file references so thumbnails use fresh File objects
+      await refreshFileMapFromDir(dirHandle, updatedRows)
+
       toast.success(`Renamed ${renamed} files in-place`)
       logger.info(`Renamed ${renamed} files, ${rowsToRename.length - renamed} skipped`)
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
-        toast.error(`Rename failed: ${e.message}`)
+    } catch (e: unknown) {
+      if (getErrorName(e) !== 'AbortError') {
+        toast.error(`Rename failed: ${getErrorMessage(e)}`)
       }
     } finally {
       setIsRenaming(false)
@@ -252,16 +346,17 @@ export function ReviewActionBar({
       setDownloadProgress(0)
 
       let restored = 0
-      for (let i = 0; i < log.length; i++) {
+      // Process in reverse order (like Python app) to avoid conflicts
+      for (let i = log.length - 1; i >= 0; i--) {
         const entry = log[i]
         try {
           await renameFileInDir(dirHandle, entry.renamed, entry.original)
           restored++
-        } catch (err: any) {
-          logger.warn(`Could not restore ${entry.renamed}: ${err.message}`)
+        } catch (err: unknown) {
+          logger.warn(`Could not restore ${entry.renamed}: ${getErrorMessage(err)}`)
         }
 
-        setDownloadProgress(Math.round(((i + 1) / log.length) * 100))
+        setDownloadProgress(Math.round(((log.length - i) / log.length) * 100))
       }
 
       // Clear rename log after restore
@@ -278,10 +373,13 @@ export function ReviewActionBar({
       })
       setPhotoRows(updatedRows)
 
+      // Refresh file references so thumbnails use fresh File objects
+      await refreshFileMapFromDir(dirHandle, updatedRows)
+
       toast.success(`Restored ${restored} files to original names`)
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
-        toast.error(`Restore failed: ${e.message}`)
+    } catch (e: unknown) {
+      if (getErrorName(e) !== 'AbortError') {
+        toast.error(`Restore failed: ${getErrorMessage(e)}`)
       }
     } finally {
       setIsRenaming(false)

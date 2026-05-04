@@ -60,7 +60,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   imagesPerPrompt: 5,
   gridRows: 3,
   gridCols: 3,
-  mergedImgHeight: 1080,
+  mergedImgHeight: 1600,
   mainColumn: 'CAM',
   modelName: '',
   promptText: DEFAULT_PROMPT,
@@ -72,6 +72,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   reviewItemsPerPage: 50,
   reviewThumbHeight: '720p',
   reviewThumbSize: 180,
+  previewTileHeight: 240,
   suffixMode: 'Standard',
   customSuffixes: 'd,v',
 }

@@ -11,7 +11,29 @@ const {
 } = require('./exiftoolHelper');
 
 const app = express();
-app.use(cors());
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://127.0.0.1:5173',
+  'http://localhost:5173',
+  'https://fr4nzz.github.io',
+  'https://fr4nzz.github.io/rename_photos_AI',
+];
+const allowedOrigins = new Set([
+  ...DEFAULT_ALLOWED_ORIGINS,
+  ...(process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+]);
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(null, false);
+  },
+}));
 app.use(express.json({ limit: '10mb' }));
 
 const PORT = parseInt(process.env.PORT || '3847', 10);
@@ -180,8 +202,8 @@ app.post('/restore', (req, res) => {
 
 // ---------- Start ----------
 
-app.listen(PORT, () => {
+app.listen(PORT, '127.0.0.1', () => {
   console.log(`\n  AI Photo Processor Backend v1.0.0`);
-  console.log(`  Running on http://localhost:${PORT}`);
+  console.log(`  Running on http://127.0.0.1:${PORT}`);
   console.log(`  ExifTool: ${EXIFTOOL_PATH || 'NOT FOUND'}\n`);
 });

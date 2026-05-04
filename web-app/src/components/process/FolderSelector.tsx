@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import type { InputHTMLAttributes } from 'react'
 import { FolderOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { supportsDirectoryPicker } from '@/lib/fileAccess'
@@ -11,6 +12,13 @@ interface Props {
 
 export function FolderSelector({ folderName, onSelect, onFileInput }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const directoryInputProps: InputHTMLAttributes<HTMLInputElement> & {
+    webkitdirectory: string
+    directory: string
+  } = {
+    webkitdirectory: '',
+    directory: '',
+  }
 
   const handleClick = () => {
     if (supportsDirectoryPicker()) {
@@ -39,7 +47,7 @@ export function FolderSelector({ folderName, onSelect, onFileInput }: Props) {
         ref={inputRef}
         type="file"
         className="hidden"
-        {...({ webkitdirectory: '', directory: '' } as any)}
+        {...directoryInputProps}
         onChange={(e) => e.target.files && onFileInput(e.target.files)}
       />
     </div>

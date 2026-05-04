@@ -1,6 +1,28 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { generateText } from 'ai'
 import { logger } from './logger'
+import { getErrorMessage } from './errors'
+
+interface ApiError {
+  status?: number
+  statusCode?: number
+  data?: { error?: { code?: number } }
+}
+
+interface GeminiModelsResponse {
+  models?: Array<{ name?: string }>
+}
+
+function getGeminiVersion(modelName: string): number {
+  const versionMatch = modelName.match(/gemini-(\d+(?:\.\d+)?)/)
+  return versionMatch ? Number(versionMatch[1]) : 0
+}
+
+function getGeminiFamilyRank(modelName: string): number {
+  if (modelName.includes('flash')) return 0
+  if (modelName.includes('pro')) return 1
+  return 2
+}
 
 export class AIClient {
   private apiKeys: string[]
@@ -44,7 +66,7 @@ export class AIClient {
           ...imageBase64List.map((b64) => ({
             type: 'image' as const,
             image: b64,
-            mimeType: 'image/png' as const,
+            mimeType: 'image/jpeg' as const,
           })),
         ]
 
@@ -64,10 +86,11 @@ export class AIClient {
         logger.info(`AI response: ${responsePreview}`)
 
         return { text: result.text, success: true }
-      } catch (error: any) {
-        lastError = error
+      } catch (error: unknown) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        const apiError = error as ApiError
         const status =
-          error?.status ?? error?.statusCode ?? error?.data?.error?.code
+          apiError.status ?? apiError.statusCode ?? apiError.data?.error?.code
 
         if (status === 429 || status === 500 || status === 503) {
           logger.warn(`API Error (${status}). Rotating key...`)
@@ -76,7 +99,7 @@ export class AIClient {
           continue
         }
 
-        logger.error(`Non-retryable API Error: ${error?.message}`)
+        logger.error(`Non-retryable API Error: ${getErrorMessage(error)}`)
         break
       }
     }
@@ -93,8 +116,7 @@ export class AIClient {
  * Looks for ```json ... ``` fenced blocks.
  */
 export function parseJsonResponse(
-  responseText: string,
-  _mainColumn: string
+  responseText: string
 ): Record<string, Record<string, string>> | null {
   const match = responseText.match(/```json\s*([\s\S]+?)\s*```/i)
   if (!match) return null
@@ -112,7 +134,7 @@ export function responseHasData(
   responseText: string,
   mainColumn: string
 ): boolean {
-  const data = parseJsonResponse(responseText, mainColumn)
+  const data = parseJsonResponse(responseText)
   if (!data) return false
   for (const item of Object.values(data)) {
     if (item[mainColumn]?.trim()) return true
@@ -130,7 +152,7 @@ export async function fetchAvailableModels(apiKey: string): Promise<string[]> {
       `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
     )
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json()
+    const data = await res.json() as GeminiModelsResponse
 
     const excluded = ['tts', 'image', 'audio', 'embedding', 'aqa', 'bison']
     const models: string[] = []
@@ -150,17 +172,20 @@ export async function fetchAvailableModels(apiKey: string): Promise<string[]> {
       models.push(name)
     }
 
-    // Sort: Flash models first, then by name
+    // Sort: newest Gemini generation first, Flash before Pro within each generation.
     models.sort((a, b) => {
-      const aFlash = a.includes('flash') ? 0 : 1
-      const bFlash = b.includes('flash') ? 0 : 1
-      if (aFlash !== bFlash) return aFlash - bFlash
+      const versionDiff = getGeminiVersion(b) - getGeminiVersion(a)
+      if (versionDiff !== 0) return versionDiff
+
+      const familyDiff = getGeminiFamilyRank(a) - getGeminiFamilyRank(b)
+      if (familyDiff !== 0) return familyDiff
+
       return a.localeCompare(b)
     })
 
     return models
-  } catch (e: any) {
-    logger.error(`Failed to fetch models: ${e.message}`)
+  } catch (e: unknown) {
+    logger.error(`Failed to fetch models: ${getErrorMessage(e)}`)
     return []
   }
 }

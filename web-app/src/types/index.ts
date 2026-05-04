@@ -24,6 +24,7 @@ export interface AppSettings {
   reviewItemsPerPage: number
   reviewThumbHeight: string
   reviewThumbSize: number
+  previewTileHeight: number
   suffixMode: SuffixMode
   customSuffixes: string
 }

@@ -51,7 +51,13 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
       return { photoRows: rows }
     }),
   setProcessing: (value) => set({ isProcessing: value }),
-  setProgress: (percent, message) => set({ progress: { percent, message } }),
+  setProgress: (percent, message) =>
+    set((state) => ({
+      progress: {
+        percent: Math.max(state.progress.percent, percent),
+        message,
+      },
+    })),
   setRunMode: (mode) => set({ runMode: mode }),
   setRetryMessages: (messages) => set({ retryMessages: messages }),
   setContinueCsvName: (name) => set({ continueCsvName: name }),

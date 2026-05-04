@@ -19,13 +19,10 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
   const fileMap = useProcessingStore((s) => s.fileMap)
   const { reviewCropEnabled, reviewThumbSize, cropSettings } = useSettingsStore()
   const [thumbUrl, setThumbUrl] = useState<string | null>(null)
+  const file = fileMap.get(row.from)
 
   useEffect(() => {
-    const file = fileMap.get(row.from)
-    if (!file) {
-      setThumbUrl(null)
-      return
-    }
+    if (!file) return
 
     let cancelled = false
     let urlToRevoke: string | null = null
@@ -55,7 +52,7 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
       cancelled = true
       if (urlToRevoke) URL.revokeObjectURL(urlToRevoke)
     }
-  }, [fileMap, row.from, reviewCropEnabled, cropSettings])
+  }, [file, reviewCropEnabled, cropSettings])
 
   const statusColor =
     row.status === 'Renamed'
@@ -88,7 +85,7 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
       </CardHeader>
       <CardContent className="flex gap-3 px-3 pb-2">
         {/* Thumbnail — auto width from natural aspect ratio */}
-        {thumbUrl && (
+        {file && thumbUrl && (
           <div className="flex-shrink-0" style={{ maxWidth: '50%' }}>
             <img
               src={thumbUrl}

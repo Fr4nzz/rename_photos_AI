@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { useApiKeysStore } from '@/stores/apiKeysStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { fetchAvailableModels } from '@/lib/aiClient'
+import { getErrorMessage } from '@/lib/errors'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
@@ -59,8 +60,8 @@ export function ApiKeysTab() {
 
       toast.success(`Saved ${keys.length} key(s). Found ${models.length} models.`)
       logger.info(`Fetched ${models.length} models: ${models.slice(0, 5).join(', ')}...`)
-    } catch (e: any) {
-      toast.error(`Failed to fetch models: ${e.message}`)
+    } catch (e: unknown) {
+      toast.error(`Failed to fetch models: ${getErrorMessage(e)}`)
     } finally {
       setLoading(false)
     }

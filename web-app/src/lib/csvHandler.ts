@@ -170,7 +170,7 @@ function parseCsvLine(line: string): string[] {
 
 // --- Meta storage (last CSV name, directory handle) ---
 
-async function getMeta(key: string): Promise<any> {
+async function getMeta<T>(key: string): Promise<T | null> {
   const db = await openDb()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(META_STORE, 'readonly')
@@ -180,7 +180,7 @@ async function getMeta(key: string): Promise<any> {
   })
 }
 
-async function setMeta(key: string, value: any): Promise<void> {
+async function setMeta<T>(key: string, value: T): Promise<void> {
   const db = await openDb()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(META_STORE, 'readwrite')
@@ -195,7 +195,7 @@ export async function saveLastCsvName(name: string): Promise<void> {
 }
 
 export async function getLastCsvName(): Promise<string | null> {
-  return getMeta('lastCsvName')
+  return getMeta<string>('lastCsvName')
 }
 
 export async function saveDirHandle(handle: FileSystemDirectoryHandle): Promise<void> {
@@ -203,7 +203,7 @@ export async function saveDirHandle(handle: FileSystemDirectoryHandle): Promise<
 }
 
 export async function getSavedDirHandle(): Promise<FileSystemDirectoryHandle | null> {
-  return getMeta('lastDirHandle')
+  return getMeta<FileSystemDirectoryHandle>('lastDirHandle')
 }
 
 /**
@@ -232,7 +232,7 @@ export async function saveRenameLog(entries: RenameLogEntry[]): Promise<void> {
 }
 
 export async function getRenameLog(): Promise<RenameLogEntry[]> {
-  return (await getMeta('renameLog')) ?? []
+  return (await getMeta<RenameLogEntry[]>('renameLog')) ?? []
 }
 
 // --- Filesystem CSV persistence (rename_files subfolder) ---
@@ -278,7 +278,7 @@ export async function listCsvsFromFolder(
   try {
     const subDir = await dirHandle.getDirectoryHandle(RENAME_FILES_DIR)
     const names: string[] = []
-    for await (const [name, handle] of (subDir as any).entries()) {
+    for await (const [name, handle] of subDir.entries()) {
       if (handle.kind === 'file' && name.endsWith('.csv')) {
         names.push(name)
       }

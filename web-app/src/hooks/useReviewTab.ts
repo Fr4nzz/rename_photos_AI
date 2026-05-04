@@ -38,9 +38,14 @@ export function useReviewTab() {
   const autosaveTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const prevRowsRef = useRef<PhotoRow[]>(photoRows)
 
+  const refreshCsvList = useCallback(async () => {
+    const csvs = await listStoredCsvs()
+    setCsvFiles(csvs)
+  }, [])
+
   // Load CSV list on mount + auto-load last CSV if no data in store
   useEffect(() => {
-    refreshCsvList()
+    listStoredCsvs().then(setCsvFiles)
     if (photoRows.length === 0) {
       logger.time('Startup: auto-load CSV')
       getLastCsvName().then(async (name) => {
@@ -77,11 +82,6 @@ export function useReviewTab() {
 
     return () => clearTimeout(autosaveTimer.current)
   }, [photoRows, selectedCsv, mainColumn])
-
-  const refreshCsvList = useCallback(async () => {
-    const csvs = await listStoredCsvs()
-    setCsvFiles(csvs)
-  }, [])
 
   const loadCsv = useCallback(
     async (name: string) => {
