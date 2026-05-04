@@ -31,6 +31,8 @@ export function useReviewTab() {
     selectedImageNames,
     reviewSelectedOnly,
     setPhotoRows,
+    imageFiles,
+    setCurrentCsvName,
     setReviewSelectedOnly,
   } = useProcessingStore()
 
@@ -104,6 +106,46 @@ export function useReviewTab() {
     },
     [mainColumn, setPhotoRows]
   )
+
+  const createNewCsv = useCallback(async () => {
+    const selectedFiles = imageFiles.filter((entry) => selectedImageNames.has(entry.name))
+    if (selectedFiles.length === 0) {
+      toast.error('Select images first before creating a new CSV.')
+      return
+    }
+
+    const defaultName = `results_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.csv`
+    const requestedName = window.prompt('New CSV filename', defaultName)
+    if (!requestedName) return
+    const csvName = requestedName.endsWith('.csv') ? requestedName : `${requestedName}.csv`
+
+    const rows: PhotoRow[] = selectedFiles.map((entry, index) => ({
+      from: entry.name,
+      currentPath: entry.name,
+      photoId: index + 1,
+      mainValue: '',
+      co: '',
+      n: '',
+      skip: '',
+      to: '',
+      suffix: '',
+      batchNumber: 0,
+      captureDate: null,
+      status: 'Original',
+    }))
+
+    const text = toCsvString(rows, mainColumn)
+    await saveCsvToStorage(csvName, text)
+    await saveLastCsvName(csvName)
+    const dh = useProcessingStore.getState().dirHandle
+    if (dh) await saveCsvToFolder(dh, csvName, text)
+    setPhotoRows(rows)
+    setSelectedCsv(csvName)
+    setCurrentCsvName(csvName)
+    setCurrentPage(1)
+    await refreshCsvList()
+    toast.success(`Created ${csvName} with ${rows.length} selected image(s).`)
+  }, [imageFiles, mainColumn, refreshCsvList, selectedImageNames, setCurrentCsvName, setPhotoRows])
 
   // Compute duplicate CAM+suffix pairs for warning display
   const duplicatePairs = useMemo(() => {
@@ -242,6 +284,7 @@ export function useReviewTab() {
     setReviewSelectedOnly,
     duplicatePairs,
     refreshCsvList,
+    createNewCsv,
     loadCsv,
     updateRow,
     recalculateNames,

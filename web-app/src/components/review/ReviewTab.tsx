@@ -13,6 +13,7 @@ export function ReviewTab() {
         csvFiles={hook.csvFiles}
         selectedCsv={hook.selectedCsv}
         onSelectCsv={hook.loadCsv}
+        onNewCsv={hook.createNewCsv}
         onRefresh={hook.refreshCsvList}
         filter={hook.filter}
         onFilterChange={hook.setFilter}

@@ -16,6 +16,7 @@ interface Props {
   csvFiles: string[]
   selectedCsv: string
   onSelectCsv: (name: string) => void
+  onNewCsv: () => void
   onRefresh: () => void
   filter: FilterType
   onFilterChange: (f: FilterType) => void
@@ -48,6 +49,7 @@ export function ReviewToolbar({
   csvFiles,
   selectedCsv,
   onSelectCsv,
+  onNewCsv,
   onRefresh,
   filter,
   onFilterChange,
@@ -72,6 +74,10 @@ export function ReviewToolbar({
           ))}
         </SelectContent>
       </Select>
+
+      <Button variant="outline" size="sm" className="text-xs" onClick={onNewCsv}>
+        New CSV
+      </Button>
 
       <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onRefresh}>
         <RefreshCw className="h-3.5 w-3.5" />
