@@ -84,13 +84,13 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
         </div>
       </CardHeader>
       <CardContent className="flex gap-3 px-3 pb-2">
-        {/* Thumbnail — auto width from natural aspect ratio */}
+        {/* Thumbnail caps at the card width, so large slider values wait for wider layouts. */}
         {file && thumbUrl && (
           <div className="flex-shrink-0" style={{ maxWidth: '50%' }}>
             <img
               src={thumbUrl}
               alt={row.from}
-              style={{ height: reviewThumbSize, width: 'auto' }}
+              style={{ maxHeight: reviewThumbSize, maxWidth: '100%', height: 'auto', width: 'auto' }}
               className="rounded-sm border"
             />
           </div>
