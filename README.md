@@ -20,9 +20,17 @@ Open the app here:
 
 https://fr4nzz.github.io/rename_photos_AI/
 
-The hosted version works directly in a modern browser. Browser-supported formats such as JPEG and PNG can be previewed, processed, and rotated from the web app. RAW formats such as CR2 and ORF can be included in the naming workflow, but direct RAW rotation requires the optional local backend because browsers cannot rewrite RAW metadata safely on their own.
+The hosted version works directly in a modern browser. Browser-supported formats such as JPEG and PNG can be previewed, processed, and rotated from the web app. RAW formats such as CR2 and ORF can be included in the naming workflow, but direct RAW rotation requires the optional Windows backend because browsers cannot rewrite RAW metadata safely on their own.
 
 Gemini API keys are saved locally in your browser.
+
+## Optional Windows Backend
+
+When the backend is offline, the hosted app shows a Download Backend button. On Windows, it downloads `AIPhotoProcessor-Backend.exe` from the `backend-latest` release:
+
+https://github.com/Fr4nzz/rename_photos_AI/releases/tag/backend-latest
+
+Open the executable and leave it running while using the web app. The backend listens only on `127.0.0.1:3847` and enables local RAW rotation and in-place file operations. ExifTool's Windows executable and required `exiftool_files` folder are bundled into the backend executable and extracted together to a private temporary folder at runtime.
 
 ## Recommended Workflow
 
@@ -73,7 +81,7 @@ Older Python desktop builds are still available from GitHub Releases:
 
 https://github.com/Fr4nzz/rename_photos_AI/releases
 
-Those builds bundled ExifTool for local file metadata operations. The current hosted web app is the preferred version for ordinary browser-based processing, while RAW rotation remains a local-backend/desktop capability.
+Those builds bundled ExifTool for local file metadata operations. The current hosted web app is the preferred version for ordinary browser-based processing, while RAW rotation remains a Windows-backend capability.
 
 ## License Notes
 

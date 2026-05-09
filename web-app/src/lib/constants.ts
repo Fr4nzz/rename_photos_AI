@@ -83,3 +83,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 }
 
 export const BACKEND_URL = 'http://localhost:3847'
+export const BACKEND_DOWNLOAD_URL_WINDOWS =
+  'https://github.com/Fr4nzz/rename_photos_AI/releases/download/backend-latest/AIPhotoProcessor-Backend.exe'
+export const BACKEND_RELEASES_URL =
+  'https://github.com/Fr4nzz/rename_photos_AI/releases/tag/backend-latest'

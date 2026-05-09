@@ -22,8 +22,9 @@ npm run build
 
 The static build is written to `dist/` and deployed by `.github/workflows/deploy-frontend.yml`.
 
-## Notes
+## Optional Windows Backend
 
 - The hosted web app can process and rotate browser-supported image formats such as JPEG and PNG.
-- RAW formats such as CR2 and ORF can be included in the workflow, but direct RAW rotation needs the optional local backend because browsers cannot safely rewrite those files by themselves.
+- RAW formats such as CR2 and ORF can be included in the workflow, but direct RAW rotation needs the optional Windows backend because browsers cannot safely rewrite those files by themselves.
+- The app shows a Download Backend button when the local backend is offline. On Windows, download and open `AIPhotoProcessor-Backend.exe`; it includes ExifTool's Windows executable plus the required `exiftool_files` folder and starts the local service used by the web app.
 - Gemini API keys are stored locally in the browser.

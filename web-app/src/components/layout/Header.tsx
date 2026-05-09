@@ -1,13 +1,23 @@
 import { useEffect, useRef } from 'react'
-import { Sun, Moon, Wifi, WifiOff } from 'lucide-react'
+import { Download, Sun, Moon, Wifi, WifiOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTheme } from '@/components/ThemeProviderHook'
 import { useBackendStore } from '@/stores/backendStore'
+import { BACKEND_DOWNLOAD_URL_WINDOWS, BACKEND_RELEASES_URL } from '@/lib/constants'
+
+function isWindowsClient() {
+  const nav = window.navigator as Navigator & {
+    userAgentData?: { platform?: string }
+  }
+  const platform = nav.userAgentData?.platform || nav.platform || nav.userAgent
+  return /win/i.test(platform)
+}
 
 export function Header() {
   const { resolved, setTheme } = useTheme()
   const status = useBackendStore((s) => s.status)
+  const isWindows = isWindowsClient()
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   // Single check on mount, then poll with backoff; stop after 3 failures to avoid console noise
@@ -37,6 +47,29 @@ export function Header() {
       </h1>
 
       <div className="flex items-center gap-2">
+        {!status.connected && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="sm" asChild>
+                <a
+                  href={isWindows ? BACKEND_DOWNLOAD_URL_WINDOWS : BACKEND_RELEASES_URL}
+                  download={isWindows ? 'AIPhotoProcessor-Backend.exe' : undefined}
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">
+                    {isWindows ? 'Download Backend' : 'Backend for Windows'}
+                  </span>
+                </a>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {isWindows
+                ? 'Download and open the local Windows backend to enable RAW rotation'
+                : 'The packaged backend is currently available for Windows only'}
+            </TooltipContent>
+          </Tooltip>
+        )}
+
         <Tooltip>
           <TooltipTrigger asChild>
             <div className="flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs">
@@ -56,7 +89,7 @@ export function Header() {
           <TooltipContent>
             {status.connected
               ? 'Local backend connected — RAW rotation & in-place rename available'
-              : 'Local backend not detected — some features require the backend exe'}
+              : 'Local backend not detected — RAW rotation needs the Windows backend exe'}
           </TooltipContent>
         </Tooltip>
 

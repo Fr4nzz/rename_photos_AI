@@ -2,10 +2,14 @@ name: Build Backend Executable
 
 on:
   push:
-    branches: [web-app]
+    branches: [main]
     paths:
+      - '.github/workflows/build-backend.yml'
       - 'web-app/backend/**'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -23,49 +27,41 @@ jobs:
       - name: Download ExifTool
         shell: pwsh
         run: |
-          $url = "https://exiftool.org/exiftool-13.10_64.zip"
+          $url = "https://sourceforge.net/projects/exiftool/files/exiftool-13.58_64.zip/download"
           $zip = "exiftool.zip"
           Invoke-WebRequest -Uri $url -OutFile $zip
           Expand-Archive -Path $zip -DestinationPath exiftool-tmp
-          Copy-Item "exiftool-tmp/exiftool(-k).exe" "web-app/backend/bin/exiftool.exe"
+
+          $exe = Get-ChildItem exiftool-tmp -Recurse -File -Filter "exiftool(-k).exe" | Select-Object -First 1
+          $filesDir = Get-ChildItem exiftool-tmp -Recurse -Directory -Filter "exiftool_files" | Select-Object -First 1
+          if (-not $exe) { throw "Could not find exiftool(-k).exe in archive" }
+          if (-not $filesDir) { throw "Could not find exiftool_files in archive" }
+
+          New-Item -ItemType Directory -Force -Path web-app/backend/bin
+          Copy-Item $exe.FullName web-app/backend/bin/exiftool.exe
+          Copy-Item $filesDir.FullName web-app/backend/bin/exiftool_files -Recurse
 
       - name: Build with pkg
         run: cd web-app/backend && npx pkg . --targets node18-win-x64 --output dist/AIPhotoProcessor-Backend.exe
 
-      - name: Copy exiftool to dist
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path web-app/backend/dist/bin
-          Copy-Item web-app/backend/bin/exiftool.exe web-app/backend/dist/bin/
-
       - uses: actions/upload-artifact@v4
         with:
-          name: backend-windows
-          path: web-app/backend/dist/
+          name: AIPhotoProcessor-Backend.exe
+          path: web-app/backend/dist/AIPhotoProcessor-Backend.exe
 
-  # Uncomment when macOS build is needed:
-  # build-macos:
-  #   runs-on: macos-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-node@v4
-  #       with:
-  #         node-version: 18
-  #     - name: Install dependencies
-  #       run: cd web-app/backend && npm ci
-  #     - name: Download ExifTool
-  #       run: |
-  #         curl -L -o exiftool.tar.gz https://exiftool.org/Image-ExifTool-13.10.tar.gz
-  #         tar xzf exiftool.tar.gz
-  #         cp Image-ExifTool-13.10/exiftool web-app/backend/bin/
-  #         chmod +x web-app/backend/bin/exiftool
-  #     - name: Build with pkg
-  #       run: cd web-app/backend && npx pkg . --targets node18-macos-x64 --output dist/AIPhotoProcessor-Backend
-  #     - name: Copy exiftool to dist
-  #       run: |
-  #         mkdir -p web-app/backend/dist/bin
-  #         cp web-app/backend/bin/exiftool web-app/backend/dist/bin/
-  #     - uses: actions/upload-artifact@v4
-  #       with:
-  #         name: backend-macos
-  #         path: web-app/backend/dist/
+      - name: Publish backend-latest release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "backend-latest"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f $tag
+          git push origin "refs/tags/$tag" --force
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "AI Photo Processor Backend" --notes "Windows backend executable for RAW rotation in the hosted web app."
+          }
+          gh release upload $tag web-app/backend/dist/AIPhotoProcessor-Backend.exe --clobber
