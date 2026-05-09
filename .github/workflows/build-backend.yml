@@ -29,7 +29,7 @@ jobs:
         run: |
           $url = "https://sourceforge.net/projects/exiftool/files/exiftool-13.58_64.zip/download"
           $zip = "exiftool.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip
+          curl.exe -L --fail -o $zip $url
           Expand-Archive -Path $zip -DestinationPath exiftool-tmp
 
           $exe = Get-ChildItem exiftool-tmp -Recurse -File -Filter "exiftool(-k).exe" | Select-Object -First 1
