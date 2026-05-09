@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTheme } from '@/components/ThemeProviderHook'
 import { useBackendStore } from '@/stores/backendStore'
-import { BACKEND_DOWNLOAD_URL_WINDOWS, BACKEND_RELEASES_URL } from '@/lib/constants'
+import { BACKEND_DOWNLOAD_URL_WINDOWS, BACKEND_RELEASES_URL, GITHUB_REPO_URL } from '@/lib/constants'
 
 function isWindowsClient() {
   const nav = window.navigator as Navigator & {
@@ -42,9 +42,12 @@ export function Header() {
 
   return (
     <header className="flex items-center justify-between border-b px-4 py-2">
-      <h1 className="text-lg font-semibold tracking-tight">
+      <a
+        href={GITHUB_REPO_URL}
+        className="text-lg font-semibold tracking-tight transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
         AI Photo Processor
-      </h1>
+      </a>
 
       <div className="flex items-center gap-2">
         {!status.connected && (
