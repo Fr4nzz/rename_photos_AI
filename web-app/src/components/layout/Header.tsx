@@ -57,15 +57,15 @@ export function Header() {
                 >
                   <Download className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">
-                    {isWindows ? 'Download Backend' : 'Backend for Windows'}
+                    {isWindows ? 'Download RAW Rotation Backend' : 'RAW Rotation Backend for Windows'}
                   </span>
                 </a>
               </Button>
             </TooltipTrigger>
             <TooltipContent>
               {isWindows
-                ? 'Download and open the local Windows backend to enable RAW rotation'
-                : 'The packaged backend is currently available for Windows only'}
+                ? 'Only needed if you want to rotate RAW files such as CR2 or ORF'
+                : 'RAW rotation backend is currently available for Windows only'}
             </TooltipContent>
           </Tooltip>
         )}
