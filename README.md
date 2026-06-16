@@ -46,7 +46,7 @@ The web app is tuned for small Gemini messages that work well with Gemini 3.1 Fl
 
 | Setting | Default |
 | --- | --- |
-| Model | `gemini-3.1-flash-lite-preview` |
+| Model | `gemini-3.1-flash-lite` |
 | Grids per message | `1` |
 | Grid rows | `2` |
 | Grid columns | `2` |
@@ -55,6 +55,10 @@ The web app is tuned for small Gemini messages that work well with Gemini 3.1 Fl
 | Main column | `CAM` |
 
 The app includes rate-limit pacing so parallel requests do not exceed the configured model family limit.
+
+### Why so few labels per message?
+
+Gemini 3.1 Flash Lite is fast and has a high request allowance (around 15 requests per minute and 500 per day on the current free tier), but it reads handwritten labels more reliably when each request holds only a few of them. The defaults therefore send a single small 2×2 grid (four labels) per request, rather than packing many labels into one image the way heavier models such as Gemini 3 Flash could. This trades fewer labels per request for higher per-label accuracy, and the model's high request limit combined with five parallel requests keeps overall throughput high. If you switch to a stronger model, raise the grid rows and columns to fit more labels per request.
 
 ## Run Locally
 

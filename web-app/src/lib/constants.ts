@@ -67,7 +67,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   mergedImgHeight: 1600,
   parallelRequests: 5,
   mainColumn: 'CAM',
-  modelName: 'gemini-3.1-flash-lite-preview',
+  modelName: 'gemini-3.1-flash-lite',
   promptText: DEFAULT_PROMPT,
   rotationAngle: 180,
   useExif: true,
