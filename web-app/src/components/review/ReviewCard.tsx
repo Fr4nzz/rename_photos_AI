@@ -146,8 +146,15 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
               <Input
                 value={row.mainValue}
                 onChange={(e) => onUpdate(row.photoId, { mainValue: e.target.value })}
+                data-review={row.review ? '1' : undefined}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && /^CAM\d{6}$/.test(row.mainValue.trim())) onUpdate(row.photoId, { review: '' })
+                  if (e.key !== 'Enter' || !/^CAM\d{6}$/.test(row.mainValue.trim())) return
+                  if (row.review) onUpdate(row.photoId, { review: '' })
+                  // keyboard flow: move on to the next photo still waiting for review
+                  const inputs = [...document.querySelectorAll<HTMLInputElement>('input[data-review="1"]')]
+                  const next = inputs[inputs.indexOf(e.currentTarget) + 1] ?? inputs.find((el) => el !== e.currentTarget)
+                  next?.focus()
+                  next?.scrollIntoView({ behavior: 'smooth', block: 'center' })
                 }}
                 className="h-7 font-mono text-xs"
               />

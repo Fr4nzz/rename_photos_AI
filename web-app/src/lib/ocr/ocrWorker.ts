@@ -7,6 +7,7 @@
 import * as ort from 'onnxruntime-web/wasm'
 import { readOrientation } from '../orientation'
 import { extractLargestJpeg } from '../rawPreview'
+import { decodeHeic, HEIC_EXTENSIONS } from '../heic'
 import { rotate, type RGBAImage } from './image'
 import { readPhoto, type Backend, type ModelName, type PhotoReading } from './pipeline'
 
@@ -44,6 +45,18 @@ const backend: Backend = {
 const WORK_SIDE = 1600
 
 async function decode(file: File, raw: boolean): Promise<RGBAImage> {
+  if (HEIC_EXTENSIONS.has(file.name.slice(file.name.lastIndexOf('.')).toLowerCase())) {
+    const full = await decodeHeic(file)
+    const scale = Math.min(1, WORK_SIDE / Math.max(full.width, full.height))
+    const w = Math.round(full.width * scale), h = Math.round(full.height * scale)
+    const src = new OffscreenCanvas(full.width, full.height)
+    src.getContext('2d')!.putImageData(new ImageData(full.data, full.width, full.height), 0, 0)
+    const dst = new OffscreenCanvas(w, h)
+    const ctx = dst.getContext('2d', { willReadFrequently: true })!
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(src, 0, 0, w, h)
+    return { width: w, height: h, data: ctx.getImageData(0, 0, w, h).data }
+  }
   let source: Blob = file
   let turnCcw = 0
   if (raw) {

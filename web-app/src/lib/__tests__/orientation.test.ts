@@ -31,3 +31,12 @@ describe.skipIf(!existsSync('/tmp/rawtest/sample.CR2'))('real files', () => {
     expect(findOrientation(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0, 0, 0, 0, 0]).buffer)).toBeNull()
   })
 })
+
+describe.skipIf(!existsSync('/tmp/rawtest/sample.CR3'))('Canon CR3', () => {
+  it('finds the Orientation tag in the CMT1 box', () => {
+    const slot = findOrientation(head('/tmp/rawtest/sample.CR3'))
+    expect(slot).not.toBeNull()
+    expect(slot!.value).toBe(1) // LibRaw reports flip 0 for this file
+    expect(slot!.offset).toBe(386) // LibRaw reads flip 6 after writing 6 at this byte
+  })
+})

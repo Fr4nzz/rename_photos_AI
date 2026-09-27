@@ -4,11 +4,15 @@
  * and transfers the resulting ImageBitmap back (zero-copy).
  */
 
+import { decodeHeic } from './heic'
+
 export interface DecodeRequest {
   id: number
   blob: Blob
   maxSize: number
   applyExif: boolean
+  /** HEIC/HEIF: decoded with libheif (Chrome cannot decode it) */
+  heic?: boolean
 }
 
 export interface DecodeResponse {
@@ -21,8 +25,14 @@ export interface DecodeResponse {
 const ctx = self as unknown as Worker
 
 ctx.onmessage = async (e: MessageEvent<DecodeRequest>) => {
-  const { id, blob, maxSize, applyExif } = e.data
+  const { id, blob, maxSize, applyExif, heic } = e.data
   try {
+    if (heic) {
+      const img = await decodeHeic(blob)
+      const bmp = await createImageBitmap(new ImageData(img.data, img.width, img.height), { resizeWidth: maxSize, resizeQuality: 'medium' })
+      ctx.postMessage({ id, bitmap: bmp } satisfies DecodeResponse, [bmp])
+      return
+    }
     const bmp = await createImageBitmap(blob, {
       resizeWidth: maxSize,
       resizeQuality: 'medium',

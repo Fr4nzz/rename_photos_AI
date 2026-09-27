@@ -6,8 +6,8 @@
  * (the file keeps its size and every other byte), so no backend, no re-encoding and no backup
  * copies are needed. Undo = write the previous value back.
  *
- * Supported: JPEG (APP1 Exif), TIFF-based RAW (CR2, NEF, ARW, DNG, PEF, SRW, ORF, RW2, TIFF).
- * Not supported (returns null): PNG, HEIC/HEIF, RAF, CR3.
+ * Supported: JPEG (APP1 Exif), TIFF-based RAW (CR2, NEF, ARW, DNG, PEF, SRW, ORF, RW2, TIFF) and
+ * Canon CR3 (the TIFF block in the CMT1 box). Not supported (returns null): PNG, HEIC/HEIF, RAF.
  */
 
 import { ANGLE_TO_ORIENTATION, ORIENTATION_TO_ANGLE } from './constants'
@@ -65,11 +65,49 @@ function findInJpeg(view: DataView): OrientationSlot | null {
   return null
 }
 
+/** ISO-BMFF boxes (CR3): [type, payload start, box end] of the children of [start, end). */
+export function* bmffBoxes(view: DataView, start: number, end: number): Generator<[string, number, number]> {
+  let pos = start
+  while (pos + 8 <= Math.min(end, view.byteLength)) {
+    let size = view.getUint32(pos)
+    let header = 8
+    const type = String.fromCharCode(view.getUint8(pos + 4), view.getUint8(pos + 5), view.getUint8(pos + 6), view.getUint8(pos + 7))
+    if (size === 1 && pos + 16 <= view.byteLength) { size = Number(view.getBigUint64(pos + 8)); header = 16 }
+    if (size === 0) size = end - pos
+    if (size < header) return
+    if (type === 'uuid') header += 16
+    yield [type === 'uuid' ? `uuid:${uuidAt(view, pos + header - 16)}` : type, pos + header, pos + size]
+    pos += size
+  }
+}
+
+function uuidAt(view: DataView, at: number): string {
+  let s = ''
+  for (let i = 0; i < 16 && at + i < view.byteLength; i++) s += view.getUint8(at + i).toString(16).padStart(2, '0')
+  return s
+}
+
+export const isCr3 = (view: DataView) =>
+  view.byteLength >= 12 && view.getUint32(4) === 0x66747970 /* ftyp */ && view.getUint32(8) === 0x63727820 /* 'crx ' */
+
+/** CR3: moov -> uuid 85c0b687… (Canon metadata) -> CMT1 = IFD0 as a TIFF block. */
+function findInCr3(view: DataView): OrientationSlot | null {
+  for (const [type, start, end] of bmffBoxes(view, 0, view.byteLength)) {
+    if (type !== 'moov') continue
+    for (const [t2, s2, e2] of bmffBoxes(view, start, end)) {
+      if (!t2.startsWith('uuid:85c0b687')) continue
+      for (const [t3, s3] of bmffBoxes(view, s2, e2)) if (t3 === 'CMT1') return findInTiff(view, s3)
+    }
+  }
+  return null
+}
+
 /** Locate the Orientation tag in the first bytes of a file. */
 export function findOrientation(head: ArrayBuffer): OrientationSlot | null {
   const view = new DataView(head)
   if (view.byteLength < 12) return null
   if (view.getUint16(0) === 0xffd8) return findInJpeg(view)
+  if (isCr3(view)) return findInCr3(view)
   return findInTiff(view, 0)
 }
 

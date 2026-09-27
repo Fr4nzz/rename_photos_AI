@@ -7,6 +7,8 @@
  * maker notes, which is not parsed here; callers fall back to exifr's small thumbnail).
  */
 
+import { bmffBoxes, isCr3 } from './orientation'
+
 const HEAD_BYTES = 1024 * 1024
 const T = { subIfds: 0x014a, stripOffsets: 0x0111, stripByteCounts: 0x0117, jpegOffset: 0x0201, jpegLength: 0x0202 }
 
@@ -64,8 +66,24 @@ export function findJpegPreviews(head: ArrayBuffer): Candidate[] {
   return found
 }
 
+/** CR3: the PRVW box (in uuid eaf42b5e…) holds a 1620 px camera JPEG. */
+function findCr3Preview(view: DataView): Candidate[] {
+  for (const [type, start, end] of bmffBoxes(view, 0, view.byteLength)) {
+    if (!type.startsWith('uuid:eaf42b5e')) continue
+    for (const [t2, s2, e2] of bmffBoxes(view, start + 8, end)) {
+      if (t2 !== 'PRVW') continue
+      for (let i = s2; i + 1 < Math.min(e2, view.byteLength); i++) {
+        if (view.getUint8(i) === 0xff && view.getUint8(i + 1) === 0xd8) return [{ offset: i, length: e2 - i }]
+      }
+    }
+  }
+  return []
+}
+
 export async function extractLargestJpeg(file: Blob): Promise<Blob | null> {
-  const candidates = findJpegPreviews(await file.slice(0, HEAD_BYTES).arrayBuffer())
+  const head = await file.slice(0, HEAD_BYTES).arrayBuffer()
+  const view = new DataView(head)
+  const candidates = (isCr3(view) ? findCr3Preview(view) : findJpegPreviews(head))
     .filter((c) => c.offset + c.length <= file.size)
     .sort((a, b) => b.length - a.length)
   for (const c of candidates) {

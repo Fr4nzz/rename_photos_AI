@@ -2,6 +2,13 @@
 
 The web app reads the CAMID on each specimen photo inside the browser. No API key is needed, nothing is uploaded, and it runs in about 1 s per photo on a laptop. This page describes the models, the rules that decide when a photo is renamed automatically, how accurate it is, and how to update it.
 
+## Credits
+
+- **Envelope segmentation:** a fine-tuned [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) model (AGPL-3.0).
+- **Text-line detection and CAMID recognition:** fine-tuned [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv5 models (Apache-2.0).
+- **Runtime:** [ONNX Runtime Web](https://onnxruntime.ai) (MIT).
+- **HEIC decoding:** [libheif](https://github.com/strukturag/libheif) via libheif-js (LGPL-3.0).
+
 ## Pipeline
 
 1. **Envelope detector** (`public/models/envelope_det.onnx`, 11 MB).

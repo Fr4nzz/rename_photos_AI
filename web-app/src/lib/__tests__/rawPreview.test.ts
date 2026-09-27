@@ -21,3 +21,13 @@ describe.skipIf(!existsSync('/tmp/rawtest/sample.CR2'))('RAW preview', () => {
     expect(w).toBeGreaterThan(3000)
   })
 })
+
+describe.skipIf(!existsSync('/tmp/rawtest/sample.CR3'))('CR3 preview', () => {
+  it('extracts the PRVW JPEG', async () => {
+    const jpeg = await extractLargestJpeg(new Blob([readFileSync('/tmp/rawtest/sample.CR3')]))
+    expect(jpeg).not.toBeNull()
+    const bytes = new Uint8Array(await jpeg!.arrayBuffer())
+    expect([bytes[0], bytes[1]]).toEqual([0xff, 0xd8])
+    expect(jpeg!.size).toBeGreaterThan(100_000)
+  })
+})

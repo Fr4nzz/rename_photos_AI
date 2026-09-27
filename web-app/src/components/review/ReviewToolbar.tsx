@@ -1,4 +1,4 @@
-import { RefreshCw, Crop, ImageIcon } from 'lucide-react'
+import { RefreshCw, Crop, ImageIcon, CheckCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -24,6 +24,8 @@ interface Props {
   onSortChange: (s: SortOption) => void
   selectedOnly: boolean
   onSelectedOnlyChange: (value: boolean) => void
+  reviewCount: number
+  onConfirmShown: () => void
 }
 
 const FILTERS: { label: string; value: FilterType }[] = [
@@ -58,6 +60,8 @@ export function ReviewToolbar({
   onSortChange,
   selectedOnly,
   onSelectedOnlyChange,
+  reviewCount,
+  onConfirmShown,
 }: Props) {
   const { reviewCropEnabled, reviewThumbSize, updateSetting } = useSettingsStore()
 
@@ -98,6 +102,19 @@ export function ReviewToolbar({
           ))}
         </SelectContent>
       </Select>
+
+      {reviewCount > 0 && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1.5 border-amber-500/60 text-xs"
+          onClick={onConfirmShown}
+          title="Confirm every shown photo whose CAM field holds a complete CAMID"
+        >
+          <CheckCheck className="h-3.5 w-3.5" />
+          {reviewCount}
+        </Button>
+      )}
 
       <Select value={sortOption} onValueChange={(v) => onSortChange(v as SortOption)}>
         <SelectTrigger className="h-8 w-40 text-xs">

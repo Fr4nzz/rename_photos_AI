@@ -264,6 +264,19 @@ export function useReviewTab() {
     [photoRows, setPhotoRows, mainColumn, suffixMode, customSuffixes]
   )
 
+  /** Confirm every shown photo whose CAM field holds a valid CAMID (the rest stay in review). */
+  const confirmShown = useCallback(() => {
+    const ids = new Set(filteredRows.filter((r) => r.review && /^CAM\d{6}$/.test(r.mainValue.trim())).map((r) => r.photoId))
+    if (ids.size === 0) {
+      toast.info('No photo here has a complete CAMID to confirm.')
+      return
+    }
+    const left = filteredRows.filter((r) => r.review).length - ids.size
+    if (!window.confirm(`Confirm ${ids.size} photo(s) with the CAMID shown in their CAM field?${left ? ` ${left} without a complete CAMID stay in review.` : ''}`)) return
+    setPhotoRows(photoRows.map((r) => (ids.has(r.photoId) ? { ...r, review: '' } : r)))
+    toast.success(`Confirmed ${ids.size} photo(s).`)
+  }, [filteredRows, photoRows, setPhotoRows])
+
   const recalculateNames = useCallback(() => {
     const updated = calculateFinalNames(photoRows, mainColumn, suffixMode, customSuffixes)
     setPhotoRows(updated)
@@ -314,5 +327,7 @@ export function useReviewTab() {
     saveChanges,
     exportCsv,
     itemsPerPage: reviewItemsPerPage,
+    confirmShown,
+    reviewCount: photoRows.filter((r) => r.review).length,
   }
 }

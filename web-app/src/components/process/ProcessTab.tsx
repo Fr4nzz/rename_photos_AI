@@ -45,8 +45,18 @@ export function ProcessTab() {
         <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-3 space-y-3">
           {local ? (
             <div className="rounded border bg-card p-4 text-sm text-muted-foreground">
-              Photos are read on this computer by the built-in CAMID reader and checked against the
-              specimen database. Uncertain photos go to Review with a suggestion.
+              <p>
+                Photos are read on this computer by the built-in CAMID reader and checked against the
+                specimen database. Uncertain photos go to Review with a suggestion.
+              </p>
+              <p className="mt-3 text-xs">
+                Envelope segmentation: a fine-tuned{' '}
+                <a className="underline" href="https://github.com/ultralytics/ultralytics">Ultralytics YOLO</a> model (AGPL-3.0).
+                Text lines and CAMIDs: fine-tuned{' '}
+                <a className="underline" href="https://github.com/PaddlePaddle/PaddleOCR">PaddleOCR</a> PP-OCRv5 models (Apache-2.0).
+                Runs with <a className="underline" href="https://onnxruntime.ai">ONNX Runtime Web</a> (MIT);
+                HEIC photos are decoded with <a className="underline" href="https://github.com/strukturag/libheif">libheif</a> (LGPL-3.0).
+              </p>
             </div>
           ) : (<>
             <PreviewPanel previews={hook.previews} />

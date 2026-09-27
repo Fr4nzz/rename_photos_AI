@@ -9,7 +9,7 @@ export const BROWSER_ROTATABLE_EXTENSIONS = new Set([
 ])
 
 export const SUPPORTED_RAW_EXTENSIONS = new Set([
-  '.cr2', '.orf', '.tif', '.tiff', '.nef', '.arw', '.dng', '.raf',
+  '.cr2', '.cr3', '.orf', '.tif', '.tiff', '.nef', '.arw', '.dng', '.raf',
 ])
 
 export const ALL_SUPPORTED_EXTENSIONS = new Set([

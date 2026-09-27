@@ -49,4 +49,6 @@ The models are in `public/models/`. See [../docs/LOCAL_READER.md](../docs/LOCAL_
 
 ## Formats
 
-JPEG and PNG are read directly. RAW files (CR2, NEF, ARW, DNG, PEF; ORF with a smaller preview) are read through their embedded JPEG preview and rotated through their orientation tag. HEIC is not decoded by Chrome, so convert HEIC to JPEG first.
+- **JPEG and PNG** are read directly.
+- **HEIC/HEIF** (iPhone) is decoded with libheif (WebAssembly). It can be read and renamed, but not rotated.
+- **RAW files** (CR2, CR3, NEF, ARW, DNG, PEF, and ORF with a smaller preview) are read through their embedded JPEG preview and rotated through their orientation tag.

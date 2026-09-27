@@ -14,8 +14,9 @@ Live app: https://fr4nzz.github.io/rename_photos_AI/
   - it must fit the IDs of the photos taken just before and after it;
   - it must not appear on photos that were not taken back to back.
 - **Sends uncertain photos to review.** Each one shows the reason, a zoomed crop of the ID line, a pre-filled suggestion and one-click database IDs. Unconfirmed photos are never renamed.
-- **Rotates losslessly.** JPEG and RAW files (CR2, NEF, ARW, DNG, ORF, PEF) are rotated by changing only their orientation tag. There's no re-encoding and no helper program; Undo writes the old value back.
+- **Rotates losslessly.** JPEG and RAW files (CR2, CR3, NEF, ARW, DNG, ORF, PEF) are rotated by changing only their orientation tag. There's no re-encoding and no helper program; Undo writes the old value back.
 - **Renames safely.** Every rename is checked first, and names already used by other files are never overwritten. RAW companions are renamed with their JPEGs. A per-folder log in `rename_files/` makes Restore possible.
+- **Reads JPEG, PNG, HEIC and RAW.** RAW files are read through their embedded preview.
 - **Gemini is still available** as the other reader: grid prompts sent with your own API key.
 
 ## Hosted Web App
@@ -101,4 +102,5 @@ This project uses:
 - Google Gemini APIs for the optional Gemini reader.
 - ONNX Runtime Web (MIT) to run the local reader.
 - PaddleOCR PP-OCRv5 models (Apache-2.0), fine-tuned for the text-line detector and CAMID recognizer.
-- An Ultralytics YOLO segmentation model (AGPL-3.0) for the envelope detector.
+- A fine-tuned Ultralytics YOLO segmentation model (AGPL-3.0) for envelope segmentation.
+- libheif via libheif-js (LGPL-3.0) to decode HEIC photos.

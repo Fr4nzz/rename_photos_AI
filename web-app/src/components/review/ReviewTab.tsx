@@ -33,6 +33,8 @@ export function ReviewTab() {
         onSortChange={hook.setSortOption}
         selectedOnly={hook.reviewSelectedOnly}
         onSelectedOnlyChange={hook.setReviewSelectedOnly}
+        reviewCount={hook.reviewCount}
+        onConfirmShown={hook.confirmShown}
       />
 
       <IdTimeline rows={hook.photoRows} onJump={jumpTo} />

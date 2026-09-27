@@ -2,6 +2,7 @@ import exifr from 'exifr'
 import { BROWSER_ROTATABLE_EXTENSIONS, ORIENTATION_TO_ANGLE, SUPPORTED_RAW_EXTENSIONS } from './constants'
 import { readOrientation } from './orientation'
 import { extractLargestJpeg } from './rawPreview'
+import { decodeHeic, HEIC_EXTENSIONS } from './heic'
 import { logger } from './logger'
 import {
   thumbnailCacheKey,
@@ -66,6 +67,13 @@ export async function loadImage(file: File): Promise<HTMLImageElement> {
     } else {
       url = URL.createObjectURL(blob)
     }
+  } else if (HEIC_EXTENSIONS.has(ext)) {
+    const img = await decodeHeic(file)
+    const c = document.createElement('canvas')
+    c.width = img.width
+    c.height = img.height
+    c.getContext('2d')!.putImageData(new ImageData(img.data, img.width, img.height), 0, 0)
+    url = await canvasToBlobUrl(c)
   } else {
     url = URL.createObjectURL(file)
   }
@@ -120,13 +128,13 @@ function getWorkerPool(): Worker[] {
   return workers
 }
 
-function decodeInWorker(blob: Blob, maxSize: number, applyExif: boolean): Promise<ImageBitmap> {
+function decodeInWorker(blob: Blob, maxSize: number, applyExif: boolean, heic = false): Promise<ImageBitmap> {
   const pool = getWorkerPool()
   const id = msgId++
   const worker = pool[nextWorker++ % POOL_SIZE]
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject })
-    worker.postMessage({ id, blob, maxSize, applyExif } satisfies DecodeRequest)
+    worker.postMessage({ id, blob, maxSize, applyExif, heic } satisfies DecodeRequest)
   })
 }
 
@@ -183,7 +191,7 @@ export async function loadImagePreview(
     }
 
     // 3. Decode in Web Worker (off main thread)
-    const bmp = await decodeInWorker(source, maxSize, applyExif)
+    const bmp = await decodeInWorker(source, maxSize, applyExif, HEIC_EXTENSIONS.has(ext))
     let c = document.createElement('canvas')
     c.width = bmp.width
     c.height = bmp.height
