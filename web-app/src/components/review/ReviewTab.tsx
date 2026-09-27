@@ -37,7 +37,6 @@ export function ReviewTab() {
       />
 
       <ReviewActionBar
-        onRecalculate={hook.recalculateNames}
         onSave={hook.saveChanges}
         onExportCsv={hook.exportCsv}
         hasData={hook.photoRows.length > 0}

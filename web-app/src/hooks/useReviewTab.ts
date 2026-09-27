@@ -17,7 +17,7 @@ import {
 } from '@/lib/csvHandler'
 import { logger } from '@/lib/logger'
 
-export type FilterType = 'all' | 'crossedOut' | 'hasNotes' | 'skipped' | 'mismatches'
+export type FilterType = 'all' | 'review' | 'crossedOut' | 'hasNotes' | 'skipped' | 'mismatches'
 export type SortOption =
   | 'name-asc' | 'name-desc'
   | 'batch-asc' | 'batch-desc'
@@ -38,7 +38,8 @@ export function useReviewTab() {
 
   const [csvFiles, setCsvFiles] = useState<string[]>([])
   const [selectedCsv, setSelectedCsv] = useState('')
-  const [filter, setFilter] = useState<FilterType>('all')
+  // start on the photos that need a person, when a local reading left some
+  const [filter, setFilter] = useState<FilterType>(() => (photoRows.some((r) => r.review) ? 'review' : 'all'))
   const [sortOption, setSortOption] = useState<SortOption>('name-asc')
   const [currentPage, setCurrentPage] = useState(1)
 
@@ -132,6 +133,8 @@ export function useReviewTab() {
       batchNumber: 0,
       captureDate: null,
       status: 'Original',
+      review: '',
+      suggest: '',
     }))
 
     const text = toCsvString(rows, mainColumn)
@@ -170,6 +173,9 @@ export function useReviewTab() {
       : photoRows
 
     switch (filter) {
+      case 'review':
+        rows = rows.filter((r) => r.review)
+        break
       case 'crossedOut':
         rows = rows.filter((r) => r.co?.trim())
         break
@@ -233,12 +239,19 @@ export function useReviewTab() {
 
   const updateRow = useCallback(
     (photoId: number, updates: Partial<PhotoRow>) => {
-      const rows = photoRows.map((r) =>
+      let rows = photoRows.map((r) =>
         r.photoId === photoId ? { ...r, ...updates } : r
       )
+      if ('mainValue' in updates || 'skip' in updates) {
+        // final names follow every edit (no separate Recalculate step)
+        rows = calculateFinalNames(rows, mainColumn, suffixMode, customSuffixes)
+      } else if ('suffix' in updates) {
+        rows = rows.map((r) => r.photoId === photoId && r.mainValue.trim()
+          ? { ...r, to: `${r.mainValue.trim()}${r.suffix}${r.from.slice(r.from.lastIndexOf('.'))}` } : r)
+      }
       setPhotoRows(rows)
     },
-    [photoRows, setPhotoRows]
+    [photoRows, setPhotoRows, mainColumn, suffixMode, customSuffixes]
   )
 
   const recalculateNames = useCallback(() => {

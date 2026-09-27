@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { toast } from 'sonner'
+import { runLocalOcr } from '@/lib/ocr/runLocal'
+import { calculateFinalNames } from '@/lib/nameCalculator'
 import type { PhotoRow } from '@/types'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useApiKeysStore } from '@/stores/apiKeysStore'
@@ -388,8 +390,62 @@ export function useProcessTab() {
     return result
   }
 
+  // Local CAMID reader: no API key, photos never leave the computer
+  const startLocalProcessing = useCallback(async () => {
+    let files = imageFiles
+    const currentDirHandle = useProcessingStore.getState().dirHandle
+    if (currentDirHandle) {
+      const refreshed = await getImageFilesFromHandle(currentDirHandle, fileType)
+      const selectedNames = useProcessingStore.getState().selectedImageNames
+      processing.setImageFiles(refreshed, false)
+      processing.setSelectedImageNames(selectedNames)
+      files = getSelectedImageFiles(refreshed, selectedNames)
+    }
+    if (files.length === 0) {
+      toast.error('No images loaded. Select a folder first.')
+      return
+    }
+    processing.setProcessing(true)
+    processing.setProgress(0, 'Loading the CAMID reader…')
+    const abortController = new AbortController()
+    abortRef.current = abortController
+    const baseRows: PhotoRow[] = files.map((entry, i) => ({
+      from: entry.name, currentPath: entry.name, photoId: i + 1, mainValue: '', co: '', n: '', skip: '',
+      to: '', suffix: '', batchNumber: 0, captureDate: null, status: 'Original', review: '', suggest: '',
+    }))
+    processing.setPhotoRows(baseRows)
+    processing.setFileMap(new Map(files.map((entry) => [entry.name, entry.file])))
+    const started = performance.now()
+    try {
+      const result = await runLocalOcr(files, baseRows, (done, total) => {
+        const secs = (performance.now() - started) / 1000
+        const eta = done ? Math.round((secs / done) * (total - done)) : 0
+        processing.setProgress(Math.floor((done / total) * 100), `Read ${done}/${total} photos · ~${eta}s left`)
+      }, abortController.signal)
+      if (abortController.signal.aborted) return
+      const rows = calculateFinalNames(result.rows, settings.mainColumn, settings.suffixMode, settings.customSuffixes)
+      processing.setPhotoRows(rows)
+      processing.setOcrReadings(result.readings)
+      const csvName = `${folderName || currentDirHandle?.name || 'results'}_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.csv`
+      const csvText = toCsvString(rows, settings.mainColumn)
+      await saveCsvToStorage(csvName, csvText)
+      await saveLastCsvName(csvName)
+      processing.setCurrentCsvName(csvName)
+      if (currentDirHandle) await saveCsvToFolder(currentDirHandle, csvName, csvText)
+      const review = rows.filter((r) => r.review).length
+      processing.setProgress(100, `Done: ${rows.length - review} ready, ${review} to review`)
+      toast.success(`Read ${rows.length} photos: ${rows.length - review} ready to rename, ${review} to review.`)
+      if (result.database.source === 'bundled') toast.warning('Could not reach the specimen database; used the copy bundled with the app.')
+    } catch (e: unknown) {
+      toast.error(`Reading failed: ${getErrorMessage(e)}`)
+    } finally {
+      processing.setProcessing(false)
+    }
+  }, [imageFiles, settings, processing, folderName, fileType])
+
   // Start processing
   const startProcessing = useCallback(async () => {
+    if (settings.engine === 'local') return startLocalProcessing()
     if (apiKeys.length === 0) {
       toast.error('No API keys configured. Go to the API Keys tab.')
       return
@@ -443,6 +499,8 @@ export function useProcessTab() {
         batchNumber: 0,
         captureDate: null,
         status: 'Original',
+        review: '',
+        suggest: '',
       }))
 
       // Continue mode: merge existing CSV data into rows
@@ -672,6 +730,10 @@ export function useProcessTab() {
 
       processing.setFailedBatches(failedBatches)
 
+      // Final names are computed right away (no separate Recalculate step)
+      rows = calculateFinalNames(rows, settings.mainColumn, settings.suffixMode, settings.customSuffixes)
+      processing.setPhotoRows(rows)
+
       // Final save (IndexedDB + folder)
       if (rows.length > 0 && !abortController.signal.aborted) {
         const csvName = `${folderName || 'results'}_${new Date().toISOString().slice(0, 10)}.csv`
@@ -698,7 +760,7 @@ export function useProcessTab() {
       logger.timeEnd('Total processing')
       processing.setProcessing(false)
     }
-  }, [apiKeys, imageFiles, settings, processing, folderName, fileType])
+  }, [apiKeys, imageFiles, settings, processing, folderName, fileType, startLocalProcessing])
 
   const stopProcessing = useCallback(() => {
     abortRef.current?.abort()

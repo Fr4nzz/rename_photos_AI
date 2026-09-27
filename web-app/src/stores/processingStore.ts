@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { FileEntry, PhotoRow, RotationLogEntry, RunMode } from '@/types'
+import type { PhotoReading } from '@/lib/ocr/pipeline'
 import { selectAllImageNames } from '@/lib/selection'
 
 interface ProcessingState {
@@ -20,6 +21,9 @@ interface ProcessingState {
   continueCsvName: string
   currentCsvName: string
   failedBatches: number[]
+  /** local OCR readings of this session (line boxes for the review zoom), by file name */
+  ocrReadings: Map<string, PhotoReading>
+  setOcrReadings: (m: Map<string, PhotoReading>) => void
 
   setPhotoRows: (rows: PhotoRow[]) => void
   setImageFiles: (files: FileEntry[], selectAll?: boolean) => void
@@ -57,6 +61,8 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
   continueCsvName: '',
   currentCsvName: '',
   failedBatches: [],
+  ocrReadings: new Map(),
+  setOcrReadings: (m) => set({ ocrReadings: m }),
 
   setPhotoRows: (rows) => set({ photoRows: rows }),
   setImageFiles: (files, selectAll = true) =>
@@ -87,7 +93,8 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
   setProgress: (percent, message) =>
     set((state) => ({
       progress: {
-        percent: Math.max(state.progress.percent, percent),
+        // parallel batches may report out of order; 0 starts a new run
+        percent: percent === 0 ? 0 : Math.max(state.progress.percent, percent),
         message,
       },
     })),

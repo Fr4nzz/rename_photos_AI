@@ -94,6 +94,8 @@ export function parseCsv(csvText: string, mainColumn: string): PhotoRow[] {
       batchNumber: parseInt(obj['batch_number'] ?? '0', 10),
       captureDate: obj['capture_date'] || null,
       status: (obj['status'] as PhotoRow['status']) || 'Original',
+      review: obj['review'] ?? '',
+      suggest: obj['suggest'] ?? '',
     })
   }
 
@@ -106,7 +108,7 @@ export function parseCsv(csvText: string, mainColumn: string): PhotoRow[] {
 export function toCsvString(rows: PhotoRow[], mainColumn: string): string {
   const headers = [
     'from', 'photo_ID', mainColumn, 'co', 'n', 'skip', 'to', 'suffix',
-    'batch_number', 'status', 'current_path',
+    'batch_number', 'status', 'current_path', 'review', 'suggest',
   ]
   const lines = [headers.join(',')]
 
@@ -123,6 +125,8 @@ export function toCsvString(rows: PhotoRow[], mainColumn: string): string {
       String(row.batchNumber),
       row.status,
       escapeCsv(row.currentPath),
+      escapeCsv(row.review ?? ''),
+      escapeCsv(row.suggest ?? ''),
     ]
     lines.push(values.join(','))
   }

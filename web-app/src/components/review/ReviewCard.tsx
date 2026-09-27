@@ -8,6 +8,10 @@ import { useProcessingStore } from '@/stores/processingStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { loadImagePreview, cropCanvas } from '@/lib/imageProcessing'
 import type { PhotoRow } from '@/types'
+import { Check, TriangleAlert } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { REASON_LABEL } from '@/lib/ocr/runLocal'
+import { IdLineZoom } from './IdLineZoom'
 
 interface Props {
   row: PhotoRow
@@ -62,7 +66,7 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
         : 'bg-muted text-muted-foreground'
 
   return (
-    <Card className={`overflow-hidden${isDuplicate ? ' ring-2 ring-amber-500/50' : ''}`}>
+    <Card className={`overflow-hidden${row.review ? ' ring-2 ring-amber-500' : isDuplicate ? ' ring-2 ring-amber-500/50' : ''}`}>
       <CardHeader className="px-3 py-2 pb-1">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="truncate text-xs font-medium">
@@ -74,9 +78,11 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
                 Duplicate
               </Badge>
             )}
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-              Msg {row.batchNumber}
-            </Badge>
+            {row.batchNumber > 0 && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                Msg {row.batchNumber}
+              </Badge>
+            )}
             <Badge className={`text-[10px] px-1.5 py-0 ${statusColor}`}>
               {row.status}
             </Badge>
@@ -98,6 +104,41 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
 
         {/* Fields */}
         <div className="min-w-0 flex-1 space-y-1.5">
+          {file && <IdLineZoom name={row.from} file={file} camid={row.mainValue.trim()} />}
+          {row.review && (
+            <div className="space-y-1 rounded-md bg-amber-500/10 p-1.5">
+              <div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+                <TriangleAlert className="h-3.5 w-3.5 flex-shrink-0" />
+                <span className="flex-1 truncate">{row.review.split(',').map((r) => REASON_LABEL[r] ?? r).join(' · ')}</span>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="h-6 w-6"
+                  title="Confirm this CAMID (Enter)"
+                  aria-label="Confirm this CAMID"
+                  disabled={!/^CAM\d{6}$/.test(row.mainValue.trim())}
+                  onClick={() => onUpdate(row.photoId, { review: '' })}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              {row.suggest && (
+                <div className="flex flex-wrap gap-1">
+                  {row.suggest.split(' ').filter(Boolean).map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => onUpdate(row.photoId, { mainValue: id, review: '' })}
+                      className="rounded border bg-background px-1.5 py-0.5 font-mono text-[11px] hover:bg-accent"
+                      title="Use this CAMID"
+                    >
+                      {id}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {/* Main value + Suffix */}
           <div className="flex gap-1.5">
             <div className="flex-1 space-y-0.5">
@@ -105,7 +146,10 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
               <Input
                 value={row.mainValue}
                 onChange={(e) => onUpdate(row.photoId, { mainValue: e.target.value })}
-                className="h-7 text-xs"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && /^CAM\d{6}$/.test(row.mainValue.trim())) onUpdate(row.photoId, { review: '' })
+                }}
+                className="h-7 font-mono text-xs"
               />
             </div>
             <div className="w-14 space-y-0.5">

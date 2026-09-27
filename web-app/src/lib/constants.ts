@@ -80,6 +80,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   previewTileHeight: 240,
   suffixMode: 'Standard',
   customSuffixes: 'd,v',
+  engine: 'local',
 }
 
 export const GITHUB_REPO_URL = 'https://github.com/Fr4nzz/rename_photos_AI'

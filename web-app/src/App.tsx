@@ -9,12 +9,14 @@ import { SelectImagesTab } from '@/components/select/SelectImagesTab'
 import { ReviewTab } from '@/components/review/ReviewTab'
 import { ApiKeysTab } from '@/components/api-keys/ApiKeysTab'
 import { useProcessingStore } from '@/stores/processingStore'
+import { useSettingsStore } from '@/stores/settingsStore'
 import { Camera, ClipboardCheck, Images, Key } from 'lucide-react'
 
 function App() {
+  const gemini = useSettingsStore((s) => s.engine) === 'gemini'
   const handleTabChange = (value: string) => {
     if (value === 'review' && useProcessingStore.getState().isProcessing) {
-      toast.warning('AI is still processing — results may be incomplete')
+      toast.warning('Still reading — results may be incomplete')
     }
   }
 
@@ -29,20 +31,22 @@ function App() {
               <TabsList className="h-10">
                 <TabsTrigger value="select" className="gap-1.5">
                   <Images className="h-3.5 w-3.5" />
-                  Select & Rotate Images
+                  1 · Select & Rotate
                 </TabsTrigger>
                 <TabsTrigger value="process" className="gap-1.5">
                   <Camera className="h-3.5 w-3.5" />
-                  Process Images
+                  2 · Read
                 </TabsTrigger>
                 <TabsTrigger value="review" className="gap-1.5">
                   <ClipboardCheck className="h-3.5 w-3.5" />
-                  Review Results
+                  3 · Review & Rename
                 </TabsTrigger>
-                <TabsTrigger value="api-keys" className="gap-1.5">
-                  <Key className="h-3.5 w-3.5" />
-                  API Keys
-                </TabsTrigger>
+                {gemini && (
+                  <TabsTrigger value="api-keys" className="gap-1.5">
+                    <Key className="h-3.5 w-3.5" />
+                    API Keys
+                  </TabsTrigger>
+                )}
               </TabsList>
             </div>
 

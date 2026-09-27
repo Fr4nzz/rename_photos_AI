@@ -28,6 +28,7 @@ interface Props {
 
 const FILTERS: { label: string; value: FilterType }[] = [
   { label: 'All', value: 'all' },
+  { label: 'Needs review', value: 'review' },
   { label: 'Crossed Out', value: 'crossedOut' },
   { label: 'Has Notes', value: 'hasNotes' },
   { label: 'Skipped', value: 'skipped' },

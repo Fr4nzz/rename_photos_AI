@@ -12,7 +12,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
-import { Play, Square } from 'lucide-react'
+import { Cpu, Play, ScanText, Sparkles, Square } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { listStoredCsvs } from '@/lib/csvHandler'
 import type { RunMode } from '@/types'
 
@@ -23,7 +24,7 @@ interface Props {
 }
 
 export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
-  const { modelName } = useSettingsStore()
+  const { modelName, engine, updateSetting } = useSettingsStore()
   const { apiKeys } = useApiKeysStore()
   const {
     isProcessing,
@@ -44,11 +45,35 @@ export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
     }
   }, [runMode])
 
-  const canStart = hasImages && apiKeys.length > 0 && !!modelName && !isProcessing
+  const local = engine === 'local'
+  const canStart = hasImages && !isProcessing && (local || (apiKeys.length > 0 && !!modelName))
 
   return (
     <div className="border-t bg-card px-4 py-2 space-y-2">
       <div className="flex items-center gap-3">
+        <div className="flex rounded-md border p-0.5" role="radiogroup" aria-label="Reader">
+          {([['local', Cpu, 'On this computer: built-in CAMID reader, no API key, photos stay local'],
+             ['gemini', Sparkles, 'Gemini: sends photo grids to Google with your API key']] as const).map(([value, Icon, tip]) => (
+            <Tooltip key={value}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={engine === value ? 'secondary' : 'ghost'}
+                  size="sm"
+                  role="radio"
+                  aria-checked={engine === value}
+                  aria-label={tip}
+                  disabled={isProcessing}
+                  onClick={() => updateSetting('engine', value)}
+                  className="h-7 w-9 px-0"
+                >
+                  <Icon className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{tip}</TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
+        {!local && (<>
         <Select
           value={runMode}
           onValueChange={(v) => setRunMode(v as RunMode)}
@@ -91,6 +116,7 @@ export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
           />
         )}
 
+        </>)}
         <div className="flex-1" />
 
         {isProcessing ? (
@@ -100,8 +126,8 @@ export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
           </Button>
         ) : (
           <Button size="sm" onClick={onStart} disabled={!canStart} className="gap-1.5">
-            <Play className="h-3.5 w-3.5" />
-            Ask AI (Start)
+            {local ? <ScanText className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+            {local ? 'Read CAMIDs' : 'Ask AI (Start)'}
           </Button>
         )}
       </div>

@@ -6,9 +6,11 @@ import { ApiSettings } from './ApiSettings'
 import { PromptEditor } from './PromptEditor'
 import { PreviewPanel } from './PreviewPanel'
 import { ProcessingControls } from './ProcessingControls'
+import { useSettingsStore } from '@/stores/settingsStore'
 
 export function ProcessTab() {
   const hook = useProcessTab()
+  const local = useSettingsStore((s) => s.engine) === 'local'
 
   return (
     <div className="flex h-full flex-col">
@@ -32,15 +34,24 @@ export function ProcessTab() {
             onSelectGrid={hook.setSelectedGridIndex}
             gridCount={hook.gridCount}
           />
-          <RotationSettings />
-          <CropSettings />
-          <ApiSettings />
+          {!local && (<>
+            <RotationSettings />
+            <CropSettings />
+            <ApiSettings />
+          </>)}
         </div>
 
         {/* Right panel: Previews + Prompt */}
         <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-3 space-y-3">
-          <PreviewPanel previews={hook.previews} />
-          <PromptEditor />
+          {local ? (
+            <div className="rounded border bg-card p-4 text-sm text-muted-foreground">
+              Photos are read on this computer by the built-in CAMID reader and checked against the
+              specimen database. Uncertain photos go to Review with a suggestion.
+            </div>
+          ) : (<>
+            <PreviewPanel previews={hook.previews} />
+            <PromptEditor />
+          </>)}
         </div>
       </div>
 

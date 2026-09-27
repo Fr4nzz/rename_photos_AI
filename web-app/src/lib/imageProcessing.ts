@@ -136,7 +136,7 @@ const previewCache = new Map<string, Promise<HTMLCanvasElement>>()
 
 function rememberPreview(key: string, promise: Promise<HTMLCanvasElement>) {
   previewCache.delete(key)
-  rememberPreview(key, promise)
+  previewCache.set(key, promise)
   while (previewCache.size > PREVIEW_CACHE_LIMIT) {
     previewCache.delete(previewCache.keys().next().value!)
   }

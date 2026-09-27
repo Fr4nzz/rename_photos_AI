@@ -37,7 +37,6 @@ import { getErrorMessage, getErrorName } from '@/lib/errors'
 import { logger } from '@/lib/logger'
 import type { PhotoRow, SuffixMode } from '@/types'
 import {
-  Calculator,
   Save,
   Download,
   FolderDown,
@@ -124,7 +123,6 @@ async function refreshFileMapFromDir(
 }
 
 interface Props {
-  onRecalculate: () => void
   onSave: () => void
   onExportCsv: () => void
   hasData: boolean
@@ -132,7 +130,6 @@ interface Props {
 }
 
 export function ReviewActionBar({
-  onRecalculate,
   onSave,
   onExportCsv,
   hasData,
@@ -207,7 +204,10 @@ export function ReviewActionBar({
       return
     }
 
-    const rowsToRename = rowsToActOn.filter((r) => r.to?.trim() && r.skip !== 'x' && r.status !== 'Renamed')
+    // photos still waiting for review are never renamed
+    const rowsToRename = rowsToActOn.filter((r) => r.to?.trim() && r.skip !== 'x' && r.status !== 'Renamed' && !r.review)
+    const waiting = rowsToActOn.filter((r) => r.review && r.skip !== 'x').length
+    if (waiting) toast.info(`${waiting} photo(s) still need review and will keep their names.`)
     if (rowsToRename.length === 0) {
       toast.error('No files to rename. Calculate names first.')
       return
@@ -399,16 +399,7 @@ export function ReviewActionBar({
 
         <div className="mx-1 h-5 w-px bg-border" />
 
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1 text-xs"
-          onClick={onRecalculate}
-          disabled={!hasData}
-        >
-          <Calculator className="h-3.5 w-3.5" />
-          Recalculate
-        </Button>
+
 
         <Button
           variant="outline"

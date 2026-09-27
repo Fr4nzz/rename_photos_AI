@@ -28,6 +28,8 @@ export interface AppSettings {
   previewTileHeight: number
   suffixMode: SuffixMode
   customSuffixes: string
+  /** 'local': the built-in CAMID reader (no API key); 'gemini': the Gemini prompt */
+  engine: 'local' | 'gemini'
 }
 
 export interface PhotoRow {
@@ -43,6 +45,10 @@ export interface PhotoRow {
   batchNumber: number
   captureDate: string | null
   status: 'Original' | 'Renamed' | 'New' | 'Missing'
+  /** local OCR: why this photo needs a person ('' = confirmed or renamed automatically) */
+  review: string
+  /** local OCR: suggested CAMIDs, best first, space-separated */
+  suggest: string
 }
 
 export interface RotationLogEntry {

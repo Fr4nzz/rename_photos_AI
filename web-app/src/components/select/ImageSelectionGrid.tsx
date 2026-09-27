@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check } from 'lucide-react'
 import { loadImagePreview, canvasToBlobUrl } from '@/lib/imageProcessing'
 import { getErrorMessage } from '@/lib/errors'
@@ -12,8 +12,20 @@ interface CardProps {
 
 function ImageSelectionCard({ entry, selected, onToggle }: CardProps) {
   const [thumb, setThumb] = useState<string | null>(null)
+  const [nearView, setNearView] = useState(false)
+  const ref = useRef<HTMLButtonElement>(null)
+
+  // decode thumbnails only for cards near the viewport (large folders stay light)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) { setNearView(true); io.disconnect() } }, { rootMargin: '600px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
 
   useEffect(() => {
+    if (!nearView) return
     let cancelled = false
     let url: string | null = null
     loadImagePreview(entry.file, 360)
@@ -35,10 +47,11 @@ function ImageSelectionCard({ entry, selected, onToggle }: CardProps) {
       cancelled = true
       if (url) URL.revokeObjectURL(url)
     }
-  }, [entry])
+  }, [entry, nearView])
 
   return (
     <button
+      ref={ref}
       type="button"
       onClick={onToggle}
       className={`overflow-hidden rounded border bg-card text-left transition ${selected ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-primary/60'}`}
