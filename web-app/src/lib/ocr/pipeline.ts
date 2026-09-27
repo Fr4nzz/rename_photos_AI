@@ -71,6 +71,30 @@ async function readRegion(backend: Backend, img: RGBAImage, chars: string[], lim
   return lines
 }
 
+/**
+ * Read every text line of an envelope upright and turned 180 degrees (the line detector runs once;
+ * each line crop is re-read turned over). Returns [upright, flipped]; flipped boxes are in the
+ * coordinates of the envelope turned 180 degrees. Tall (sideways) lines are already read both
+ * ways and are left out of the flipped list.
+ */
+async function readEnvelopeBothWays(backend: Backend, env: RGBAImage, chars: string[]): Promise<[LineReading[], LineReading[]]> {
+  const det = detInput(env, 64, 4000)
+  const out = await backend.run('line', det.data, det.dims)
+  const [ph, pw] = out.dims.slice(-2)
+  const upright: LineReading[] = [], flipped: LineReading[] = []
+  for (const box of detBoxes(out.data, pw, ph, det.shape)) {
+    const lineImg = quadCrop(env, box)
+    upright.push({ box, ...(await readLine(backend, lineImg, chars)) })
+    if (lineImg.height <= 1.5 * lineImg.width) {
+      const r = await readLine(backend, rotate(lineImg, 180), chars)
+      // the same quadrilateral in the envelope turned 180: (x, y) -> (w - x, h - y), corners re-ordered
+      const turnedBox = [2, 3, 0, 1].map((k) => [env.width - box[k][0], env.height - box[k][1]] as Pt)
+      flipped.push({ box: turnedBox, ...r })
+    }
+  }
+  return [upright, flipped]
+}
+
 function bestCamid(lines: LineReading[]): { camid: string | null; conf: number; candidates: { id: string; conf: number }[] } {
   const found = lines.map((l) => ({ id: normalizeReading(l.text), conf: l.conf })).filter((f) => CAMID_RE.test(f.id))
   found.sort((a, b) => b.conf - a.conf)
@@ -95,10 +119,21 @@ export async function readPhoto(backend: Backend, photo: RGBAImage, chars: strin
     const largest = boxes.reduce((a, b) => ((b.box[2] - b.box[0]) * (b.box[3] - b.box[1]) > (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]) ? b : a))
     const bounds = envelopeCropBounds(largest.box as Box, img)
     const envelope = crop(img, ...bounds)
-    const lines = await readRegion(backend, envelope, chars, 64, 4000, false)
-    // report line boxes in working-image coordinates
-    for (const l of lines) l.box = l.box.map(([x, y]) => [x + bounds[0], y + bounds[1]] as Pt)
-    return { ...bestCamid(lines), source: 'envelope', envelope: bounds, turned: 0, lines, size }
+    const [upright, flipped] = await readEnvelopeBothWays(backend, envelope, chars)
+    // Upside-down photos: every line is also read turned over. The orientation that gives the most
+    // confident whole-line CAMID wins (a correct reading is near-certain; an upside-down misread
+    // rarely is); without any CAMID reading, the photo is taken as upright.
+    const bestUp = bestCamid(upright), bestFlip = bestCamid(flipped)
+    const useFlipped = !!bestFlip.camid && (!bestUp.camid || bestFlip.conf > bestUp.conf)
+    const [ew, eh] = [bounds[2] - bounds[0], bounds[3] - bounds[1]]
+    const lines = useFlipped ? flipped : upright
+    for (const l of lines) {
+      l.box = useFlipped
+        // flipped boxes are given in the whole working image turned 180 (as for the fallback)
+        ? l.box.map(([x, y]) => [img.width - (bounds[0] + ew - x), img.height - (bounds[1] + eh - y)] as Pt)
+        : l.box.map(([x, y]) => [x + bounds[0], y + bounds[1]] as Pt)
+    }
+    return { ...bestCamid(lines), source: 'envelope', envelope: bounds, turned: useFlipped ? 180 : 0, lines, size }
   }
 
   // No envelope found (e.g. a newer photo setup): read the whole photo, upright and turned over
