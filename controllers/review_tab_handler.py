@@ -713,8 +713,24 @@ class ReviewTabHandler(BaseTabHandler):
                 original_raw_path = Path(row['from']).with_suffix(raw_src_path.suffix)
                 rename_plan.append({'src': raw_src_path, 'dst': raw_dst_path, 'orig': str(original_raw_path)})
 
-        # 2. EXECUTE: Iteratively perform renames, handling conflicts.
-        while rename_plan:
+        # A target held by a file that is not itself being renamed away (an unrelated file) can never
+        # be freed: refuse those renames instead of looping forever. Repeat for chains of refusals.
+        while True:
+            moving = {str(op['src']).lower() for op in rename_plan}
+            refused = [op for op in rename_plan
+                       if op['dst'].exists() and str(op['dst']).lower() not in moving
+                       and str(op['dst']).lower() != str(op['src']).lower()]
+            if not refused:
+                break
+            for op in refused:
+                self.logger.warn(f"Skipping '{op['src'].name}': '{op['dst'].name}' already exists and is not being renamed.")
+                error_count += 1
+            rename_plan = [op for op in rename_plan if op not in refused]
+
+        # 2. EXECUTE: Iteratively perform renames, handling conflicts (swaps and cycles).
+        passes_left = 2 * len(rename_plan) + 2
+        while rename_plan and passes_left > 0:
+            passes_left -= 1
             # Separate operations that can be done now from those that are blocked
             runnable = [op for op in rename_plan if not op['dst'].exists()]
             blocked = [op for op in rename_plan if op['dst'].exists()]
