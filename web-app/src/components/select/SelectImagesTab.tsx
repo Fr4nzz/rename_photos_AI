@@ -28,6 +28,7 @@ import {
   rotateCanvas,
 } from '@/lib/imageProcessing'
 import { getRotationLog, saveDirHandle, saveRotationLog } from '@/lib/csvHandler'
+import { rotateLossless, writeOrientation } from '@/lib/orientation'
 import { getErrorMessage, getErrorName } from '@/lib/errors'
 import {
   invertImageSelection,
@@ -174,7 +175,7 @@ export function SelectImagesTab() {
       const files = await getImageFilesFromHandle(handle, previewRaw ? 'all' : 'compressed')
       setImageFiles(files, true)
       setFileMap(new Map(files.map((entry) => [entry.name, entry.file])))
-      const log = await getRotationLog()
+      const log = await getRotationLog(handle)
       setRotationLog(log)
       toast.success(`Loaded ${files.length} image file(s).`)
     } catch (error: unknown) {
@@ -232,52 +233,61 @@ export function SelectImagesTab() {
     }
 
     const selected = imageFiles.filter((entry) => selectedImageNames.has(entry.name))
-    const rotatable = selected.filter((entry) => BROWSER_ROTATABLE_EXTENSIONS.has(entry.extension))
-    const skipped = selected.length - rotatable.length
-    if (rotatable.length === 0) {
-      toast.error('No selected JPEG or PNG files can be rotated in the browser.')
-      return
-    }
-
-    const confirmed = window.confirm(
-      `Rotate ${rotatable.length} selected JPEG/PNG file(s) in place? ` +
-      'Original copies will be saved in rotation_backups so this can be undone.'
-    )
-    if (!confirmed) return
+    if (selected.length === 0) return
 
     setBusy(true)
-    const backupDir = await getBackupDir(dirHandle)
     const entries: RotationLogEntry[] = []
-    let rotated = 0
+    let lossless = 0
+    let reencoded = 0
+    const failed: string[] = []
+    let backupDir: FileSystemDirectoryHandle | null = null
 
-    for (const entry of rotatable) {
+    for (const entry of selected) {
       try {
         const fileHandle = await dirHandle.getFileHandle(entry.name)
+        // Lossless first: change only the EXIF Orientation tag (JPEG and camera RAW files).
+        // The UI angle is clockwise; orientation angles are counter-clockwise.
+        const tag = await rotateLossless(fileHandle, -rotationAngle)
+        if (tag) {
+          entries.push({ original: entry.name, method: 'tag', before: tag.before, after: tag.after,
+                         angle: rotationAngle, timestamp: new Date().toISOString() })
+          lossless++
+          continue
+        }
+        // Files without an Orientation tag (PNG, some JPEGs): rewrite the pixels, keep a backup.
+        if (!BROWSER_ROTATABLE_EXTENSIONS.has(entry.extension)) {
+          failed.push(entry.name)
+          continue
+        }
         const file = await fileHandle.getFile()
-        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-        const backupName = `${stamp}__${entry.name}`
+        backupDir ??= await getBackupDir(dirHandle)
+        const backupName = `${new Date().toISOString().replace(/[:.]/g, '-')}__${entry.name}`
         await copyFileIntoDir(backupDir, backupName, file)
-
         const rotatedBlob = await rotateBrowserImageFile(file, rotationAngle, useExif)
         if (!rotatedBlob) continue
         const writable = await fileHandle.createWritable()
         await writable.write(rotatedBlob)
         await writable.close()
-        entries.push({ original: entry.name, backup: backupName, angle: rotationAngle, timestamp: new Date().toISOString() })
-        rotated++
+        entries.push({ original: entry.name, method: 're-encode', backup: backupName, angle: rotationAngle,
+                       timestamp: new Date().toISOString() })
+        reencoded++
       } catch (error: unknown) {
+        failed.push(entry.name)
         console.warn(`Could not rotate ${entry.name}: ${getErrorMessage(error)}`)
       }
     }
 
     const nextLog = [...rotationLog, ...entries]
     setRotationLog(nextLog)
-    await saveRotationLog(nextLog)
+    await saveRotationLog(nextLog, dirHandle)
     clearPreviewCache()
     await refreshFiles()
     setBusy(false)
 
-    toast.success(`Rotated ${rotated} file(s).${skipped ? ` Skipped ${skipped} non-JPEG/PNG file(s).` : ''}`)
+    const parts = [`Rotated ${lossless + reencoded} file(s)`]
+    if (reencoded) parts.push(`${reencoded} re-saved (no orientation tag; originals in ${ROTATION_BACKUP_DIR})`)
+    if (failed.length) parts.push(`${failed.length} not rotatable: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? '…' : ''}`)
+    ;(failed.length ? toast.warning : toast.success)(parts.join(' · '))
   }
 
   async function undoRotations() {
@@ -286,18 +296,18 @@ export function SelectImagesTab() {
       return
     }
 
-    const confirmed = window.confirm(`Restore ${rotationLog.length} rotated file(s) from rotation_backups?`)
-    if (!confirmed) return
-
     setBusy(true)
-    const backupDir = await getBackupDir(dirHandle)
     let restored = 0
 
     for (const entry of [...rotationLog].reverse()) {
       try {
-        const backupHandle = await backupDir.getFileHandle(entry.backup)
-        const backupFile = await backupHandle.getFile()
-        await copyFileIntoDir(dirHandle, entry.original, backupFile)
+        if (entry.method === 'tag' && entry.before !== undefined) {
+          await writeOrientation(await dirHandle.getFileHandle(entry.original), entry.before)
+        } else if (entry.backup) {
+          const backupDir = await getBackupDir(dirHandle)
+          const backupFile = await (await backupDir.getFileHandle(entry.backup)).getFile()
+          await copyFileIntoDir(dirHandle, entry.original, backupFile)
+        }
         restored++
       } catch (error: unknown) {
         console.warn(`Could not restore ${entry.original}: ${getErrorMessage(error)}`)
@@ -305,7 +315,7 @@ export function SelectImagesTab() {
     }
 
     setRotationLog([])
-    await saveRotationLog([])
+    await saveRotationLog([], dirHandle)
     clearPreviewCache()
     await refreshFiles()
     setBusy(false)
@@ -443,7 +453,7 @@ export function SelectImagesTab() {
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Rotate applies only to selected JPEG/PNG files opened with folder access.
+            Rotation is lossless: only the photo's orientation tag changes (JPEG and RAW). Undo restores it.
           </p>
         </aside>
       </div>

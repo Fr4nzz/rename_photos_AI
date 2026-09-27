@@ -4,7 +4,6 @@ import type { PhotoRow } from '@/types'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useApiKeysStore } from '@/stores/apiKeysStore'
 import { useProcessingStore } from '@/stores/processingStore'
-import { useBackendStore } from '@/stores/backendStore'
 import {
   supportsDirectoryPicker,
   openDirectoryPicker,
@@ -79,7 +78,6 @@ export function useProcessTab() {
   const settings = useSettingsStore()
   const { apiKeys } = useApiKeysStore()
   const processing = useProcessingStore()
-  const { status: backendStatus } = useBackendStore()
 
   const imageFiles = useMemo(
     () => getSelectedImageFiles(processing.imageFiles, processing.selectedImageNames),
@@ -505,7 +503,7 @@ export function useProcessTab() {
         requestsPerMinuteLimit
       )
       const requestStartTimes: number[] = []
-      let hadFailure = false
+      const hadFailure = false
       let nextActiveBatchIndex = 0
       let completedBatches = 0
 
@@ -607,8 +605,9 @@ export function useProcessTab() {
         logger.timeEnd(`Batch ${batchNum}: API call`)
 
         if (!success) {
+          // Record the batch for "retry failed batches" and keep the other batches going
           toast.error(`Message ${batchNum} failed: ${responseText}`)
-          hadFailure = true
+          failedBatches.push(batchNum)
           return
         }
 
@@ -721,7 +720,6 @@ export function useProcessTab() {
     folderName,
     dirHandle,
     gridCount,
-    backendConnected: backendStatus.connected,
     canApplyBrowserRotation: !!dirHandle && settings.rotationAngle !== 0 && imageFiles.some((entry) =>
       BROWSER_ROTATABLE_EXTENSIONS.has(entry.extension)
     ),

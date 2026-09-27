@@ -1,5 +1,7 @@
 import exifr from 'exifr'
-import { BROWSER_ROTATABLE_EXTENSIONS, SUPPORTED_RAW_EXTENSIONS } from './constants'
+import { BROWSER_ROTATABLE_EXTENSIONS, ORIENTATION_TO_ANGLE, SUPPORTED_RAW_EXTENSIONS } from './constants'
+import { readOrientation } from './orientation'
+import { extractLargestJpeg } from './rawPreview'
 import { logger } from './logger'
 import {
   thumbnailCacheKey,
@@ -26,6 +28,22 @@ export async function getOrientationAngle(file: File): Promise<number> {
   }
 }
 
+
+/**
+ * Displayable source for a RAW file: its largest embedded JPEG (or exifr's small thumbnail), plus
+ * the clockwise rotation to apply, because embedded previews do not carry the RAW's orientation tag.
+ */
+async function rawPreviewSource(file: File): Promise<{ blob: Blob; clockwise: number }> {
+  const blob = (await extractLargestJpeg(file)) ?? await (async () => {
+    const thumb = await exifr.thumbnail(file)
+    if (!thumb) throw new Error(`No preview in RAW file: ${file.name}`)
+    return new Blob([thumb.buffer as ArrayBuffer], { type: 'image/jpeg' })
+  })()
+  const slot = await readOrientation(file)
+  const ccw = slot ? ORIENTATION_TO_ANGLE[slot.value] ?? 0 : 0
+  return { blob, clockwise: (360 - ccw) % 360 }
+}
+
 /**
  * Load a File into an HTMLImageElement as a blob URL.
  * For RAW files, extracts the embedded JPEG thumbnail via exifr.
@@ -36,9 +54,18 @@ export async function loadImage(file: File): Promise<HTMLImageElement> {
   let url: string
 
   if (SUPPORTED_RAW_EXTENSIONS.has(ext)) {
-    const thumbUrl = await exifr.thumbnailUrl(file)
-    if (!thumbUrl) throw new Error(`No thumbnail in RAW file: ${file.name}`)
-    url = thumbUrl
+    const { blob, clockwise } = await rawPreviewSource(file)
+    if (clockwise) {
+      const bmp = await createImageBitmap(blob)
+      const c = document.createElement('canvas')
+      c.width = bmp.width
+      c.height = bmp.height
+      c.getContext('2d')!.drawImage(bmp, 0, 0)
+      bmp.close()
+      url = await canvasToBlobUrl(rotateCanvas(c, clockwise))
+    } else {
+      url = URL.createObjectURL(blob)
+    }
   } else {
     url = URL.createObjectURL(file)
   }
@@ -103,8 +130,17 @@ function decodeInWorker(blob: Blob, maxSize: number, applyExif: boolean): Promis
   })
 }
 
-// ── In-memory promise cache ─────────────────────────────────────────────────
+// ── In-memory promise cache (bounded: least recently used entries are dropped) ──
+const PREVIEW_CACHE_LIMIT = 300
 const previewCache = new Map<string, Promise<HTMLCanvasElement>>()
+
+function rememberPreview(key: string, promise: Promise<HTMLCanvasElement>) {
+  previewCache.delete(key)
+  rememberPreview(key, promise)
+  while (previewCache.size > PREVIEW_CACHE_LIMIT) {
+    previewCache.delete(previewCache.keys().next().value!)
+  }
+}
 
 export function clearPreviewCache() {
   previewCache.clear()
@@ -117,7 +153,10 @@ export async function loadImagePreview(
 ): Promise<HTMLCanvasElement> {
   const key = thumbnailCacheKey(file.name, file.size, file.lastModified, maxSize, applyExif)
   const cached = previewCache.get(key)
-  if (cached) return cached
+  if (cached) {
+    rememberPreview(key, cached) // mark as recently used
+    return cached
+  }
 
   const promise = (async () => {
     // 1. Check persistent IndexedDB cache
@@ -135,19 +174,21 @@ export async function loadImagePreview(
     // 2. Prepare source blob (extract RAW thumbnail if needed)
     const ext = '.' + file.name.split('.').pop()!.toLowerCase()
     let source: Blob = file
+    let rawClockwise = 0
 
     if (SUPPORTED_RAW_EXTENSIONS.has(ext)) {
-      const thumb = await exifr.thumbnail(file)
-      if (!thumb) throw new Error(`No thumbnail in RAW file: ${file.name}`)
-      source = new Blob([thumb.buffer as ArrayBuffer], { type: 'image/jpeg' })
+      const raw = await rawPreviewSource(file)
+      source = raw.blob
+      rawClockwise = applyExif ? raw.clockwise : 0
     }
 
     // 3. Decode in Web Worker (off main thread)
     const bmp = await decodeInWorker(source, maxSize, applyExif)
-    const c = document.createElement('canvas')
+    let c = document.createElement('canvas')
     c.width = bmp.width
     c.height = bmp.height
     c.getContext('2d')!.drawImage(bmp, 0, 0)
+    if (rawClockwise) c = rotateCanvas(c, rawClockwise)
     bmp.close()
 
     // 4. Persist to IndexedDB for next visit (fire-and-forget)
@@ -159,7 +200,7 @@ export async function loadImagePreview(
   })()
 
   promise.catch(() => previewCache.delete(key))
-  previewCache.set(key, promise)
+  rememberPreview(key, promise)
   return promise
 }
 

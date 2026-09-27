@@ -47,7 +47,12 @@ export interface PhotoRow {
 
 export interface RotationLogEntry {
   original: string
-  backup: string
+  /** 'tag': only the EXIF Orientation value changed (undo = write `before` back);
+   *  're-encode': pixels rewritten, original kept in rotation_backups/`backup` */
+  method?: 'tag' | 're-encode'
+  backup?: string
+  before?: number
+  after?: number
   angle: number
   timestamp: string
 }
@@ -55,11 +60,6 @@ export interface RotationLogEntry {
 export type SuffixMode = 'Standard' | 'Wing Clips' | 'Custom'
 
 export type RunMode = 'start_over' | 'continue' | 'retry_specific'
-
-export interface BackendStatus {
-  connected: boolean
-  url: string
-}
 
 export interface FileEntry {
   name: string

@@ -227,21 +227,35 @@ export interface RenameLogEntry {
   timestamp: string
 }
 
-export async function saveRenameLog(entries: RenameLogEntry[]): Promise<void> {
-  await setMeta('renameLog', entries)
+/*
+ * Logs are per folder: stored inside the folder (rename_files/*.json, so they travel with the photos)
+ * and mirrored in IndexedDB under the folder's name (for folders opened without write access).
+ */
+type FolderRef = FileSystemDirectoryHandle | string | null | undefined
+
+async function saveFolderLog<T>(kind: string, folder: FolderRef, entries: T[]): Promise<void> {
+  const name = typeof folder === 'string' ? folder : folder?.name ?? ''
+  await setMeta(`${kind}:${name}`, entries)
+  if (folder && typeof folder !== 'string') {
+    await saveCsvToFolder(folder, `${kind}.json`, JSON.stringify(entries, null, 1))
+  }
 }
 
-export async function getRenameLog(): Promise<RenameLogEntry[]> {
-  return (await getMeta<RenameLogEntry[]>('renameLog')) ?? []
+async function getFolderLog<T>(kind: string, folder: FolderRef): Promise<T[]> {
+  if (folder && typeof folder !== 'string') {
+    const text = await loadCsvFromFolder(folder, `${kind}.json`)
+    if (text) {
+      try { return JSON.parse(text) as T[] } catch { /* fall back to the browser copy */ }
+    }
+  }
+  const name = typeof folder === 'string' ? folder : folder?.name ?? ''
+  return (await getMeta<T[]>(`${kind}:${name}`)) ?? []
 }
 
-export async function saveRotationLog(entries: RotationLogEntry[]): Promise<void> {
-  await setMeta('rotationLog', entries)
-}
-
-export async function getRotationLog(): Promise<RotationLogEntry[]> {
-  return (await getMeta<RotationLogEntry[]>('rotationLog')) ?? []
-}
+export const saveRenameLog = (entries: RenameLogEntry[], folder: FolderRef) => saveFolderLog('rename_log', folder, entries)
+export const getRenameLog = (folder: FolderRef) => getFolderLog<RenameLogEntry>('rename_log', folder)
+export const saveRotationLog = (entries: RotationLogEntry[], folder: FolderRef) => saveFolderLog('rotation_log', folder, entries)
+export const getRotationLog = (folder: FolderRef) => getFolderLog<RotationLogEntry>('rotation_log', folder)
 
 // --- Filesystem CSV persistence (rename_files subfolder) ---
 

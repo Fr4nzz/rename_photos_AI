@@ -118,13 +118,18 @@ export class AIClient {
 export function parseJsonResponse(
   responseText: string
 ): Record<string, Record<string, string>> | null {
-  const match = responseText.match(/```json\s*([\s\S]+?)\s*```/i)
-  if (!match) return null
-  try {
-    return JSON.parse(match[1])
-  } catch {
-    return null
+  // Prefer a ```json fenced block; otherwise take the outermost {...} of the reply
+  const fenced = responseText.match(/```(?:json)?\s*([\s\S]+?)\s*```/i)?.[1]
+  const start = responseText.indexOf('{')
+  const end = responseText.lastIndexOf('}')
+  const bare = start >= 0 && end > start ? responseText.slice(start, end + 1) : null
+  for (const candidate of [fenced, bare]) {
+    if (!candidate) continue
+    try {
+      return JSON.parse(candidate)
+    } catch { /* try the next candidate */ }
   }
+  return null
 }
 
 /**
@@ -148,9 +153,9 @@ export function responseHasData(
  */
 export async function fetchAvailableModels(apiKey: string): Promise<string[]> {
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
-    )
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+      headers: { 'x-goog-api-key': apiKey }, // header, not URL: keys in URLs end up in logs and history
+    })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json() as GeminiModelsResponse
 

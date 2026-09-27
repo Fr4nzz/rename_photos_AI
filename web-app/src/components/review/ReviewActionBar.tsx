@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
+import { companionsOf, indexByStem, planRenames } from '@/lib/renamePlan'
 import {
   Select,
   SelectContent,
@@ -100,27 +101,6 @@ async function renameFileInDir(
   await writable.write(file)
   await writable.close()
   await dirHandle.removeEntry(oldName)
-}
-
-/**
- * Find RAW companion files for a given image in the directory.
- * E.g., "DSC_0001.JPG" → looks for "DSC_0001.cr2", "DSC_0001.orf", etc.
- */
-async function findRawCompanions(
-  dirHandle: FileSystemDirectoryHandle,
-  fileName: string
-): Promise<string[]> {
-  const stem = fileName.replace(/\.[^.]+$/, '')
-  const companions: string[] = []
-  for (const ext of SUPPORTED_RAW_EXTENSIONS) {
-    for (const variant of [ext.toLowerCase(), ext.toUpperCase()]) {
-      try {
-        await dirHandle.getFileHandle(stem + variant)
-        companions.push(stem + variant)
-      } catch { /* file doesn't exist */ }
-    }
-  }
-  return companions
 }
 
 /**
@@ -239,77 +219,47 @@ export function ReviewActionBar({
       setIsRenaming(true)
       setDownloadProgress(0)
 
-      // Build rename plan including RAW companions
-      interface RenameOp { src: string; dst: string; orig: string }
-      const plan: RenameOp[] = []
+      // List the folder once: existing names and RAW companions (same stem, any extension case)
+      const folderNames: string[] = []
+      for await (const [name, entry] of dirHandle.entries()) if (entry.kind === 'file') folderNames.push(name)
+      const stems = indexByStem(folderNames)
 
+      const ops: { src: string; dst: string }[] = []
       for (const row of rowsToRename) {
-        plan.push({ src: row.currentPath, dst: row.to, orig: row.currentPath })
+        ops.push({ src: row.currentPath, dst: row.to })
         if (renameCompanions) {
-          // Find and include RAW companion files
           const newStem = row.to.replace(/\.[^.]+$/, '')
-          const companions = await findRawCompanions(dirHandle, row.currentPath)
-          for (const rawName of companions) {
-            const rawExt = rawName.slice(rawName.lastIndexOf('.'))
-            plan.push({ src: rawName, dst: newStem + rawExt, orig: rawName })
+          for (const rawName of companionsOf(row.currentPath, stems, SUPPORTED_RAW_EXTENSIONS)) {
+            ops.push({ src: rawName, dst: newStem + rawName.slice(rawName.lastIndexOf('.')) })
           }
         }
+      }
+      const plan = planRenames(ops, folderNames)
+      if (plan.refused.length) {
+        const why = { 'target-exists': 'name already used by another file', 'duplicate-target': 'two files would get the same name', 'missing-source': 'file not found' }
+        const sample = plan.refused.slice(0, 3).map((r) => `${r.op.src} → ${r.op.dst} (${why[r.reason]})`).join('\n')
+        const proceed = window.confirm(`${plan.refused.length} rename(s) will be skipped:\n${sample}${plan.refused.length > 3 ? '\n…' : ''}\n\nRename the other ${ops.length - plan.refused.length}?`)
+        if (!proceed) return
       }
       setDownloadProgress(10)
 
-      // Execute plan with conflict resolution (handles circular renames)
+      // Execute: every completed step is logged; the log is saved even if a step fails midway
+      const previousLog = await getRenameLog(dirHandle)
       const renameLog: RenameLogEntry[] = []
-      let remaining = [...plan]
-      let totalDone = 0
-      let maxPasses = remaining.length + 1
-
-      while (remaining.length > 0 && maxPasses-- > 0) {
-        const runnable: RenameOp[] = []
-        const blocked: RenameOp[] = []
-
-        for (const op of remaining) {
-          let dstExists = false
-          try { await dirHandle.getFileHandle(op.dst); dstExists = true } catch { /* free */ }
-          ;(dstExists ? blocked : runnable).push(op)
+      let done = 0
+      try {
+        for (const step of plan.steps) {
+          await renameFileInDir(dirHandle, step.from, step.to)
+          if (!step.temp) renameLog.push({ original: step.original, renamed: step.to, timestamp: new Date().toISOString() })
+          done++
+          setDownloadProgress(10 + Math.round((done / plan.steps.length) * 85))
         }
-
-        for (const op of runnable) {
-          try {
-            await renameFileInDir(dirHandle, op.src, op.dst)
-            renameLog.push({ original: op.orig, renamed: op.dst, timestamp: new Date().toISOString() })
-            totalDone++
-          } catch (err: unknown) {
-            logger.warn(`Could not rename ${op.src}: ${getErrorMessage(err)}`)
-          }
-        }
-
-        remaining = blocked
-
-        // Break deadlock: move first blocked destination to a temp name
-        if (remaining.length > 0 && runnable.length === 0) {
-          const op = remaining[0]
-          const tempName = `${op.dst}.tmp_rename`
-          try {
-            await renameFileInDir(dirHandle, op.dst, tempName)
-            renameLog.push({ original: op.dst, renamed: tempName, timestamp: new Date().toISOString() })
-            // Update any op whose source was the blocked destination
-            for (const other of remaining) {
-              if (other.src === op.dst) other.src = tempName
-            }
-          } catch (err: unknown) {
-            logger.warn(`Deadlock break failed for ${op.dst}: ${getErrorMessage(err)}`)
-            break
-          }
-        }
-
-        setDownloadProgress(10 + Math.round((totalDone / plan.length) * 85))
+      } catch (err: unknown) {
+        toast.error(`Rename stopped after ${renameLog.length} file(s): ${getErrorMessage(err)}. Restore can undo them.`)
+      } finally {
+        await saveRenameLog([...previousLog, ...renameLog], dirHandle)
       }
-
-      const renamed = renameLog.filter(e => !e.renamed.endsWith('.tmp_rename')).length
-
-      // Save rename log for restore
-      const existingLog = await getRenameLog()
-      await saveRenameLog([...existingLog, ...renameLog])
+      const renamed = renameLog.length
 
       // Update row statuses
       const renamedSet = new Set(renameLog.map((e) => e.original))
@@ -325,7 +275,7 @@ export function ReviewActionBar({
       // Refresh file references so thumbnails use fresh File objects
       await refreshFileMapFromDir(dirHandle, updatedRows)
 
-      toast.success(`Renamed ${renamed} files in-place`)
+      if (renamed) toast.success(`Renamed ${renamed} files in-place`)
       logger.info(`Renamed ${renamed} files, ${rowsToRename.length - renamed} skipped`)
     } catch (e: unknown) {
       if (getErrorName(e) !== 'AbortError') {
@@ -339,7 +289,8 @@ export function ReviewActionBar({
 
   // Restore original names using rename log
   const handleRestore = async () => {
-    const log = await getRenameLog()
+    const logDir = await getReadWriteDirHandle().catch(() => null)
+    const log = await getRenameLog(logDir)
     if (log.length === 0) {
       toast.error('No rename log found. Nothing to restore.')
       return
@@ -351,22 +302,26 @@ export function ReviewActionBar({
       setIsRenaming(true)
       setDownloadProgress(0)
 
+      // Undo through the same planner: final name -> original name, never overwriting a file
+      const folderNames: string[] = []
+      for await (const [name, entry] of dirHandle.entries()) if (entry.kind === 'file') folderNames.push(name)
+      const current = new Map<string, string>() // original -> latest name
+      for (const e of log) current.set(e.original, e.renamed)
+      const plan = planRenames([...current].map(([original, renamed]) => ({ src: renamed, dst: original })), folderNames)
       let restored = 0
-      // Process in reverse order (like Python app) to avoid conflicts
-      for (let i = log.length - 1; i >= 0; i--) {
-        const entry = log[i]
+      for (const step of plan.steps) {
         try {
-          await renameFileInDir(dirHandle, entry.renamed, entry.original)
-          restored++
+          await renameFileInDir(dirHandle, step.from, step.to)
+          if (!step.temp) restored++
         } catch (err: unknown) {
-          logger.warn(`Could not restore ${entry.renamed}: ${getErrorMessage(err)}`)
+          logger.warn(`Could not restore ${step.from}: ${getErrorMessage(err)}`)
         }
-
-        setDownloadProgress(Math.round(((log.length - i) / log.length) * 100))
+        setDownloadProgress(Math.round((restored / Math.max(1, current.size)) * 100))
       }
+      if (plan.refused.length) toast.warning(`${plan.refused.length} file(s) could not be restored (name taken or file missing)`)
 
       // Clear rename log after restore
-      await saveRenameLog([])
+      await saveRenameLog([], dirHandle)
 
       // Update row statuses back to Original
       const restoredNames = new Set(log.map((e) => e.renamed))
