@@ -1,6 +1,6 @@
 # AI Photo Processor
 
-AI Photo Processor is a browser app for cataloging specimen photo batches. It helps select and rotate images, build preview grids, send images to Gemini for label extraction, review the results, and rename files with undo support.
+AI Photo Processor is a browser app for renaming specimen photo batches by the CAMID written on each specimen's envelope. It reads the CAMIDs on your computer, checks them against the specimen database, shows the uncertain photos for review, and renames files with undo support.
 
 Live app: https://fr4nzz.github.io/rename_photos_AI/
 
@@ -8,11 +8,15 @@ Live app: https://fr4nzz.github.io/rename_photos_AI/
 
 ## What It Does
 
-- Selects an image folder and lets you choose exactly which images are active for processing.
-- Rotates selected JPEG/PNG images in the browser and keeps an undo log for reversible changes.
-- Builds cropped image grids for Gemini OCR with configurable rows, columns, merged height, and messages in parallel.
-- Reviews extracted fields in a paginated table with thumbnails, filters, sorting, autosave, and CSV export.
-- Renames selected files safely, with optional companion RAW/sidecar renaming when files share the same basename.
+- **Reads CAMIDs locally.** A built-in reader (envelope detector, text-line detector and a CAMID recognizer trained on Sanger/Ikiam envelopes) runs in the browser. No API key is needed and photos never leave the computer. See [docs/LOCAL_READER.md](docs/LOCAL_READER.md).
+- **Checks every reading** before renaming:
+  - the CAMID must exist in the specimen database;
+  - it must fit the IDs of the photos taken just before and after it;
+  - it must not appear on photos that were not taken back to back.
+- **Sends uncertain photos to review.** Each one shows the reason, a zoomed crop of the ID line, a pre-filled suggestion and one-click database IDs. Unconfirmed photos are never renamed.
+- **Rotates losslessly.** JPEG and RAW files (CR2, NEF, ARW, DNG, ORF, PEF) are rotated by changing only their orientation tag. There's no re-encoding and no helper program; Undo writes the old value back.
+- **Renames safely.** Every rename is checked first, and names already used by other files are never overwritten. RAW companions are renamed with their JPEGs. A per-folder log in `rename_files/` makes Restore possible.
+- **Gemini is still available** as the other reader: grid prompts sent with your own API key.
 
 ## Hosted Web App
 
@@ -20,29 +24,28 @@ Open the app here:
 
 https://fr4nzz.github.io/rename_photos_AI/
 
-The hosted version works directly in a modern browser. Browser-supported formats such as JPEG and PNG can be previewed, processed, and rotated from the web app. RAW formats such as CR2 and ORF can be included in the naming workflow, but direct RAW rotation requires the optional Windows backend because browsers cannot rewrite RAW metadata safely on their own.
-
-Gemini API keys are saved locally in your browser.
-
-## Optional Windows Backend
-
-When the backend is offline, the hosted app shows a Download Backend button. On Windows, it downloads `AIPhotoProcessor-Backend.exe` from the `backend-latest` release:
-
-https://github.com/Fr4nzz/rename_photos_AI/releases/tag/backend-latest
-
-Open the executable and leave it running while using the web app. The backend listens only on `127.0.0.1:3847` and enables local RAW rotation and in-place file operations. ExifTool's Windows executable and required `exiftool_files` folder are bundled into the backend executable and extracted together to a private temporary folder at runtime.
+Use Chrome or Edge. Opening a folder with write access, which rotating and renaming need, uses the File System Access API. The reader's models (about 24 MB) download once and are then cached by the browser. Gemini API keys, if used, are saved locally in your browser.
 
 ## Recommended Workflow
 
-1. Open the app and add your Gemini API key in the API Keys tab.
-2. Use Select & Rotate Images to open a folder, filter images by filename/type, choose the active selection, and rotate JPEG/PNG files if needed.
-3. Use Process Images to configure crop, grid size, model, prompt, and parallel messages before sending batches to Gemini.
-4. Use Review Results to inspect thumbnails, correct extracted fields, create or load CSV files, and export results.
-5. Recalculate names, then rename files when the review looks correct.
+1. **1 · Select & Rotate:**
+   - Open the photo folder.
+   - Filter and select the photos.
+   - Rotate any that need it; this is lossless.
+2. **2 · Read:** click **Read CAMIDs**. Photos are read in the background, at about 1 s per photo on a laptop.
+3. **3 · Review & Rename:**
+   - The tab opens on the photos that need a person.
+   - Confirm or correct each one: press Enter, click the check mark, or click a suggestion.
+   - The strip at the top shows every CAMID in shooting order, so gaps and repeats stand out.
+   - Click **Rename Files**.
 
-## Current Defaults
+## Gemini Mode
 
-The web app is tuned for small Gemini messages that work well with Gemini 3.1 Flash Lite:
+Switch the reader to Gemini (the sparkle button next to **Read CAMIDs**) to use the original prompt-based workflow with your API key.
+
+## Gemini Defaults
+
+Gemini mode is tuned for small Gemini messages that work well with Gemini 3.1 Flash Lite:
 
 | Setting | Default |
 | --- | --- |
@@ -74,8 +77,11 @@ npm run dev
 ```bash
 cd web-app
 npm run lint
+npm test                 # unit tests (orientation, rename planning, RAW previews, reader rules)
 npm run build
 ```
+
+`PARITY=1 npx vitest run src/lib/ocr/__tests__/parity.test.ts` compares the browser reader with the evaluated Python pipeline, which needs the local evaluation data.
 
 GitHub Pages deployment is handled by `.github/workflows/deploy-frontend.yml` when changes are pushed to `main`.
 
@@ -85,11 +91,14 @@ Older Python desktop builds are still available from GitHub Releases:
 
 https://github.com/Fr4nzz/rename_photos_AI/releases
 
-Those builds bundled ExifTool for local file metadata operations. The current hosted web app is the preferred version for ordinary browser-based processing, while RAW rotation remains a Windows-backend capability.
+Those builds bundled ExifTool for local file metadata operations. The hosted web app now covers everything the desktop app does, including RAW rotation, so it is the recommended version.
 
 ## License Notes
 
 This project uses:
 
-- ExifTool by Phil Harvey for local metadata workflows.
-- Google Gemini APIs for AI image extraction.
+- ExifTool by Phil Harvey (desktop app only).
+- Google Gemini APIs for the optional Gemini reader.
+- ONNX Runtime Web (MIT) to run the local reader.
+- PaddleOCR PP-OCRv5 models (Apache-2.0), fine-tuned for the text-line detector and CAMID recognizer.
+- An Ultralytics YOLO segmentation model (AGPL-3.0) for the envelope detector.

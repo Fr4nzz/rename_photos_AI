@@ -3,9 +3,21 @@ import { ReviewToolbar } from './ReviewToolbar'
 import { ReviewPagination } from './ReviewPagination'
 import { ReviewGrid } from './ReviewGrid'
 import { ReviewActionBar } from './ReviewActionBar'
+import { IdTimeline } from './IdTimeline'
 
 export function ReviewTab() {
   const hook = useReviewTab()
+
+  // jump from the timeline to a photo's card: show it (clearing a filter that hides it), then scroll
+  const jumpTo = (photoId: number) => {
+    let index = hook.filteredRows.findIndex((r) => r.photoId === photoId)
+    if (index < 0) {
+      hook.setFilter('all')
+      index = [...hook.photoRows].sort((a, b) => a.from.localeCompare(b.from)).findIndex((r) => r.photoId === photoId)
+    }
+    hook.setCurrentPage(Math.floor(Math.max(0, index) / hook.itemsPerPage) + 1)
+    setTimeout(() => document.getElementById(`card-${photoId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150)
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -22,6 +34,8 @@ export function ReviewTab() {
         selectedOnly={hook.reviewSelectedOnly}
         onSelectedOnlyChange={hook.setReviewSelectedOnly}
       />
+
+      <IdTimeline rows={hook.photoRows} onJump={jumpTo} />
 
       <ReviewPagination
         currentPage={hook.currentPage}

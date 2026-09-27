@@ -61,3 +61,7 @@ web-app/backend/bin/exiftool*
 !.github/**/*.yml
 # Local CAMID reader models (ONNX, served with the web app)
 !web-app/public/models/*.onnx
+
+# Documentation
+!docs/
+!docs/*.md

@@ -43,4 +43,8 @@ describe('decide', () => {
     expect(d[2].reasons).toEqual(['repeated-id'])
     expect(d[4].reasons).toEqual(['repeated-id'])
   })
+  it('suggests the missing number between the neighbouring photos', () => {
+    const d = decide([photo('a', ['CAM078740'], 1), photo('b', ['xx'], 2), photo('c', ['CAM078742'], 3)], known)
+    expect(d[1].candidates[0]).toBe('CAM078741')
+  })
 })

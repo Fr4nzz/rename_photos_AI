@@ -20,6 +20,8 @@ export interface LineReading {
   box: Pt[]
   text: string
   conf: number
+  /** a tall (vertical) line was read turned by this many degrees counter-clockwise */
+  turn?: 90 | 270
 }
 
 export interface PhotoReading {
@@ -42,15 +44,16 @@ const WORK_SIDE = 1600 // the models were trained and tested on 1600 px renditio
 
 export const normalizeReading = (text: string) => text.replace(/\s+/g, '').toUpperCase()
 
-async function readLine(backend: Backend, img: RGBAImage, chars: string[]): Promise<{ text: string; conf: number }> {
-  const views = img.height > 1.5 * img.width ? [rotate(img, 90), rotate(img, 270)] : [img]
-  let best = { text: '', conf: -1 }
-  for (const view of views) {
+async function readLine(backend: Backend, img: RGBAImage, chars: string[]): Promise<{ text: string; conf: number; turn?: 90 | 270 }> {
+  const views: [RGBAImage, 90 | 270 | undefined][] = img.height > 1.5 * img.width
+    ? [[rotate(img, 90), 90], [rotate(img, 270), 270]] : [[img, undefined]]
+  let best: { text: string; conf: number; turn?: 90 | 270 } = { text: '', conf: -1 }
+  for (const [view, turn] of views) {
     const input = recInput(view)
     const out = await backend.run('rec', input.data, input.dims)
     const [, steps, classes] = out.dims
     const r = ctcDecode(out.data, steps, classes, chars)
-    if (r.conf > best.conf) best = r
+    if (r.conf > best.conf) best = turn ? { ...r, turn } : r
   }
   return best
 }

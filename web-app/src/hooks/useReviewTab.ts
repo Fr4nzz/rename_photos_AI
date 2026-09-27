@@ -43,6 +43,16 @@ export function useReviewTab() {
   const [sortOption, setSortOption] = useState<SortOption>('name-asc')
   const [currentPage, setCurrentPage] = useState(1)
 
+  // after a local reading leaves photos to review, open on them (once per results file;
+  // state adjusted during render, as React recommends for state derived from new data)
+  const currentCsvName = useProcessingStore((s) => s.currentCsvName)
+  const [reviewOpenedFor, setReviewOpenedFor] = useState('')
+  if (currentCsvName && reviewOpenedFor !== currentCsvName && photoRows.some((r) => r.review)) {
+    setReviewOpenedFor(currentCsvName)
+    setFilter('review')
+    setCurrentPage(1)
+  }
+
   // Debounced autosave
   const autosaveTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const prevRowsRef = useRef<PhotoRow[]>(photoRows)
@@ -303,5 +313,6 @@ export function useReviewTab() {
     recalculateNames,
     saveChanges,
     exportCsv,
+    itemsPerPage: reviewItemsPerPage,
   }
 }

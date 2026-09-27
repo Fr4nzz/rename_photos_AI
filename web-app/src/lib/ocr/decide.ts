@@ -129,6 +129,20 @@ export function decide(photos: PhotoInput[], known: Set<string> | null): Decisio
       }
       // a neighbour's ID is the likely answer for the second photo (dorsal/ventral) of a specimen
       for (const n of neighbours) if (!candidates.includes(n) && CAMID_RE.test(n) && candidates.length < 4 && editDistance(body.slice(3), n.slice(3)) <= 2) candidates.push(n)
+      // gap in the sequence: database IDs between the nearest proposals before and after this photo
+      // that no other photo uses (e.g. ...119, ?, 121 -> 120); first when the reading gave nothing usable
+      const before = seq.slice(0, pos).reverse().map((j) => proposal.get(j)?.id).find(Boolean)
+      const after = seq.slice(pos + 1).map((j) => proposal.get(j)?.id).find(Boolean)
+      if (known && before && after) {
+        const lo = Math.min(num(before), num(after)), hi = Math.max(num(before), num(after))
+        const gap: string[] = []
+        for (let v = lo; v <= hi && hi - lo <= 20; v++) {
+          const id = `CAM${String(v).padStart(6, '0')}`
+          if (known.has(id) && (!positions.has(id) || id === mine?.id) && !candidates.includes(id)) gap.push(id)
+        }
+        candidates = candidates.length && body.length >= 9 && !body.includes('?') ? [...candidates, ...gap] : [...gap, ...candidates]
+        candidates = candidates.slice(0, 5)
+      }
     }
     decisions[i] = { name: p.name, camid: mine?.id ?? null, auto: !!mine && reasons.length === 0, reasons, prefill: fill, candidates, conf: mine?.conf ?? 0 }
   })

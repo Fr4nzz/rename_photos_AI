@@ -22,9 +22,31 @@ npm run build
 
 The static build is written to `dist/` and deployed by `.github/workflows/deploy-frontend.yml`.
 
-## Optional Windows Backend
+## Tests
 
-- The hosted web app can process and rotate browser-supported image formats such as JPEG and PNG.
-- RAW formats such as CR2 and ORF can be included in the workflow, but direct RAW rotation needs the optional Windows backend because browsers cannot safely rewrite those files by themselves.
-- The app shows a Download Backend button when the local backend is offline. On Windows, download and open `AIPhotoProcessor-Backend.exe`; it includes ExifTool's Windows executable plus the required `exiftool_files` folder and starts the local service used by the web app.
-- Gemini API keys are stored locally in the browser.
+```bash
+npm test
+```
+
+The unit tests cover:
+- lossless orientation edits on real CR2/JPEG files (those tests are skipped when the samples are absent);
+- rename planning;
+- RAW preview extraction;
+- the reader's decision rules.
+
+## Local CAMID reader
+
+The reader lives in `src/lib/ocr/`:
+
+| File | Role |
+|---|---|
+| `pipeline.ts` | Envelope → lines → CAMID |
+| `decide.ts` | Database, sequence and repeated-ID rules, plus review suggestions |
+| `ocrWorker.ts` / `engine.ts` | Web workers running onnxruntime-web |
+| `database.ts` | Live CAMID list from the specimen Google Sheet |
+
+The models are in `public/models/`. See [../docs/LOCAL_READER.md](../docs/LOCAL_READER.md).
+
+## Formats
+
+JPEG and PNG are read directly. RAW files (CR2, NEF, ARW, DNG, PEF; ORF with a smaller preview) are read through their embedded JPEG preview and rotated through their orientation tag. HEIC is not decoded by Chrome, so convert HEIC to JPEG first.

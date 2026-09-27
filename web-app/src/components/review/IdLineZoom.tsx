@@ -25,16 +25,18 @@ export function IdLineZoom({ name, file, camid }: { name: string; file: File; ca
       const x0 = Math.max(0, Math.min(...xs) - pad), y0 = Math.max(0, Math.min(...ys) - pad)
       const w = Math.min(canvas.width, Math.max(...xs) + pad) - x0, h = Math.min(canvas.height, Math.max(...ys) + pad) - y0
       if (w <= 0 || h <= 0) return
+      // show the line the way the reader read it: upright, even when written sideways
+      const turn = (reading.turned ? 180 : 0) + (line.turn ?? 0) // counter-clockwise degrees
+      const sideways = turn % 180 !== 0
+      const scale = 56 / (sideways ? w : h)
+      const dw = Math.round(w * scale), dh = Math.round(h * scale)
       const out = document.createElement('canvas')
-      const scale = 56 / h
-      out.width = Math.round(w * scale)
-      out.height = 56
+      out.width = sideways ? dh : dw
+      out.height = sideways ? dw : dh
       const ctx = out.getContext('2d')!
-      if (reading.turned) {
-        ctx.translate(out.width, out.height)
-        ctx.rotate(Math.PI)
-      }
-      ctx.drawImage(canvas, x0, y0, w, h, 0, 0, out.width, out.height)
+      ctx.translate(out.width / 2, out.height / 2)
+      ctx.rotate((-turn * Math.PI) / 180)
+      ctx.drawImage(canvas, x0, y0, w, h, -dw / 2, -dh / 2, dw, dh)
       out.toBlob((blob) => {
         if (cancelled || !blob) return
         made = URL.createObjectURL(blob)
