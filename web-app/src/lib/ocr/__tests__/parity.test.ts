@@ -3,12 +3,14 @@
  * half of the fresh collections (Panama, Brasil, Peru, Guyana, insectary). Runs only with
  * PARITY=1 (needs the local evaluation data and onnxruntime-node):
  *   PARITY=1 PARITY_LIMIT=651 npx vitest run src/lib/ocr/__tests__/parity.test.ts
+ * IMGDIR=<folder> reads other renditions of the same photos; LAPTOP=1 reads the 20-photo test set
+ * (pre-oriented JPEGs in LTDIR, default /tmp/lt). Results go to OUT.
  */
 import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import jpeg from 'jpeg-js'
 import * as ort from 'onnxruntime-node'
-import { chooseCamid, readPhoto, type Backend, type ModelName } from '../pipeline'
+import { chooseCamid, normalizeReading, readPhoto, type Backend, type ModelName } from '../pipeline'
 
 const FRESH = `${process.env.HOME}/.local/share/sanger-envelope-sam3-20260924/ocr-next/fresh-test`
 const MODELS = new URL('../../../../public/models/', import.meta.url).pathname
@@ -46,13 +48,25 @@ describe.skipIf(!RUN)('parity with the Python pipeline', () => {
       return found[0]?.id ?? null
     }
 
+    if (process.env.LAPTOP === '1') {
+      const key = readFileSync(`${FRESH}/../laptop-testset/answer-key.csv`, 'utf8').trim().split('\n').slice(1).map((l) => l.split(','))
+      const res: string[] = []
+      for (const [stem, , truth] of key) {
+        const raw = jpeg.decode(readFileSync(`${process.env.LTDIR ?? "/tmp/lt"}/${stem}.jpg`), { useTArray: true, maxMemoryUsageInMB: 1024 })
+        const reading = await readPhoto(backend, { width: raw.width, height: raw.height, data: new Uint8ClampedArray(raw.data.buffer) }, chars)
+        const got = chooseCamid(reading, known)?.id ?? null
+        res.push(`${stem}:${got === truth ? 'ok' : got ? 'WRONG ' + got : 'none'}`)
+      }
+      writeFileSync(process.env.OUT ?? '/tmp/laptop-result.txt', res.join('\n') + '\n')
+      return
+    }
     const ids = Object.keys(split).filter((c) => split[c] === 'test' && !checks[c]?.no_visible_id).sort()
       .slice(0, Number(process.env.PARITY_LIMIT ?? 60))
     const tally = { ts: { correct: 0, wrong: 0, none: 0 }, py: { correct: 0, wrong: 0, none: 0 }, agree: 0 }
     const rows: unknown[] = []
     const t0 = Date.now()
     for (const c of ids) {
-      const raw = jpeg.decode(readFileSync(`${FRESH}/images/${c}.jpg`), { useTArray: true, maxMemoryUsageInMB: 1024 })
+      const raw = jpeg.decode(readFileSync(`${process.env.IMGDIR ?? FRESH + "/images"}/${c}.jpg`), { useTArray: true, maxMemoryUsageInMB: 1024 })
       const img = { width: raw.width, height: raw.height, data: new Uint8ClampedArray(raw.data.buffer) }
       const reading = await readPhoto(backend, img, chars)
       const ts = chooseCamid(reading, known)?.id ?? null
@@ -62,10 +76,10 @@ describe.skipIf(!RUN)('parity with the Python pipeline', () => {
       tally.ts[k(ts)]++
       tally.py[k(py)]++
       if (ts === py) tally.agree++
-      rows.push({ camid: c, truth, ts, py, source: reading.source })
+      rows.push({ camid: c, truth, ts, py, source: reading.source, joined: reading.lines.find((l) => l.joined && normalizeReading(l.text) === ts) ? true : undefined })
     }
     const perPhoto = (Date.now() - t0) / ids.length
-    writeFileSync('/tmp/parity-result.json', JSON.stringify({ tally, perPhotoMs: perPhoto, rows }, null, 1))
+    writeFileSync(process.env.OUT ?? '/tmp/parity-result.json', JSON.stringify({ tally, perPhotoMs: perPhoto, rows }, null, 1))
     console.log(JSON.stringify(tally), `${Math.round(perPhoto)} ms/photo`)
     expect(tally.agree / ids.length).toBeGreaterThan(0.9)
     expect(tally.ts.wrong).toBeLessThanOrEqual(tally.py.wrong + 2)

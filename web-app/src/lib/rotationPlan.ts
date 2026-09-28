@@ -7,7 +7,7 @@
 import type { PhotoReading } from './ocr/pipeline'
 import type { PhotoRow } from '@/types'
 
-export type RotSource = '' | 'ocr' | 'manual' | 'learned'
+export type RotSource = '' | 'ocr' | 'manual' | 'learned' | 'neighbours'
 
 const norm = (a: number) => ((a % 360) + 360) % 360
 
@@ -74,6 +74,51 @@ export function applyLearnedOffsets(rows: PhotoRow[]): PhotoRow[] {
       }
       r.rotChosen = String(norm(Number(r.rotSuggested) + learned))
       r.rotSource = 'learned'
+    }
+  }
+  return out
+}
+
+/**
+ * Photos without a trusted reading take their rotation from the read photos around them in the
+ * same session (capture order). The comparison is made in the camera's own frame, ignoring the
+ * orientation tag: on a copy stand the camera points at the floor, so its gyro-based tag flips
+ * between shots while the sensor frame stays the same. `tagCw` gives, per photo, the clockwise
+ * turn its current orientation tag applies (null when the tag is mirrored: no suggestion).
+ * The majority of the (up to) two nearest read photos on each side wins; a tie goes to the nearest.
+ */
+export function fillFromNeighbours(rows: PhotoRow[], tagCw: Map<string, number | null>): PhotoRow[] {
+  const out = rows.map((r) => ({ ...r }))
+  const time = (r: PhotoRow) => (r.captureDate ? Date.parse(r.captureDate) : NaN)
+  // upright orientation of each read photo, in its sensor frame
+  const sensor = (r: PhotoRow): number | null => {
+    const t = tagCw.get(r.from)
+    return r.rotSuggested === '' || t === null || t === undefined ? null : norm(t + Number(r.rotSuggested))
+  }
+  for (const session of sessionsOf(rows)) {
+    const ordered = [...session].sort((a, b) => time(rows[a]) - time(rows[b]))
+    for (let k = 0; k < ordered.length; k++) {
+      const r = out[ordered[k]]
+      const t = tagCw.get(r.from)
+      if (r.rotSuggested !== '' || r.rotSource === 'manual' || t === null || t === undefined) continue
+      const near: { a: number; dt: number }[] = []
+      for (const dir of [-1, 1]) {
+        let found = 0
+        for (let j = k + dir; j >= 0 && j < ordered.length && found < 2; j += dir) {
+          const a = sensor(rows[ordered[j]])
+          if (a === null) continue
+          near.push({ a, dt: Math.abs(time(rows[ordered[j]]) - time(rows[ordered[k]])) })
+          found++
+        }
+      }
+      if (!near.length) continue
+      const votes = new Map<number, number>()
+      for (const n of near) votes.set(n.a, (votes.get(n.a) ?? 0) + 1)
+      const top = Math.max(...votes.values())
+      const tied = new Set([...votes].filter(([, v]) => v === top).map(([a]) => a))
+      const pick = near.filter((n) => tied.has(n.a)).sort((x, y) => x.dt - y.dt)[0].a
+      const turn = String(norm(pick - t))
+      Object.assign(r, { rotSuggested: turn, rotChosen: turn, rotSource: 'neighbours' as const })
     }
   }
   return out

@@ -7,7 +7,9 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { useProcessingStore } from '@/stores/processingStore'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { BROWSER_ROTATABLE_EXTENSIONS } from '@/lib/constants'
+import { BROWSER_ROTATABLE_EXTENSIONS, SUPPORTED_RAW_EXTENSIONS } from '@/lib/constants'
+import { companionsOf, indexByStem } from '@/lib/renamePlan'
+import { listFolder, syncCompanions } from '@/lib/rotationWrite'
 import {
   getImageFilesFromHandle,
   folderAccessHelp,
@@ -193,6 +195,7 @@ export function PhotosView() {
     if (selected.length === 0) return
 
     setBusy(true)
+    const stems = indexByStem(await listFolder(dirHandle))
     const entries: RotationLogEntry[] = []
     let lossless = 0
     let reencoded = 0
@@ -209,6 +212,12 @@ export function PhotosView() {
           entries.push({ original: entry.name, method: 'tag', before: tag.before, after: tag.after,
                          angle: rotationAngle, timestamp: new Date().toISOString() })
           lossless++
+          // its RAW files (hidden unless RAW is shown) take the same orientation
+          if (!SUPPORTED_RAW_EXTENSIONS.has(entry.extension)) {
+            const others = companionsOf(entry.name, stems, SUPPORTED_RAW_EXTENSIONS).filter((n) => !selectedImageNames.has(n))
+            const synced = await syncCompanions(dirHandle, entry.name, others, rotationAngle)
+            entries.push(...synced.entries)
+          }
           continue
         }
         // Files without an Orientation tag (PNG, some JPEGs): rewrite the pixels, keep a backup.

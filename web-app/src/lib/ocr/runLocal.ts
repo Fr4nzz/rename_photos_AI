@@ -8,7 +8,8 @@ import { loadCamidSet, type CamidSet } from './database'
 import { decide, type Decision, type PhotoInput } from './decide'
 import { readPhotos } from './engine'
 import type { PhotoReading } from './pipeline'
-import { uprightRotation } from '../rotationPlan'
+import { fillFromNeighbours, uprightRotation } from '../rotationPlan'
+import { readOrientation } from '../orientation'
 
 export const REASON_LABEL: Record<string, string> = {
   'no-reading': 'No CAMID read',
@@ -43,6 +44,11 @@ export async function runLocalOcr(
 ): Promise<LocalRunResult> {
   const databasePromise = loadCamidSet()
   const timesPromise = Promise.all(files.map((f) => captureTime(f.file)))
+  // clockwise turn applied by each photo's orientation tag (null when mirrored; 0 without a tag)
+  const tagsPromise = Promise.all(files.map(async (f) => {
+    const v = (await readOrientation(f.file).catch(() => null))?.value ?? 1
+    return ({ 1: 0, 6: 90, 3: 180, 8: 270 } as Record<number, number>)[v] ?? null
+  }))
   const readings = new Map<string, PhotoReading>()
   const errors = new Map<string, string>()
   let done = 0
@@ -52,7 +58,7 @@ export async function runLocalOcr(
     done++
     onProgress(done, files.length, readings)
   }, signal)
-  const [database, times] = await Promise.all([databasePromise, timesPromise])
+  const [database, times, tags] = await Promise.all([databasePromise, timesPromise, tagsPromise])
 
   const inputs: PhotoInput[] = files.map((f, i) => ({
     name: f.name, reading: readings.get(f.name), error: errors.get(f.name), capturedAt: times[i],
@@ -82,5 +88,6 @@ export async function runLocalOcr(
       batchNumber: 0,
     }
   })
-  return { rows, readings, decisions, database }
+  // photos the reader could not orient follow their neighbours in the session
+  return { rows: fillFromNeighbours(rows, new Map(files.map((f, i) => [f.name, tags[i]]))), readings, decisions, database }
 }

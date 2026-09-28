@@ -39,18 +39,15 @@ export function useReviewTab() {
 
   const [csvFiles, setCsvFiles] = useState<string[]>([])
   const [selectedCsv, setSelectedCsv] = useState('')
-  // start on the photos that need a person, when a local reading left some
-  const [filter, setFilter] = useState<FilterType>(() => (photoRows.some((r) => r.review) ? 'review' : 'all'))
+  const [filter, setFilter] = useState<FilterType>('all')
   const [sortOption, setSortOption] = useState<SortOption>('name-asc')
   const [currentPage, setCurrentPage] = useState(1)
 
-  // after a local reading leaves photos to review, open on them (once per results file;
-  // state adjusted during render, as React recommends for state derived from new data)
+  // a new results file starts on its first page
   const currentCsvName = useProcessingStore((s) => s.currentCsvName)
-  const [reviewOpenedFor, setReviewOpenedFor] = useState('')
-  if (currentCsvName && reviewOpenedFor !== currentCsvName && photoRows.some((r) => r.review)) {
-    setReviewOpenedFor(currentCsvName)
-    setFilter('review')
+  const [pageResetFor, setPageResetFor] = useState('')
+  if (currentCsvName && pageResetFor !== currentCsvName) {
+    setPageResetFor(currentCsvName)
     setCurrentPage(1)
   }
 

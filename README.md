@@ -36,9 +36,10 @@ Everything happens in one view:
 1. **Open folder**, then filter and select the photos in the grid. The ↺ ↻ 180° buttons rotate the selected photos by hand (lossless, RAW files too); the last button undoes rotations.
 2. Click **Run PaddleOCR**. Photos are read in the background, at about 1 s per photo on a laptop.
    - With **Auto-rotate** on (the default), each photo and its RAW files are then turned so the envelope text is upright. Only the orientation tag changes; Undo or Restore reverts it.
-   - Photos whose ID could not be read, or is not in the database, are left as they are.
+   - Photos whose ID could not be read, or is not in the database, take the rotation of the read photos shot just before and after them in the same session. This is compared in the camera's own frame, because on a copy stand the camera's gyro-based orientation tag is unreliable.
+   - Each RAW file gets exactly the orientation tag of its JPEG, so the pair always matches.
 3. The view switches to **Review** (the clipboard button; the grid button goes back to the photos, which now show their CAMIDs, flagged ones outlined; click a CAMID to open its card):
-   - The review opens on the photos that need a person.
+   - Choose **Needs review** in the filter to see only the photos that need a person.
    - Confirm or correct each one: press Enter, click the check mark, or click a suggestion.
    - The strip at the top shows every CAMID in shooting order, so gaps and repeats stand out.
    - Click **Rename Files**.

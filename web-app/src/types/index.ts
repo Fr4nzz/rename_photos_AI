@@ -56,7 +56,7 @@ export interface PhotoRow {
   /** clockwise rotation to use for this photo ('' = none) */
   rotChosen: string
   /** where rotChosen came from: the reader, a manual change, or learned from manual changes */
-  rotSource: '' | 'ocr' | 'manual' | 'learned'
+  rotSource: '' | 'ocr' | 'manual' | 'learned' | 'neighbours'
   /** clockwise rotation already written to the file(s) by this app ('' = none) */
   rotApplied: string
 }

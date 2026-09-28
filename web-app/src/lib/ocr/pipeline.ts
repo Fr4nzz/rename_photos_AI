@@ -22,6 +22,35 @@ export interface LineReading {
   conf: number
   /** a tall (vertical) line was read turned by this many degrees counter-clockwise */
   turn?: 90 | 270
+  /** made by joining a CAM prefix with the 6 digits read as a separate piece on the same row */
+  joined?: boolean
+}
+
+/**
+ * A crossed-out or widely spaced ID line is often detected as pieces ("CAM7" + "077332"). When a
+ * piece of exactly 6 digits has, on the same row and just to its left, a piece starting with CAM,
+ * offer CAM + those digits as a reading (the database and sequence checks still apply).
+ */
+export function joinPieces(lines: LineReading[]): LineReading[] {
+  const flat = lines.filter((l) => !l.turn)
+  const geo = (l: LineReading) => {
+    const xs = l.box.map((p) => p[0]), ys = l.box.map((p) => p[1])
+    return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) }
+  }
+  const out: LineReading[] = []
+  for (const d of flat) {
+    const digits = normalizeReading(d.text)
+    if (!/^[0-9]{6}$/.test(digits)) continue
+    const g = geo(d), h = g.y1 - g.y0, cy = (g.y0 + g.y1) / 2
+    for (const c of flat) {
+      if (c === d || !/^CAM/.test(normalizeReading(c.text)) || CAMID_RE.test(normalizeReading(c.text))) continue
+      const k = geo(c), kcy = (k.y0 + k.y1) / 2
+      if (Math.abs(kcy - cy) > 0.6 * h || k.x1 > g.x0 + 0.3 * h || g.x0 - k.x1 > 4 * h) continue
+      out.push({ box: [[k.x0, Math.min(k.y0, g.y0)], [g.x1, Math.min(k.y0, g.y0)], [g.x1, Math.max(k.y1, g.y1)], [k.x0, Math.max(k.y1, g.y1)]],
+        text: `CAM${digits}`, conf: Math.min(c.conf, d.conf), joined: true })
+    }
+  }
+  return out
 }
 
 export interface PhotoReading {
@@ -120,6 +149,9 @@ export async function readPhoto(backend: Backend, photo: RGBAImage, chars: strin
     const bounds = envelopeCropBounds(largest.box as Box, img)
     const envelope = crop(img, ...bounds)
     const [upright, flipped] = await readEnvelopeBothWays(backend, envelope, chars)
+    // sealed test: +1 correct, no new wrong readings
+    upright.push(...joinPieces(upright))
+    flipped.push(...joinPieces(flipped))
     // Upside-down photos: every line is also read turned over. The orientation that gives the most
     // confident whole-line CAMID wins (a correct reading is near-certain; an upside-down misread
     // rarely is); without any CAMID reading, the photo is taken as upright.

@@ -1,4 +1,4 @@
-import { Check, Hand, RotateCcw, RotateCw, ScanText, Wand2 } from 'lucide-react'
+import { ArrowLeftRight, Check, Hand, RotateCcw, RotateCw, ScanText, Wand2 } from 'lucide-react'
 import type { PhotoRow } from '@/types'
 import { pendingRotation } from '@/lib/rotationPlan'
 
@@ -6,6 +6,7 @@ const SOURCE = {
   ocr: { Icon: ScanText, text: 'suggested from the envelope text' },
   manual: { Icon: Hand, text: 'set by you (click to go back to the suggestion)' },
   learned: { Icon: Wand2, text: 'learned from your corrections in this session' },
+  neighbours: { Icon: ArrowLeftRight, text: 'no CAMID read: taken from the photos shot just before and after' },
   '': { Icon: null, text: 'no suggestion (no CAMID read)' },
 } as const
 
