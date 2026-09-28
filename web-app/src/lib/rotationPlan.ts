@@ -86,6 +86,10 @@ export function applyLearnedOffsets(rows: PhotoRow[]): PhotoRow[] {
  * between shots while the sensor frame stays the same. `tagCw` gives, per photo, the clockwise
  * turn its current orientation tag applies (null when the tag is mirrored: no suggestion).
  * The majority of the (up to) two nearest read photos on each side wins; a tie goes to the nearest.
+ *
+ * A read photo whose envelope points another way than the nearest read photos on both sides, while
+ * those two agree (e.g. an envelope laid down turned), takes their rotation instead and is flagged
+ * 'rotation-outlier' for review.
  */
 export function fillFromNeighbours(rows: PhotoRow[], tagCw: Map<string, number | null>): PhotoRow[] {
   const out = rows.map((r) => ({ ...r }))
@@ -97,10 +101,29 @@ export function fillFromNeighbours(rows: PhotoRow[], tagCw: Map<string, number |
   }
   for (const session of sessionsOf(rows)) {
     const ordered = [...session].sort((a, b) => time(rows[a]) - time(rows[b]))
+    // outliers among the read photos
+    for (let k = 0; k < ordered.length; k++) {
+      const own = sensor(rows[ordered[k]])
+      const t = tagCw.get(rows[ordered[k]].from)
+      if (own === null || t === null || t === undefined || rows[ordered[k]].rotSource === 'manual') continue
+      const side = (dir: number) => {
+        for (let j = k + dir; j >= 0 && j < ordered.length; j += dir) {
+          const a = sensor(rows[ordered[j]])
+          if (a !== null) return a
+        }
+        return null
+      }
+      const before = side(-1), after = side(1)
+      if (before === null || before !== after || before === own) continue
+      const r = out[ordered[k]]
+      const turn = String(norm(before - t))
+      Object.assign(r, { rotSuggested: turn, rotChosen: turn, rotSource: 'neighbours' as const,
+        review: [...r.review.split(',').filter(Boolean), 'rotation-outlier'].join(',') })
+    }
     for (let k = 0; k < ordered.length; k++) {
       const r = out[ordered[k]]
       const t = tagCw.get(r.from)
-      if (r.rotSuggested !== '' || r.rotSource === 'manual' || t === null || t === undefined) continue
+      if (rows[ordered[k]].rotSuggested !== '' || r.rotSource === 'manual' || t === null || t === undefined) continue
       const near: { a: number; dt: number }[] = []
       for (const dir of [-1, 1]) {
         let found = 0

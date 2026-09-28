@@ -30,4 +30,12 @@ describe('fillFromNeighbours', () => {
     expect(out[1].rotChosen).toBe('180')
     expect(out[2].rotChosen).toBe('')
   })
+  it('flags a photo whose envelope points another way than both neighbours', () => {
+    const rows = [row('a', 0, '90'), row('b', 1, '90'), row('c', 2, '0'), row('d', 3, '90'), row('e', 4, '180')]
+    const tags = new Map<string, number | null>(rows.map((r) => [r.from, 0]))
+    const out = fillFromNeighbours(rows, tags)
+    expect(out[2]).toMatchObject({ rotChosen: '90', rotSource: 'neighbours', review: 'rotation-outlier' })
+    expect(out[4].review).toBe('') // at the end of the session: no second side to compare with
+    expect(out[1].review).toBe('')
+  })
 })

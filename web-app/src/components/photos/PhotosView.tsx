@@ -35,6 +35,7 @@ import { ImageSelectionGrid } from '@/components/select/ImageSelectionGrid'
 import { ImageSelectionToolbar } from '@/components/select/ImageSelectionToolbar'
 import { ProcessingControls } from '@/components/process/ProcessingControls'
 import { ReviewPane } from '@/components/review/ReviewPane'
+import { FolderAccessBanner } from './FolderAccessBanner'
 import { useProcessTab } from '@/hooks/useProcessTab'
 import type { RotationLogEntry } from '@/types'
 
@@ -323,6 +324,7 @@ export function PhotosView() {
         onChange={(event) => loadFolderFromInput(event.target.files)}
       />
 
+      <FolderAccessBanner />
       <ProcessingControls onStart={hook.startProcessing} onStop={hook.stopProcessing} hasImages={hook.imageFiles.length > 0} geminiHook={hook}>
         <Button variant="outline" size="sm" onClick={openFolder} className="gap-1.5">
           <FolderOpen className="h-3.5 w-3.5" />

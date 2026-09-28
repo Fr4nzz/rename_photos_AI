@@ -29,7 +29,7 @@ Use Chrome or Edge. Opening a folder with write access, which rotating and renam
 
 ## Recommended Workflow
 
-Use Chrome or Edge, or Brave with `brave://flags/#file-system-access-api` enabled. Other browsers can only read a folder (they ask to "upload" it, but nothing leaves the computer), so rotating and renaming in place is not available there.
+Use Chrome or Edge, or Brave with `brave://flags/#file-system-access-api` enabled (the app shows a banner with that address to copy when it opens in Brave). Other browsers can only read a folder (they ask to "upload" it, but nothing leaves the computer), so rotating and renaming in place is not available there.
 
 Everything happens in one view:
 
@@ -38,6 +38,7 @@ Everything happens in one view:
    - With **Auto-rotate** on (the default), each photo and its RAW files are then turned so the envelope text is upright. Only the orientation tag changes; Undo or Restore reverts it.
    - Photos whose ID could not be read, or is not in the database, take the rotation of the read photos shot just before and after them in the same session. This is compared in the camera's own frame, because on a copy stand the camera's gyro-based orientation tag is unreliable.
    - Each RAW file gets exactly the orientation tag of its JPEG, so the pair always matches.
+   - A photo whose envelope points another way than the photos on both sides of it (which agree) takes their rotation and is flagged **Rotation differs from the photos around it**; turn it with ↺/↻ if the envelope was right.
 3. The view switches to **Review** (the clipboard button; the grid button goes back to the photos, which now show their CAMIDs, flagged ones outlined; click a CAMID to open its card):
    - Choose **Needs review** in the filter to see only the photos that need a person.
    - Confirm or correct each one: press Enter, click the check mark, or click a suggestion.
