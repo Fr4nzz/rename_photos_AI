@@ -68,7 +68,20 @@ export interface PhotoReading {
   size: [number, number]
 }
 
+/**
+ * Full-resolution pixels of a region of the working image, when the caller has the original photo:
+ * `scale` = full-resolution pixels per working-image pixel.
+ */
+export type FullCrop = (bounds: [number, number, number, number]) => Promise<{ image: RGBAImage; scale: number } | null>
+
+/** How text lines are read when full resolution is available (evaluation switch). */
+export const LINE_MODE = { value: 'auto' as 'working' | 'hires' | 'both' | 'hidet' | 'union' | 'auto' }
+/** evaluation counter: photos that needed the full-resolution pass */
+export const HIRES_PASSES = { count: 0 }
+
 export const CAMID_RE = /^CAM[0-9]{6}$/
+/** below this confidence the envelope is read again at full resolution (sealed test: 7% of photos) */
+const AUTO_SURE = 0.95
 const WORK_SIDE = 1600 // the models were trained and tested on 1600 px renditions
 
 export const normalizeReading = (text: string) => text.replace(/\s+/g, '').toUpperCase()
@@ -106,16 +119,49 @@ async function readRegion(backend: Backend, img: RGBAImage, chars: string[], lim
  * coordinates of the envelope turned 180 degrees. Tall (sideways) lines are already read both
  * ways and are left out of the flipped list.
  */
-async function readEnvelopeBothWays(backend: Backend, env: RGBAImage, chars: string[]): Promise<[LineReading[], LineReading[]]> {
+async function readEnvelopeBothWays(
+  backend: Backend, env: RGBAImage, chars: string[], hi: { image: RGBAImage; scale: number } | null,
+  mode: typeof LINE_MODE.value = LINE_MODE.value,
+): Promise<[LineReading[], LineReading[]]> {
+  const upright: LineReading[] = [], flipped: LineReading[] = []
+  if (hi && (mode === 'hidet' || mode === 'union')) {
+    // find and read the lines on the full-resolution envelope; boxes back in working coordinates
+    const det = detInput(hi.image, 64, 4000)
+    const out = await backend.run('line', det.data, det.dims)
+    const [ph, pw] = out.dims.slice(-2)
+    for (const fbox of detBoxes(out.data, pw, ph, det.shape)) {
+      const lineImg = quadCrop(hi.image, fbox)
+      const box = fbox.map(([x, y]) => [x / hi.scale, y / hi.scale] as Pt)
+      upright.push({ box, ...(await readLine(backend, lineImg, chars)) })
+      if (lineImg.height <= 1.5 * lineImg.width) {
+        const r = await readLine(backend, rotate(lineImg, 180), chars)
+        flipped.push({ box: [2, 3, 0, 1].map((k) => [env.width - box[k][0], env.height - box[k][1]] as Pt), ...r })
+      }
+    }
+    if (mode === 'hidet') return [upright, flipped]
+  }
   const det = detInput(env, 64, 4000)
   const out = await backend.run('line', det.data, det.dims)
   const [ph, pw] = out.dims.slice(-2)
-  const upright: LineReading[] = [], flipped: LineReading[] = []
+  // lines are found on the working image (as trained) and, with the original at hand, read from
+  // its full-resolution pixels: small print (e.g. under a barcode) keeps its detail
+  const views = (box: Pt[]) => {
+    const work = quadCrop(env, box)
+    if (!hi || mode === 'working' || mode === 'union') return [work]
+    const full = quadCrop(hi.image, box.map(([x, y]) => [x * hi.scale, y * hi.scale] as Pt))
+    return mode === 'both' ? [work, full] : [full]
+  }
+  const best = async (imgs: RGBAImage[]) => {
+    let top = await readLine(backend, imgs[0], chars)
+    for (const im of imgs.slice(1)) { const r = await readLine(backend, im, chars); if (r.conf > top.conf) top = r }
+    return top
+  }
   for (const box of detBoxes(out.data, pw, ph, det.shape)) {
-    const lineImg = quadCrop(env, box)
-    upright.push({ box, ...(await readLine(backend, lineImg, chars)) })
+    const lineImgs = views(box)
+    const lineImg = lineImgs[0]
+    upright.push({ box, ...(await best(lineImgs)) })
     if (lineImg.height <= 1.5 * lineImg.width) {
-      const r = await readLine(backend, rotate(lineImg, 180), chars)
+      const r = await best(lineImgs.map((im) => rotate(im, 180)))
       // the same quadrilateral in the envelope turned 180: (x, y) -> (w - x, h - y), corners re-ordered
       const turnedBox = [2, 3, 0, 1].map((k) => [env.width - box[k][0], env.height - box[k][1]] as Pt)
       flipped.push({ box: turnedBox, ...r })
@@ -136,7 +182,7 @@ export function chooseCamid(reading: PhotoReading, known: Set<string> | null): {
   return pool[0] ?? null
 }
 
-export async function readPhoto(backend: Backend, photo: RGBAImage, chars: string[]): Promise<PhotoReading> {
+export async function readPhoto(backend: Backend, photo: RGBAImage, chars: string[], fullCrop?: FullCrop): Promise<PhotoReading> {
   const scale = Math.min(1, WORK_SIDE / Math.max(photo.width, photo.height))
   const img = scale < 1 ? resize(photo, Math.round(photo.width * scale), Math.round(photo.height * scale)) : photo
   const size: [number, number] = [img.width, img.height]
@@ -148,7 +194,22 @@ export async function readPhoto(backend: Backend, photo: RGBAImage, chars: strin
     const largest = boxes.reduce((a, b) => ((b.box[2] - b.box[0]) * (b.box[3] - b.box[1]) > (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]) ? b : a))
     const bounds = envelopeCropBounds(largest.box as Box, img)
     const envelope = crop(img, ...bounds)
-    const [upright, flipped] = await readEnvelopeBothWays(backend, envelope, chars)
+    let upright: LineReading[], flipped: LineReading[]
+    if (LINE_MODE.value === 'auto') {
+      // normal reading first; the full-resolution pass only when it found no confident CAMID
+      ;[upright, flipped] = await readEnvelopeBothWays(backend, envelope, chars, null, 'working')
+      const sure = Math.max(bestCamid(upright).conf, bestCamid(flipped).conf) >= AUTO_SURE
+      const hi = !sure && fullCrop ? await fullCrop(bounds).catch(() => null) : null
+      if (hi) {
+        HIRES_PASSES.count++
+        const [u2, f2] = await readEnvelopeBothWays(backend, envelope, chars, hi, 'hidet')
+        upright.push(...u2)
+        flipped.push(...f2)
+      }
+    } else {
+      const hi = fullCrop ? await fullCrop(bounds).catch(() => null) : null
+      ;[upright, flipped] = await readEnvelopeBothWays(backend, envelope, chars, hi)
+    }
     // sealed test: +1 correct, no new wrong readings
     upright.push(...joinPieces(upright))
     flipped.push(...joinPieces(flipped))

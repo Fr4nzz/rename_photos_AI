@@ -10,11 +10,28 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import jpeg from 'jpeg-js'
 import * as ort from 'onnxruntime-node'
-import { chooseCamid, normalizeReading, readPhoto, type Backend, type ModelName } from '../pipeline'
+import { chooseCamid, HIRES_PASSES, LINE_MODE, normalizeReading, readPhoto, type Backend, type FullCrop, type ModelName } from '../pipeline'
+import { crop, rotate, type RGBAImage } from '../image'
+import { findOrientation } from '../../orientation'
 
 const FRESH = `${process.env.HOME}/.local/share/sanger-envelope-sam3-20260924/ocr-next/fresh-test`
 const MODELS = new URL('../../../../public/models/', import.meta.url).pathname
 const RUN = process.env.PARITY === '1' && existsSync(FRESH)
+
+/** Full-resolution crops from the original photo, oriented like the browser shows it (FULLDIR). */
+function fullCropFrom(path: string | null, work: RGBAImage): FullCrop | undefined {
+  if (!path || !existsSync(path)) return undefined
+  return async (b) => {
+    const bytes = readFileSync(path)
+    const raw = jpeg.decode(bytes, { useTArray: true, maxMemoryUsageInMB: 2048 })
+    let full: RGBAImage = { width: raw.width, height: raw.height, data: new Uint8ClampedArray(raw.data.buffer) }
+    const tag = findOrientation(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + Math.min(bytes.length, 1 << 18)))?.value ?? 1
+    const ccw = ({ 3: 180, 6: 270, 8: 90 } as Record<number, 90 | 180 | 270>)[tag]
+    if (ccw) full = rotate(full, ccw)
+    const scale = full.width / work.width
+    return { image: crop(full, ...(b.map((v) => Math.round(v * scale)) as [number, number, number, number])), scale }
+  }
+}
 
 describe.skipIf(!RUN)('parity with the Python pipeline', () => {
   it('reads the sealed test half like the Python pipeline', async () => {
@@ -31,6 +48,7 @@ describe.skipIf(!RUN)('parity with the Python pipeline', () => {
         return { data: t.data as Float32Array, dims: t.dims as number[] }
       },
     }
+    LINE_MODE.value = (process.env.LINEMODE ?? 'hires') as typeof LINE_MODE.value
     const chars: string[] = JSON.parse(readFileSync(`${MODELS}camid_rec_chars.json`, 'utf8'))
     const known = new Set<string>(JSON.parse(readFileSync(`${MODELS}../db/camids.json`, 'utf8')))
     const split: Record<string, string> = JSON.parse(readFileSync(`${FRESH}/round2-split.json`, 'utf8'))
@@ -53,7 +71,8 @@ describe.skipIf(!RUN)('parity with the Python pipeline', () => {
       const res: string[] = []
       for (const [stem, , truth] of key) {
         const raw = jpeg.decode(readFileSync(`${process.env.LTDIR ?? "/tmp/lt"}/${stem}.jpg`), { useTArray: true, maxMemoryUsageInMB: 1024 })
-        const reading = await readPhoto(backend, { width: raw.width, height: raw.height, data: new Uint8ClampedArray(raw.data.buffer) }, chars)
+        const work = { width: raw.width, height: raw.height, data: new Uint8ClampedArray(raw.data.buffer) }
+        const reading = await readPhoto(backend, work, chars, fullCropFrom(process.env.FULLDIR ? `${process.env.FULLDIR}/${stem}.JPG` : null, work))
         const got = chooseCamid(reading, known)?.id ?? null
         res.push(`${stem}:${got === truth ? 'ok' : got ? 'WRONG ' + got : 'none'}`)
       }
@@ -68,7 +87,7 @@ describe.skipIf(!RUN)('parity with the Python pipeline', () => {
     for (const c of ids) {
       const raw = jpeg.decode(readFileSync(`${process.env.IMGDIR ?? FRESH + "/images"}/${c}.jpg`), { useTArray: true, maxMemoryUsageInMB: 1024 })
       const img = { width: raw.width, height: raw.height, data: new Uint8ClampedArray(raw.data.buffer) }
-      const reading = await readPhoto(backend, img, chars)
+      const reading = await readPhoto(backend, img, chars, fullCropFrom(process.env.FULLDIR ? `${process.env.FULLDIR}/${c}.jpg` : null, img))
       const ts = chooseCamid(reading, known)?.id ?? null
       const py = python(c)
       const truth = checks[c]?.envelope_camid ?? c
@@ -79,7 +98,7 @@ describe.skipIf(!RUN)('parity with the Python pipeline', () => {
       rows.push({ camid: c, truth, ts, py, source: reading.source, joined: reading.lines.find((l) => l.joined && normalizeReading(l.text) === ts) ? true : undefined })
     }
     const perPhoto = (Date.now() - t0) / ids.length
-    writeFileSync(process.env.OUT ?? '/tmp/parity-result.json', JSON.stringify({ tally, perPhotoMs: perPhoto, rows }, null, 1))
+    writeFileSync(process.env.OUT ?? '/tmp/parity-result.json', JSON.stringify({ tally, perPhotoMs: perPhoto, hiresPasses: HIRES_PASSES.count, rows }, null, 1))
     console.log(JSON.stringify(tally), `${Math.round(perPhoto)} ms/photo`)
     expect(tally.agree / ids.length).toBeGreaterThan(0.9)
     expect(tally.ts.wrong).toBeLessThanOrEqual(tally.py.wrong + 2)

@@ -9,7 +9,7 @@ import { readOrientation } from '../orientation'
 import { extractLargestJpeg } from '../rawPreview'
 import { decodeHeic, HEIC_EXTENSIONS } from '../heic'
 import { rotate, type RGBAImage } from './image'
-import { readPhoto, type Backend, type ModelName, type PhotoReading } from './pipeline'
+import { readPhoto, type Backend, type FullCrop, type ModelName, type PhotoReading } from './pipeline'
 
 export interface OcrRequest { id: number; file: File; raw: boolean }
 export type OcrResponse =
@@ -58,7 +58,27 @@ async function asRendition(canvas: OffscreenCanvas): Promise<RGBAImage> {
   return { width: out.width, height: out.height, data: ctx.getImageData(0, 0, out.width, out.height).data }
 }
 
-async function decode(file: File, raw: boolean): Promise<RGBAImage> {
+interface Decoded {
+  img: RGBAImage
+  /** full-resolution pixels of a region of `img` (text lines are read from these) */
+  full?: FullCrop
+  release: () => void
+}
+
+/** Region [x0, y0, x1, y1] of a working image `w` px wide, cut from a full-size source. */
+function cropper(source: CanvasImageSource & { width: number; height: number }, w: number): FullCrop {
+  return async ([x0, y0, x1, y1]) => {
+    const scale = source.width / w
+    const sx = Math.round(x0 * scale), sy = Math.round(y0 * scale)
+    const sw = Math.max(1, Math.round((x1 - x0) * scale)), sh = Math.max(1, Math.round((y1 - y0) * scale))
+    const c = new OffscreenCanvas(sw, sh)
+    const ctx = c.getContext('2d', { willReadFrequently: true })!
+    ctx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh)
+    return { image: { width: sw, height: sh, data: ctx.getImageData(0, 0, sw, sh).data }, scale }
+  }
+}
+
+async function decode(file: File, raw: boolean): Promise<Decoded> {
   if (HEIC_EXTENSIONS.has(file.name.slice(file.name.lastIndexOf('.')).toLowerCase())) {
     const full = await decodeHeic(file)
     const scale = Math.min(1, WORK_SIDE / Math.max(full.width, full.height))
@@ -69,7 +89,7 @@ async function decode(file: File, raw: boolean): Promise<RGBAImage> {
     const ctx = dst.getContext('2d', { willReadFrequently: true })!
     ctx.imageSmoothingQuality = 'high'
     ctx.drawImage(src, 0, 0, w, h)
-    return asRendition(dst)
+    return { img: await asRendition(dst), full: cropper(src, w), release: () => {} }
   }
   let source: Blob = file
   let turnCcw = 0
@@ -87,10 +107,13 @@ async function decode(file: File, raw: boolean): Promise<RGBAImage> {
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(probe, 0, 0, w, h)
-  probe.close()
-  let img = await asRendition(canvas)
-  if (turnCcw) img = rotate(img, turnCcw as 90 | 180 | 270)
-  return img
+  const img = await asRendition(canvas)
+  if (turnCcw) {
+    // RAW previews turned by the RAW's tag: read at working resolution only
+    probe.close()
+    return { img: rotate(img, turnCcw as 90 | 180 | 270), release: () => {} }
+  }
+  return { img, full: cropper(probe, w), release: () => probe.close() }
 }
 
 let ready: Promise<void> | null = null
@@ -110,8 +133,13 @@ self.onmessage = async (event: MessageEvent<OcrRequest | { init: string }>) => {
   try {
     await ready
     const t0 = performance.now()
-    const img = await decode(msg.file, msg.raw)
-    const reading = await readPhoto(backend, img, chars)
+    const decoded = await decode(msg.file, msg.raw)
+    let reading: PhotoReading
+    try {
+      reading = await readPhoto(backend, decoded.img, chars, decoded.full)
+    } finally {
+      decoded.release()
+    }
     self.postMessage({ id: msg.id, ok: true, reading, ms: performance.now() - t0 } satisfies OcrResponse)
   } catch (e) {
     self.postMessage({ id: msg.id, ok: false, error: e instanceof Error ? e.message : String(e) } satisfies OcrResponse)
