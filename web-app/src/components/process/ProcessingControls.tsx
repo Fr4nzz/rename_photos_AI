@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
-import { Cpu, Play, ScanText, Sparkles, Square } from 'lucide-react'
+import { Cpu, Play, ScanText, Sparkles, Square, Wand2 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { listStoredCsvs } from '@/lib/csvHandler'
 import type { RunMode } from '@/types'
@@ -24,7 +24,7 @@ interface Props {
 }
 
 export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
-  const { modelName, engine, updateSetting } = useSettingsStore()
+  const { modelName, engine, autoRotate, updateSetting } = useSettingsStore()
   const { apiKeys } = useApiKeysStore()
   const {
     isProcessing,
@@ -124,12 +124,35 @@ export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
             <Square className="h-3.5 w-3.5" />
             Stop
           </Button>
-        ) : (
+        ) : (<>
+          {local && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={autoRotate ? 'secondary' : 'ghost'}
+                  size="sm"
+                  role="switch"
+                  aria-checked={autoRotate}
+                  aria-label="Auto-rotate"
+                  onClick={() => updateSetting('autoRotate', !autoRotate)}
+                  className={`gap-1.5 text-xs ${autoRotate ? '' : 'text-muted-foreground line-through'}`}
+                >
+                  <Wand2 className="h-3.5 w-3.5" />
+                  Auto-rotate
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {autoRotate
+                  ? 'On: after reading, each photo (and its RAW) is turned so the envelope text is upright. Lossless; Undo in step 1 or Restore reverts it.'
+                  : 'Off: rotations are only suggested in Review and written when you rename.'}
+              </TooltipContent>
+            </Tooltip>
+          )}
           <Button size="sm" onClick={onStart} disabled={!canStart} className="gap-1.5">
             {local ? <ScanText className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-            {local ? 'Read CAMIDs' : 'Ask AI (Start)'}
+            {local ? 'Run PaddleOCR' : 'Ask AI (Start)'}
           </Button>
-        )}
+        </>)}
       </div>
 
       {(isProcessing || progress.percent > 0) && (

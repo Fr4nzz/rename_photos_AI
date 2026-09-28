@@ -30,6 +30,8 @@ export interface AppSettings {
   customSuffixes: string
   /** 'local': the built-in CAMID reader (no API key); 'gemini': the Gemini prompt */
   engine: 'local' | 'gemini'
+  /** local reader: turn each photo so its envelope text is upright right after reading */
+  autoRotate: boolean
 }
 
 export interface PhotoRow {

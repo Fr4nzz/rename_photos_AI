@@ -8,10 +8,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { companionsOf, indexByStem, planRenames } from '@/lib/renamePlan'
-import { rotateLossless, writeOrientation } from '@/lib/orientation'
+import { writeOrientation } from '@/lib/orientation'
 import { pendingRotation } from '@/lib/rotationPlan'
+import { appendRotationLog, writeRotations } from '@/lib/rotationWrite'
 import { getRotationLog, saveRotationLog } from '@/lib/csvHandler'
-import type { RotationLogEntry } from '@/types'
 import {
   Select,
   SelectContent,
@@ -127,43 +127,6 @@ async function refreshFileMapFromDir(
   logger.info(`Refreshed fileMap: ${newFileMap.size} entries`)
 }
 
-/**
- * Write each row's pending rotation (chosen minus already applied) to its photo and RAW companions,
- * losslessly (EXIF Orientation tag only). Returns the updated rows, log entries and the files that
- * could not be rotated (no Orientation tag, e.g. HEIC/PNG).
- */
-async function writeRotations(
-  dirHandle: FileSystemDirectoryHandle,
-  rows: PhotoRow[],
-  folderNames: string[],
-  withCompanions: boolean,
-): Promise<{ rows: PhotoRow[]; entries: RotationLogEntry[]; failed: string[] }> {
-  const stems = indexByStem(folderNames)
-  const entries: RotationLogEntry[] = []
-  const failed: string[] = []
-  const out = rows.map((r) => ({ ...r }))
-  for (const r of out) {
-    const pending = pendingRotation(r)
-    if (!pending || r.skip === 'x') continue
-    const names = [r.currentPath, ...(withCompanions ? companionsOf(r.currentPath, stems, SUPPORTED_RAW_EXTENSIONS) : [])]
-    let mainDone = false
-    for (const name of names) {
-      try {
-        // the UI angle is clockwise; orientation angles are counter-clockwise
-        const res = await rotateLossless(await dirHandle.getFileHandle(name), -pending)
-        if (!res) { failed.push(name); continue }
-        entries.push({ original: name, method: 'tag', before: res.before, after: res.after, angle: pending, timestamp: new Date().toISOString() })
-        if (name === r.currentPath) mainDone = true
-      } catch (err: unknown) {
-        failed.push(name)
-        logger.warn(`Could not rotate ${name}: ${getErrorMessage(err)}`)
-      }
-    }
-    if (mainDone) r.rotApplied = String((Number(r.rotApplied || 0) + pending) % 360)
-  }
-  return { rows: out, entries, failed }
-}
-
 interface Props {
   onSave: () => void
   onExportCsv: () => void
@@ -269,7 +232,7 @@ export function ReviewActionBar({
       // Rotations chosen in review are written first (to the current names), then files are renamed
       const rotated = await writeRotations(dirHandle, photoRows.filter((r) => rowsToRename.some((x) => x.photoId === r.photoId)), folderNames, renameCompanions)
       if (rotated.entries.length) {
-        await saveRotationLog([...(await getRotationLog(dirHandle)), ...rotated.entries], dirHandle)
+        await appendRotationLog(dirHandle, rotated.entries)
         const byId = new Map(rotated.rows.map((r) => [r.photoId, r]))
         setPhotoRows(useProcessingStore.getState().photoRows.map((r) => byId.get(r.photoId) ?? r))
       }
@@ -347,7 +310,7 @@ export function ReviewActionBar({
       const folderNames: string[] = []
       for await (const [name, entry] of dirHandle.entries()) if (entry.kind === 'file') folderNames.push(name)
       const rotated = await writeRotations(dirHandle, rowsToActOn, folderNames, renameCompanions)
-      await saveRotationLog([...(await getRotationLog(dirHandle)), ...rotated.entries], dirHandle)
+      await appendRotationLog(dirHandle, rotated.entries)
       const byId = new Map(rotated.rows.map((r) => [r.photoId, r]))
       const rows = useProcessingStore.getState().photoRows.map((r) => byId.get(r.photoId) ?? r)
       setPhotoRows(rows)

@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { appendRotationLog, listFolder, writeRotations } from '@/lib/rotationWrite'
 import { toast } from 'sonner'
 import { runLocalOcr } from '@/lib/ocr/runLocal'
 import { calculateFinalNames } from '@/lib/nameCalculator'
@@ -423,7 +424,23 @@ export function useProcessTab() {
         processing.setProgress(Math.floor((done / total) * 100), `Read ${done}/${total} photos · ~${eta}s left`)
       }, abortController.signal)
       if (abortController.signal.aborted) return
-      const rows = calculateFinalNames(result.rows, settings.mainColumn, settings.suffixMode, settings.customSuffixes)
+      let rows = calculateFinalNames(result.rows, settings.mainColumn, settings.suffixMode, settings.customSuffixes)
+      let turned = 0
+      if (settings.autoRotate && currentDirHandle) {
+        // write the suggested rotations now (photo and RAW files); Review shows them as applied
+        processing.setProgress(100, 'Turning photos upright…')
+        const written = await writeRotations(currentDirHandle, rows, await listFolder(currentDirHandle), true)
+        await appendRotationLog(currentDirHandle, written.entries)
+        rows = written.rows
+        turned = rows.filter((r) => r.rotApplied && r.rotApplied !== '0').length
+        // fresh File objects: the written files changed
+        const freshEntries = await getImageFilesFromHandle(currentDirHandle, fileType)
+        const selectedNames = useProcessingStore.getState().selectedImageNames
+        processing.setImageFiles(freshEntries, false)
+        processing.setSelectedImageNames(selectedNames)
+        const fresh = new Map(freshEntries.map((e) => [e.name, e.file]))
+        processing.setFileMap(new Map(rows.flatMap((r) => (fresh.has(r.currentPath) ? [[r.from, fresh.get(r.currentPath)!]] : []))))
+      }
       processing.setPhotoRows(rows)
       processing.setOcrReadings(result.readings)
       const csvName = `${folderName || currentDirHandle?.name || 'results'}_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.csv`
@@ -434,7 +451,7 @@ export function useProcessTab() {
       if (currentDirHandle) await saveCsvToFolder(currentDirHandle, csvName, csvText)
       const review = rows.filter((r) => r.review).length
       processing.setProgress(100, `Done: ${rows.length - review} ready, ${review} to review`)
-      toast.success(`Read ${rows.length} photos: ${rows.length - review} ready to rename, ${review} to review.`)
+      toast.success(`Read ${rows.length} photos: ${rows.length - review} ready to rename, ${review} to review${turned ? ` · turned ${turned} upright` : ''}.`)
       if (result.database.source === 'bundled') toast.warning('Could not reach the specimen database; used the copy bundled with the app.')
     } catch (e: unknown) {
       toast.error(`Reading failed: ${getErrorMessage(e)}`)

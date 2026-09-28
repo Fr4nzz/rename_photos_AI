@@ -32,8 +32,10 @@ Use Chrome or Edge. Opening a folder with write access, which rotating and renam
 1. **1 · Select & Rotate:**
    - Open the photo folder.
    - Filter and select the photos.
-   - Rotate any that need it; this is lossless.
-2. **2 · Read:** click **Read CAMIDs**. Photos are read in the background, at about 1 s per photo on a laptop.
+   - Rotate any that need it by hand; this is lossless. With Auto-rotate on, step 2 does this for you.
+2. **2 · Read:** click **Run PaddleOCR**. Photos are read in the background, at about 1 s per photo on a laptop.
+   - With **Auto-rotate** on (the default), each photo and its RAW files are then turned so the envelope text is upright. Only the orientation tag changes; Undo in step 1 or Restore reverts it.
+   - Photos whose ID could not be read, or is not in the database, are left as they are.
 3. **3 · Review & Rename:**
    - The tab opens on the photos that need a person.
    - Confirm or correct each one: press Enter, click the check mark, or click a suggestion.
@@ -42,7 +44,7 @@ Use Chrome or Edge. Opening a folder with write access, which rotating and renam
 
 ## Gemini Mode
 
-Switch the reader to Gemini (the sparkle button next to **Read CAMIDs**) to use the original prompt-based workflow with your API key.
+Switch the reader to Gemini (the sparkle button next to **Run PaddleOCR**) to use the original prompt-based workflow with your API key.
 
 ## Gemini Defaults
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react'
 import { toast } from 'sonner'
-import { FolderOpen, RotateCcw, Undo2, Wand2 } from 'lucide-react'
+import { FolderOpen, RotateCcw, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -13,9 +13,7 @@ import {
 } from '@/components/ui/select'
 import { useProcessingStore } from '@/stores/processingStore'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { BROWSER_ROTATABLE_EXTENSIONS, SUPPORTED_RAW_EXTENSIONS } from '@/lib/constants'
-import { companionsOf, indexByStem } from '@/lib/renamePlan'
-import { suggestRotations } from '@/lib/ocr/autoRotate'
+import { BROWSER_ROTATABLE_EXTENSIONS } from '@/lib/constants'
 import {
   getImageFilesFromHandle,
   getImageFilesFromInput,
@@ -85,7 +83,6 @@ export function SelectImagesTab() {
   const [extensionFilter, setExtensionFilter] = useState('all')
   const [sortOption, setSortOption] = useState<ImageSortOption>('name-asc')
   const [busy, setBusy] = useState(false)
-  const [autoProgress, setAutoProgress] = useState<string | null>(null)
   const [rotationPreview, setRotationPreview] = useState<{ original: string | null; rotated: string | null }>({
     original: null,
     rotated: null,
@@ -293,70 +290,6 @@ export function SelectImagesTab() {
     ;(failed.length ? toast.warning : toast.success)(parts.join(' · '))
   }
 
-  /** Read the CAMID of each selected photo and turn it (and its RAW files) so the envelope text is upright. */
-  async function autoRotateSelected() {
-    if (!dirHandle) {
-      toast.error('Open a folder first.')
-      return
-    }
-    const selected = imageFiles.filter((entry) => selectedImageNames.has(entry.name))
-    if (selected.length === 0) return
-    // read one file per photo (the JPEG when there is one); RAW files follow it
-    const byStem = new Map<string, (typeof selected)[number]>()
-    for (const entry of selected) {
-      const stem = entry.name.slice(0, entry.name.lastIndexOf('.')).toLowerCase()
-      const known = byStem.get(stem)
-      if (!known || (SUPPORTED_RAW_EXTENSIONS.has(known.extension) && !SUPPORTED_RAW_EXTENSIONS.has(entry.extension))) byStem.set(stem, entry)
-    }
-    const photos = [...byStem.values()]
-
-    setBusy(true)
-    setAutoProgress(`0/${photos.length}`)
-    try {
-      const turns = await suggestRotations(photos.map((p) => p.file), (done, total) => setAutoProgress(`${done}/${total}`))
-      const folderNames: string[] = []
-      for await (const [name, handle] of dirHandle.entries()) if (handle.kind === 'file') folderNames.push(name)
-      const stems = indexByStem(folderNames)
-
-      const entries: RotationLogEntry[] = []
-      const unsure: string[] = []
-      let turned = 0
-      let upright = 0
-      for (const photo of photos) {
-        const angle = turns.get(photo.name) ?? null
-        if (angle === null) { unsure.push(photo.name); continue }
-        if (angle === 0) { upright++; continue }
-        turned++
-        for (const name of [photo.name, ...companionsOf(photo.name, stems, SUPPORTED_RAW_EXTENSIONS)]) {
-          try {
-            // the UI angle is clockwise; orientation angles are counter-clockwise
-            const tag = await rotateLossless(await dirHandle.getFileHandle(name), -angle)
-            if (tag) entries.push({ original: name, method: 'tag', before: tag.before, after: tag.after, angle, timestamp: new Date().toISOString() })
-          } catch (error: unknown) {
-            console.warn(`Could not rotate ${name}: ${getErrorMessage(error)}`)
-          }
-        }
-      }
-
-      const nextLog = [...rotationLog, ...entries]
-      setRotationLog(nextLog)
-      await saveRotationLog(nextLog, dirHandle)
-      clearPreviewCache()
-      await refreshFiles()
-
-      const unsureNames = new Set(selected.filter((e) => unsure.some((u) => u.slice(0, u.lastIndexOf('.')).toLowerCase() === e.name.slice(0, e.name.lastIndexOf('.')).toLowerCase())).map((e) => e.name))
-      toast.success(`Turned ${turned} · ${upright} already upright${unsure.length ? ` · ${unsure.length} unsure` : ''}`, unsure.length ? {
-        duration: 15000,
-        action: { label: 'Select unsure', onClick: () => setSelectedImageNames(unsureNames) },
-      } : undefined)
-    } catch (error: unknown) {
-      toast.error(`Auto rotate failed: ${getErrorMessage(error)}`)
-    } finally {
-      setBusy(false)
-      setAutoProgress(null)
-    }
-  }
-
   async function undoRotations() {
     if (!dirHandle || rotationLog.length === 0) {
       toast.info('No browser rotation log to undo.')
@@ -475,13 +408,8 @@ export function SelectImagesTab() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Actions</Label>
-              <div className="grid grid-cols-3 gap-2">
-                <Button size="sm" onClick={autoRotateSelected} disabled={busy || selectedImageNames.size === 0} className="h-8 gap-1.5 px-2 text-xs"
-                  title="Read each photo's CAMID and turn it so the envelope text is upright (RAW files follow)">
-                  <Wand2 className="h-3.5 w-3.5" />
-                  {autoProgress ?? 'Auto'}
-                </Button>
-                <Button size="sm" variant="outline" onClick={rotateSelectedImages} disabled={busy || selectedImageNames.size === 0} className="h-8 gap-1.5 px-2 text-xs">
+              <div className="grid grid-cols-2 gap-2">
+                <Button size="sm" onClick={rotateSelectedImages} disabled={busy || selectedImageNames.size === 0} className="h-8 gap-1.5 px-2 text-xs">
                   <RotateCcw className="h-3.5 w-3.5" />
                   Rotate
                 </Button>
