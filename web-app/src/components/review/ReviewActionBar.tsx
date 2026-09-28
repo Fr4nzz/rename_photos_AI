@@ -203,7 +203,8 @@ export function ReviewActionBar({
   }
 
   // Rename files in-place using File System Access API
-  const handleRenameFiles = async () => {
+  // 'both': write waiting rotations, then rename; 'rename': names only
+  const handleRenameFiles = async (mode: 'both' | 'rename' = 'both') => {
     if (!supportsDirectoryPicker()) {
       toast.error('File rename requires Chrome or Edge browser')
       return
@@ -213,7 +214,7 @@ export function ReviewActionBar({
     const rowsToRename = rowsToActOn.filter((r) => r.to?.trim() && r.skip !== 'x' && r.status !== 'Renamed' && !r.review)
     const waiting = rowsToActOn.filter((r) => r.review && r.skip !== 'x').length
     if (waiting) toast.info(`${waiting} photo(s) still need review and will keep their names.`)
-    if (rowsToRename.length === 0) {
+    if (rowsToRename.length === 0 && (mode === 'rename' || pendingCount === 0)) {
       toast.error('No files to rename. Calculate names first.')
       return
     }
@@ -229,8 +230,12 @@ export function ReviewActionBar({
       for await (const [name, entry] of dirHandle.entries()) if (entry.kind === 'file') folderNames.push(name)
       const stems = indexByStem(folderNames)
 
-      // Rotations chosen in review are written first (to the current names), then files are renamed
-      const rotated = await writeRotations(dirHandle, photoRows.filter((r) => rowsToRename.some((x) => x.photoId === r.photoId)), folderNames, renameCompanions)
+      // Every rotation still waiting in view is written first (to the current names, also for photos
+      // renamed earlier or still in review), then files are renamed
+      const inView = new Set(rowsToActOn.map((r) => r.photoId))
+      const toTurn = mode === 'both' ? photoRows.filter((r) => inView.has(r.photoId)) : []
+      const turned = toTurn.filter((r) => r.skip !== 'x' && pendingRotation(r)).length
+      const rotated = await writeRotations(dirHandle, toTurn, folderNames, renameCompanions)
       if (rotated.entries.length) {
         await appendRotationLog(dirHandle, rotated.entries)
         const byId = new Map(rotated.rows.map((r) => [r.photoId, r]))
@@ -289,7 +294,7 @@ export function ReviewActionBar({
       // Refresh file references so thumbnails use fresh File objects
       await refreshFileMapFromDir(dirHandle, updatedRows)
 
-      if (renamed) toast.success(`Renamed ${renamed} files in-place`)
+      if (renamed || turned) toast.success([renamed && `Renamed ${renamed} files`, turned && `rotated ${turned} photo(s)`].filter(Boolean).join(' · '))
       logger.info(`Renamed ${renamed} files, ${rowsToRename.length - renamed} skipped`)
     } catch (e: unknown) {
       if (getErrorName(e) !== 'AbortError') {
@@ -492,18 +497,33 @@ export function ReviewActionBar({
                 title="Write the chosen rotations to the photos (and their RAW files) without renaming"
               >
                 <RotateCw className="h-3.5 w-3.5" />
-                {pendingCount}
+                Rotate {pendingCount}
+              </Button>
+            )}
+
+            {pendingCount > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1 text-xs"
+                onClick={() => handleRenameFiles('rename')}
+                disabled={!hasData || isRenaming}
+                title="Rename only; the chosen rotations stay waiting"
+              >
+                <FileEdit className="h-3.5 w-3.5" />
+                Rename
               </Button>
             )}
 
             <Button
               size="sm"
               className="gap-1 text-xs"
-              onClick={handleRenameFiles}
+              onClick={() => handleRenameFiles('both')}
               disabled={!hasData || isRenaming}
+              title={pendingCount ? 'Write the chosen rotations (photos and RAW files), then rename' : 'Rename the photos and their RAW files'}
             >
               <FileEdit className="h-3.5 w-3.5" />
-              Rename Files
+              {pendingCount ? 'Rename & rotate' : 'Rename'}
             </Button>
 
             <Button

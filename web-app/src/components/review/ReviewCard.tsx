@@ -75,8 +75,9 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
     <Card id={`card-${row.photoId}`} className={`overflow-hidden${row.review ? ' ring-2 ring-amber-500' : isDuplicate ? ' ring-2 ring-amber-500/50' : ''}`}>
       <CardHeader className="px-3 py-2 pb-1">
         <div className="flex items-center justify-between gap-2">
-          <CardTitle className="truncate text-xs font-medium">
-            {row.from}
+          <CardTitle className="min-w-0 truncate text-xs font-medium" title={row.currentPath !== row.from ? `was ${row.from}` : undefined}>
+            {row.currentPath}
+            {row.currentPath !== row.from && <span className="ml-1.5 font-normal text-muted-foreground">{row.from}</span>}
           </CardTitle>
           <div className="flex items-center gap-1 flex-shrink-0">
             {isDuplicate && (
