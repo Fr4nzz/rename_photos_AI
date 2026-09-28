@@ -411,7 +411,7 @@ export function useProcessTab() {
     abortRef.current = abortController
     const baseRows: PhotoRow[] = files.map((entry, i) => ({
       from: entry.name, currentPath: entry.name, photoId: i + 1, mainValue: '', co: '', n: '', skip: '',
-      to: '', suffix: '', batchNumber: 0, captureDate: null, status: 'Original', review: '', suggest: '',
+      to: '', suffix: '', batchNumber: 0, captureDate: null, status: 'Original', review: '', suggest: '', rotSuggested: '', rotChosen: '', rotSource: '', rotApplied: '',
     }))
     processing.setPhotoRows(baseRows)
     processing.setFileMap(new Map(files.map((entry) => [entry.name, entry.file])))
@@ -501,6 +501,10 @@ export function useProcessTab() {
         status: 'Original',
         review: '',
         suggest: '',
+        rotSuggested: '',
+        rotChosen: '',
+        rotSource: '',
+        rotApplied: '',
       }))
 
       // Continue mode: merge existing CSV data into rows

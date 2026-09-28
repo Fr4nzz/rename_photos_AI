@@ -4,6 +4,7 @@ import type { PhotoRow } from '@/types'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useProcessingStore } from '@/stores/processingStore'
 import { calculateFinalNames } from '@/lib/nameCalculator'
+import { applyLearnedOffsets } from '@/lib/rotationPlan'
 import {
   listStoredCsvs,
   loadCsvFromStorage,
@@ -145,6 +146,10 @@ export function useReviewTab() {
       status: 'Original',
       review: '',
       suggest: '',
+      rotSuggested: '',
+      rotChosen: '',
+      rotSource: '',
+      rotApplied: '',
     }))
 
     const text = toCsvString(rows, mainColumn)
@@ -255,6 +260,9 @@ export function useReviewTab() {
       if ('mainValue' in updates || 'skip' in updates) {
         // final names follow every edit (no separate Recalculate step)
         rows = calculateFinalNames(rows, mainColumn, suffixMode, customSuffixes)
+      } else if ('rotChosen' in updates) {
+        // a manual turn may confirm a session-wide offset (e.g. envelopes lying sideways)
+        rows = applyLearnedOffsets(rows)
       } else if ('suffix' in updates) {
         rows = rows.map((r) => r.photoId === photoId && r.mainValue.trim()
           ? { ...r, to: `${r.mainValue.trim()}${r.suffix}${r.from.slice(r.from.lastIndexOf('.'))}` } : r)

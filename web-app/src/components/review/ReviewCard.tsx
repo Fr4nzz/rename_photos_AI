@@ -6,7 +6,9 @@ import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { useProcessingStore } from '@/stores/processingStore'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { loadImagePreview, cropCanvas } from '@/lib/imageProcessing'
+import { loadImagePreview, cropCanvas, rotateCanvas } from '@/lib/imageProcessing'
+import { pendingRotation } from '@/lib/rotationPlan'
+import { RotationBadge } from './RotationBadge'
 import type { PhotoRow } from '@/types'
 import { Check, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -21,7 +23,9 @@ interface Props {
 
 export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
   const fileMap = useProcessingStore((s) => s.fileMap)
-  const { reviewCropEnabled, reviewThumbSize, cropSettings } = useSettingsStore()
+  const { reviewCropEnabled, reviewThumbSize, cropSettings, engine } = useSettingsStore()
+  // the preview shows the photo turned by the rotation still to be written
+  const pending = pendingRotation(row)
   const [thumbUrl, setThumbUrl] = useState<string | null>(null)
   const file = fileMap.get(row.from)
 
@@ -37,9 +41,11 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
         const canvas = await loadImagePreview(file, 800)
         if (cancelled) return
 
-        const output = reviewCropEnabled && cropSettings.zoom
+        // the Gemini crop only applies to Gemini grids; local readings show the whole photo
+        const cropped = engine === 'gemini' && reviewCropEnabled && cropSettings.zoom
           ? cropCanvas(canvas, cropSettings)
           : canvas
+        const output = pending ? rotateCanvas(cropped, pending) : cropped
 
         output.toBlob((blob) => {
           if (cancelled || !blob) return
@@ -56,7 +62,7 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
       cancelled = true
       if (urlToRevoke) URL.revokeObjectURL(urlToRevoke)
     }
-  }, [file, reviewCropEnabled, cropSettings])
+  }, [file, reviewCropEnabled, cropSettings, engine, pending])
 
   const statusColor =
     row.status === 'Renamed'
@@ -92,7 +98,8 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
       <CardContent className="flex gap-3 px-3 pb-2">
         {/* Thumbnail caps at the card width, so large slider values wait for wider layouts. */}
         {file && thumbUrl && (
-          <div className="flex-shrink-0" style={{ maxWidth: '50%' }}>
+          <div className="relative flex-shrink-0 self-start leading-none" style={{ maxWidth: '50%' }}>
+            <RotationBadge row={row} onChange={(u) => onUpdate(row.photoId, u)} />
             <img
               src={thumbUrl}
               alt={row.from}
@@ -104,7 +111,7 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
 
         {/* Fields */}
         <div className="min-w-0 flex-1 space-y-1.5">
-          {file && <IdLineZoom name={row.from} file={file} camid={row.mainValue.trim()} />}
+          {file && <IdLineZoom name={row.from} file={file} camid={row.mainValue.trim()} applied={Number(row.rotApplied || 0)} />}
           {row.review && (
             <div className="space-y-1 rounded-md bg-amber-500/10 p-1.5">
               <div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">

@@ -8,6 +8,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { companionsOf, indexByStem, planRenames } from '@/lib/renamePlan'
+import { rotateLossless, writeOrientation } from '@/lib/orientation'
+import { pendingRotation } from '@/lib/rotationPlan'
+import { getRotationLog, saveRotationLog } from '@/lib/csvHandler'
+import type { RotationLogEntry } from '@/types'
 import {
   Select,
   SelectContent,
@@ -43,6 +47,7 @@ import {
   FileDown,
   Info,
   FileEdit,
+  RotateCw,
   Undo2,
 } from 'lucide-react'
 
@@ -120,6 +125,43 @@ async function refreshFileMapFromDir(
   }
   useProcessingStore.getState().setFileMap(newFileMap)
   logger.info(`Refreshed fileMap: ${newFileMap.size} entries`)
+}
+
+/**
+ * Write each row's pending rotation (chosen minus already applied) to its photo and RAW companions,
+ * losslessly (EXIF Orientation tag only). Returns the updated rows, log entries and the files that
+ * could not be rotated (no Orientation tag, e.g. HEIC/PNG).
+ */
+async function writeRotations(
+  dirHandle: FileSystemDirectoryHandle,
+  rows: PhotoRow[],
+  folderNames: string[],
+  withCompanions: boolean,
+): Promise<{ rows: PhotoRow[]; entries: RotationLogEntry[]; failed: string[] }> {
+  const stems = indexByStem(folderNames)
+  const entries: RotationLogEntry[] = []
+  const failed: string[] = []
+  const out = rows.map((r) => ({ ...r }))
+  for (const r of out) {
+    const pending = pendingRotation(r)
+    if (!pending || r.skip === 'x') continue
+    const names = [r.currentPath, ...(withCompanions ? companionsOf(r.currentPath, stems, SUPPORTED_RAW_EXTENSIONS) : [])]
+    let mainDone = false
+    for (const name of names) {
+      try {
+        // the UI angle is clockwise; orientation angles are counter-clockwise
+        const res = await rotateLossless(await dirHandle.getFileHandle(name), -pending)
+        if (!res) { failed.push(name); continue }
+        entries.push({ original: name, method: 'tag', before: res.before, after: res.after, angle: pending, timestamp: new Date().toISOString() })
+        if (name === r.currentPath) mainDone = true
+      } catch (err: unknown) {
+        failed.push(name)
+        logger.warn(`Could not rotate ${name}: ${getErrorMessage(err)}`)
+      }
+    }
+    if (mainDone) r.rotApplied = String((Number(r.rotApplied || 0) + pending) % 360)
+  }
+  return { rows: out, entries, failed }
 }
 
 interface Props {
@@ -224,6 +266,15 @@ export function ReviewActionBar({
       for await (const [name, entry] of dirHandle.entries()) if (entry.kind === 'file') folderNames.push(name)
       const stems = indexByStem(folderNames)
 
+      // Rotations chosen in review are written first (to the current names), then files are renamed
+      const rotated = await writeRotations(dirHandle, photoRows.filter((r) => rowsToRename.some((x) => x.photoId === r.photoId)), folderNames, renameCompanions)
+      if (rotated.entries.length) {
+        await saveRotationLog([...(await getRotationLog(dirHandle)), ...rotated.entries], dirHandle)
+        const byId = new Map(rotated.rows.map((r) => [r.photoId, r]))
+        setPhotoRows(useProcessingStore.getState().photoRows.map((r) => byId.get(r.photoId) ?? r))
+      }
+      if (rotated.failed.length) toast.warning(`${rotated.failed.length} file(s) have no orientation tag and were not rotated: ${rotated.failed.slice(0, 3).join(', ')}`)
+
       const ops: { src: string; dst: string }[] = []
       for (const row of rowsToRename) {
         ops.push({ src: row.currentPath, dst: row.to })
@@ -263,7 +314,7 @@ export function ReviewActionBar({
 
       // Update row statuses
       const renamedSet = new Set(renameLog.map((e) => e.original))
-      const updatedRows = photoRows.map((r) => {
+      const updatedRows = useProcessingStore.getState().photoRows.map((r) => {
         if (renamedSet.has(r.currentPath)) {
           const entry = renameLog.find((e) => e.original === r.currentPath)
           return { ...r, status: 'Renamed' as const, currentPath: entry?.renamed ?? r.currentPath }
@@ -287,12 +338,35 @@ export function ReviewActionBar({
     }
   }
 
+  // Write the chosen rotations without renaming
+  const pendingCount = rowsToActOn.filter((r) => pendingRotation(r) && r.skip !== 'x').length
+  const handleApplyRotations = async () => {
+    try {
+      const dirHandle = await getReadWriteDirHandle()
+      setIsRenaming(true)
+      const folderNames: string[] = []
+      for await (const [name, entry] of dirHandle.entries()) if (entry.kind === 'file') folderNames.push(name)
+      const rotated = await writeRotations(dirHandle, rowsToActOn, folderNames, renameCompanions)
+      await saveRotationLog([...(await getRotationLog(dirHandle)), ...rotated.entries], dirHandle)
+      const byId = new Map(rotated.rows.map((r) => [r.photoId, r]))
+      const rows = useProcessingStore.getState().photoRows.map((r) => byId.get(r.photoId) ?? r)
+      setPhotoRows(rows)
+      await refreshFileMapFromDir(dirHandle, rows)
+      toast.success(`Rotated ${rotated.entries.length} file(s)${rotated.failed.length ? ` · ${rotated.failed.length} without an orientation tag skipped` : ''}`)
+    } catch (e: unknown) {
+      if (getErrorName(e) !== 'AbortError') toast.error(`Rotation failed: ${getErrorMessage(e)}`)
+    } finally {
+      setIsRenaming(false)
+    }
+  }
+
   // Restore original names using rename log
   const handleRestore = async () => {
     const logDir = await getReadWriteDirHandle().catch(() => null)
     const log = await getRenameLog(logDir)
-    if (log.length === 0) {
-      toast.error('No rename log found. Nothing to restore.')
+    const rotatedBefore = logDir ? (await getRotationLog(logDir)).some((e) => e.method === 'tag') : false
+    if (log.length === 0 && !rotatedBefore) {
+      toast.error('Nothing to restore: no renames or rotations logged in this folder.')
       return
     }
 
@@ -321,7 +395,24 @@ export function ReviewActionBar({
       if (plan.refused.length) toast.warning(`${plan.refused.length} file(s) could not be restored (name taken or file missing)`)
 
       // Clear rename log after restore
-      await saveRenameLog([], dirHandle)
+      if (log.length) await saveRenameLog([], dirHandle)
+
+      // Undo rotations written by this app (latest first); names are mapped back through the rename log
+      const rotations = await getRotationLog(dirHandle)
+      const originalOf = new Map(log.map((e) => [e.renamed, e.original]))
+      let unrotated = 0
+      for (const entry of [...rotations].reverse()) {
+        if (entry.method !== 'tag' || entry.before === undefined) continue
+        for (const name of [entry.original, originalOf.get(entry.original)]) {
+          if (!name) continue
+          try {
+            await writeOrientation(await dirHandle.getFileHandle(name), entry.before)
+            unrotated++
+            break
+          } catch { /* try the name before renaming */ }
+        }
+      }
+      if (rotations.length) await saveRotationLog(rotations.filter((e) => e.method !== 'tag'), dirHandle)
 
       // Update row statuses back to Original
       const restoredNames = new Set(log.map((e) => e.renamed))
@@ -331,13 +422,13 @@ export function ReviewActionBar({
           return { ...r, status: 'Original' as const, currentPath: entry?.original ?? r.currentPath }
         }
         return r
-      })
+      }).map((r) => ({ ...r, rotApplied: '' }))
       setPhotoRows(updatedRows)
 
       // Refresh file references so thumbnails use fresh File objects
       await refreshFileMapFromDir(dirHandle, updatedRows)
 
-      toast.success(`Restored ${restored} files to original names`)
+      toast.success(`Restored ${restored} file names${unrotated ? ` and ${unrotated} rotations` : ''}`)
     } catch (e: unknown) {
       if (getErrorName(e) !== 'AbortError') {
         toast.error(`Restore failed: ${getErrorMessage(e)}`)
@@ -428,6 +519,20 @@ export function ReviewActionBar({
         {/* Rename & Restore (FSA API) */}
         {canSaveToFolder && (
           <>
+            {pendingCount > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1 text-xs"
+                onClick={handleApplyRotations}
+                disabled={isRenaming}
+                title="Write the chosen rotations to the photos (and their RAW files) without renaming"
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                {pendingCount}
+              </Button>
+            )}
+
             <Button
               size="sm"
               className="gap-1 text-xs"

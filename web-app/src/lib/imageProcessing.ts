@@ -159,7 +159,10 @@ export async function loadImagePreview(
   maxSize: number,
   applyExif = true
 ): Promise<HTMLCanvasElement> {
-  const key = thumbnailCacheKey(file.name, file.size, file.lastModified, maxSize, applyExif)
+  // Lossless rotation rewrites only the orientation tag, which may leave size and modification time
+  // unchanged (e.g. the browser's private storage), so the tag is part of the cache key.
+  const orientation = applyExif ? ((await readOrientation(file).catch(() => null))?.value ?? 0) : 0
+  const key = `${thumbnailCacheKey(file.name, file.size, file.lastModified, maxSize, applyExif)}|o${orientation}`
   const cached = previewCache.get(key)
   if (cached) {
     rememberPreview(key, cached) // mark as recently used

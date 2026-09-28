@@ -8,6 +8,7 @@ import { loadCamidSet, type CamidSet } from './database'
 import { decide, type Decision, type PhotoInput } from './decide'
 import { readPhotos } from './engine'
 import type { PhotoReading } from './pipeline'
+import { uprightRotation } from '../rotationPlan'
 
 export const REASON_LABEL: Record<string, string> = {
   'no-reading': 'No CAMID read',
@@ -71,6 +72,13 @@ export async function runLocalOcr(
       review: d.auto ? '' : d.reasons.join(','),
       suggest: [d.prefill, ...d.candidates].filter((s, k, a) => s.length === 9 && a.indexOf(s) === k).join(' '),
       captureDate: times[i] ? new Date(times[i]!).toISOString() : row.captureDate,
+      ...(() => {
+        // an ID that is not in the database may be a misread of an upside-down line: no suggestion
+        const rot = d.reasons.includes('not-in-database') ? null : uprightRotation(reading, d.camid ?? reading?.camid ?? null)
+        return rot === null
+          ? { rotSuggested: '', rotChosen: '', rotSource: '' as const }
+          : { rotSuggested: String(rot), rotChosen: String(rot), rotSource: 'ocr' as const }
+      })(),
       batchNumber: 0,
     }
   })

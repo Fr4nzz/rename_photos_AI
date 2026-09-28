@@ -49,6 +49,14 @@ export interface PhotoRow {
   review: string
   /** local OCR: suggested CAMIDs, best first, space-separated */
   suggest: string
+  /** clockwise rotation that makes the photo upright, from the CAMID reading ('' = unknown) */
+  rotSuggested: string
+  /** clockwise rotation to use for this photo ('' = none) */
+  rotChosen: string
+  /** where rotChosen came from: the reader, a manual change, or learned from manual changes */
+  rotSource: '' | 'ocr' | 'manual' | 'learned'
+  /** clockwise rotation already written to the file(s) by this app ('' = none) */
+  rotApplied: string
 }
 
 export interface RotationLogEntry {

@@ -96,6 +96,10 @@ export function parseCsv(csvText: string, mainColumn: string): PhotoRow[] {
       status: (obj['status'] as PhotoRow['status']) || 'Original',
       review: obj['review'] ?? '',
       suggest: obj['suggest'] ?? '',
+      rotSuggested: obj['rot_suggested'] ?? '',
+      rotChosen: obj['rot_chosen'] ?? '',
+      rotSource: (obj['rot_source'] ?? '') as PhotoRow['rotSource'],
+      rotApplied: obj['rot_applied'] ?? '',
     })
   }
 
@@ -109,6 +113,7 @@ export function toCsvString(rows: PhotoRow[], mainColumn: string): string {
   const headers = [
     'from', 'photo_ID', mainColumn, 'co', 'n', 'skip', 'to', 'suffix',
     'batch_number', 'status', 'current_path', 'review', 'suggest',
+    'rot_suggested', 'rot_chosen', 'rot_source', 'rot_applied',
   ]
   const lines = [headers.join(',')]
 
@@ -127,6 +132,7 @@ export function toCsvString(rows: PhotoRow[], mainColumn: string): string {
       escapeCsv(row.currentPath),
       escapeCsv(row.review ?? ''),
       escapeCsv(row.suggest ?? ''),
+      row.rotSuggested ?? '', row.rotChosen ?? '', row.rotSource ?? '', row.rotApplied ?? '',
     ]
     lines.push(values.join(','))
   }

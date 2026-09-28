@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useProcessingStore } from '@/stores/processingStore'
-import { loadImagePreview } from '@/lib/imageProcessing'
+import { loadImagePreview, rotateCanvas } from '@/lib/imageProcessing'
 import { camidLikeness } from '@/lib/ocr/decide'
 import { normalizeReading } from '@/lib/ocr/pipeline'
 
 /** Enlarged crop of the line the reader took the CAMID from (or the most CAMID-like line). */
-export function IdLineZoom({ name, file, camid }: { name: string; file: File; camid: string }) {
+export function IdLineZoom({ name, file, camid, applied = 0 }: { name: string; file: File; camid: string; applied?: number }) {
   const reading = useProcessingStore((s) => s.ocrReadings.get(name))
   const [url, setUrl] = useState<string | null>(null)
 
@@ -16,7 +16,9 @@ export function IdLineZoom({ name, file, camid }: { name: string; file: File; ca
     let cancelled = false
     let made: string | null = null
     ;(async () => {
-      const canvas = await loadImagePreview(file, 1600)
+      // line boxes refer to the photo as it was read; undo rotations written to the file since then
+      const preview = await loadImagePreview(file, 1600)
+      const canvas = applied % 360 ? rotateCanvas(preview, 360 - (applied % 360)) : preview
       const [W, H] = reading.size
       const s = canvas.width / W
       const pts = line.box.map(([x, y]) => (reading.turned ? [W - x, H - y] : [x, y]))
@@ -47,7 +49,7 @@ export function IdLineZoom({ name, file, camid }: { name: string; file: File; ca
       cancelled = true
       if (made) URL.revokeObjectURL(made)
     }
-  }, [reading, file, camid])
+  }, [reading, file, camid, applied])
 
   if (!url) return null
   return <img src={url} alt="ID line" className="h-14 max-w-full rounded-sm border bg-white object-contain object-left" />
