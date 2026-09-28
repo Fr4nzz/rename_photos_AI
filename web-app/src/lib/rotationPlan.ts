@@ -7,6 +7,7 @@
 import type { PhotoReading } from './ocr/pipeline'
 import type { PhotoRow } from '@/types'
 
+/** 'learned' only appears in results files saved by earlier versions */
 export type RotSource = '' | 'ocr' | 'manual' | 'learned' | 'neighbours'
 
 const norm = (a: number) => ((a % 360) + 360) % 360
@@ -42,41 +43,6 @@ export function sessionsOf(rows: PhotoRow[]): number[][] {
     last = t
   }
   return sessions
-}
-
-/**
- * When at least two manual corrections in a session turn their photos by the same offset from the
- * reader's suggestion (e.g. the envelope always lies sideways next to the wings), apply that offset
- * to the session's other photos that still follow the reader ('ocr') or an earlier learned offset.
- * A single correction stays an exception. Photos already written to disk keep their state.
- */
-export function applyLearnedOffsets(rows: PhotoRow[]): PhotoRow[] {
-  const out = rows.map((r) => ({ ...r }))
-  for (const session of sessionsOf(rows)) {
-    const offsets = new Map<number, number>()
-    for (const i of session) {
-      const r = rows[i]
-      if (r.rotSource === 'manual' && r.rotSuggested !== '') {
-        const off = norm(Number(r.rotChosen || 0) - Number(r.rotSuggested))
-        offsets.set(off, (offsets.get(off) ?? 0) + 1)
-      }
-    }
-    const ranked = [...offsets].sort((a, b) => b[1] - a[1])
-    const learned = ranked.length && ranked[0][1] >= 2 && (ranked.length === 1 || ranked[0][1] > ranked[1][1]) ? ranked[0][0] : null
-    for (const i of session) {
-      const r = out[i]
-      if (r.rotSource !== 'ocr' && r.rotSource !== 'learned') continue
-      if (r.rotSuggested === '') continue
-      if (learned === null || learned === 0) {
-        // no (or a zero) learned offset: back to the reader's suggestion
-        if (r.rotSource === 'learned') { r.rotChosen = r.rotSuggested; r.rotSource = 'ocr' }
-        continue
-      }
-      r.rotChosen = String(norm(Number(r.rotSuggested) + learned))
-      r.rotSource = 'learned'
-    }
-  }
-  return out
 }
 
 /**

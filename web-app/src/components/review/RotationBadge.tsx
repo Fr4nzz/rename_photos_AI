@@ -5,14 +5,14 @@ import { pendingRotation } from '@/lib/rotationPlan'
 const SOURCE = {
   ocr: { Icon: ScanText, text: 'suggested from the envelope text' },
   manual: { Icon: Hand, text: 'set by you (click to go back to the suggestion)' },
-  learned: { Icon: Wand2, text: 'learned from your corrections in this session' },
+  learned: { Icon: Wand2, text: 'learned from corrections (earlier version)' },
   neighbours: { Icon: ArrowLeftRight, text: 'no CAMID read: taken from the photos shot just before and after' },
   '': { Icon: null, text: 'no suggestion (no CAMID read)' },
 } as const
 
 /**
  * Rotation shown on each review card: the clockwise angle used for this photo, where it came from
- * (reader / you / learned), and whether it is already written to the file. Buttons turn it.
+ * (reader / neighbouring photos / you), and whether it is already written to the file. Buttons turn it.
  */
 export function RotationBadge({ row, onChange }: { row: PhotoRow; onChange: (updates: Partial<PhotoRow>) => void }) {
   const chosen = Number(row.rotChosen || 0)
