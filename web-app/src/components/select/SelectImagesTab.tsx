@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react'
 import { toast } from 'sonner'
-import { FolderOpen, RotateCcw, Undo2 } from 'lucide-react'
+import { FolderOpen, Lock, RotateCcw, Undo2 } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -16,6 +17,7 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { BROWSER_ROTATABLE_EXTENSIONS } from '@/lib/constants'
 import {
   getImageFilesFromHandle,
+  folderAccessHelp,
   getImageFilesFromInput,
   openDirectoryPicker,
   supportsDirectoryPicker,
@@ -162,6 +164,7 @@ export function SelectImagesTab() {
 
   async function openFolder() {
     if (!supportsDirectoryPicker()) {
+      toast.info('Your browser will ask to "upload" the folder: the photos stay on this computer, nothing is sent anywhere.', { duration: 8000 })
       fileInputRef.current?.click()
       return
     }
@@ -340,6 +343,17 @@ export function SelectImagesTab() {
         <div className="text-sm text-muted-foreground">
           {dirHandle ? dirHandle.name : inputFolderName || 'No folder selected'}
         </div>
+        {!dirHandle && !supportsDirectoryPicker() && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-400">
+                <Lock className="h-3 w-3" />
+                Read-only
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">{folderAccessHelp()}</TooltipContent>
+          </Tooltip>
+        )}
         <div className="flex items-center gap-2">
           <Checkbox
             id="select-raw"

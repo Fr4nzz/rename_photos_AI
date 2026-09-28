@@ -35,7 +35,7 @@ import {
   getRenameLog,
   type RenameLogEntry,
 } from '@/lib/csvHandler'
-import { supportsDirectoryPicker, getImageFilesFromHandle } from '@/lib/fileAccess'
+import { folderAccessHelp, supportsDirectoryPicker, getImageFilesFromHandle } from '@/lib/fileAccess'
 import { SUPPORTED_RAW_EXTENSIONS } from '@/lib/constants'
 import { getErrorMessage, getErrorName } from '@/lib/errors'
 import { logger } from '@/lib/logger'
@@ -67,7 +67,7 @@ async function getReadWriteDirHandle(): Promise<FileSystemDirectoryHandle> {
   }
   // Fallback: ask user to pick the folder
   if (!window.showDirectoryPicker) {
-    throw new Error('Directory picker is not supported in this browser.')
+    throw new Error(folderAccessHelp())
   }
   return await window.showDirectoryPicker({
     id: 'photo-rename',

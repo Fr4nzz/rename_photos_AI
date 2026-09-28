@@ -8,6 +8,7 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { useApiKeysStore } from '@/stores/apiKeysStore'
 import { useProcessingStore } from '@/stores/processingStore'
 import {
+  folderAccessHelp,
   supportsDirectoryPicker,
   openDirectoryPicker,
   getImageFilesFromHandle,
@@ -426,6 +427,9 @@ export function useProcessTab() {
       if (abortController.signal.aborted) return
       let rows = calculateFinalNames(result.rows, settings.mainColumn, settings.suffixMode, settings.customSuffixes)
       let turned = 0
+      if (settings.autoRotate && !currentDirHandle) {
+        toast.info(`Rotations are suggested in Review but cannot be written: ${folderAccessHelp()}`, { duration: 12000 })
+      }
       if (settings.autoRotate && currentDirHandle) {
         // write the suggested rotations now (photo and RAW files); Review shows them as applied
         processing.setProgress(100, 'Turning photos upright…')

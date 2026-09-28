@@ -5,6 +5,14 @@ export function supportsDirectoryPicker(): boolean {
   return 'showDirectoryPicker' in window
 }
 
+/** How to get a writable folder in this browser (Brave hides the folder API behind a flag). */
+export function folderAccessHelp(): string {
+  const brave = 'brave' in navigator
+  return brave
+    ? 'Brave keeps folders read-only by default. To rotate and rename files in place, open brave://flags/#file-system-access-api, enable it and restart Brave (or use Chrome or Edge).'
+    : 'This browser can only read folders. To rotate and rename files in place, use Chrome or Edge.'
+}
+
 export function supportsSaveFilePicker(): boolean {
   return 'showSaveFilePicker' in window
 }

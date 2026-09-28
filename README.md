@@ -29,6 +29,8 @@ Use Chrome or Edge. Opening a folder with write access, which rotating and renam
 
 ## Recommended Workflow
 
+Use Chrome or Edge, or Brave with `brave://flags/#file-system-access-api` enabled. Other browsers can only read a folder (they ask to "upload" it, but nothing leaves the computer), so rotating and renaming in place is not available there.
+
 1. **1 · Select & Rotate:**
    - Open the photo folder.
    - Filter and select the photos.
