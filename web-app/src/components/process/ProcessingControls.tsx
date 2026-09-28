@@ -16,14 +16,20 @@ import { Cpu, Play, ScanText, Sparkles, Square, Wand2 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { listStoredCsvs } from '@/lib/csvHandler'
 import type { RunMode } from '@/types'
+import type { ReactNode } from 'react'
+import type { useProcessTab } from '@/hooks/useProcessTab'
+import { GeminiDialog } from './GeminiDialog'
 
 interface Props {
   onStart: () => void
   onStop: () => void
   hasImages: boolean
+  /** folder controls shown at the start of the bar */
+  children?: ReactNode
+  geminiHook: ReturnType<typeof useProcessTab>
 }
 
-export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
+export function ProcessingControls({ onStart, onStop, hasImages, children, geminiHook }: Props) {
   const { modelName, engine, autoRotate, updateSetting } = useSettingsStore()
   const { apiKeys } = useApiKeysStore()
   const {
@@ -49,8 +55,10 @@ export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
   const canStart = hasImages && !isProcessing && (local || (apiKeys.length > 0 && !!modelName))
 
   return (
-    <div className="border-t bg-card px-4 py-2 space-y-2">
-      <div className="flex items-center gap-3">
+    <div className="space-y-2 border-b bg-card px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {children}
+        <div className="flex-1" />
         <div className="flex rounded-md border p-0.5" role="radiogroup" aria-label="Reader">
           {([['local', Cpu, 'On this computer: built-in CAMID reader, no API key, photos stay local'],
              ['gemini', Sparkles, 'Gemini: sends photo grids to Google with your API key']] as const).map(([value, Icon, tip]) => (
@@ -74,6 +82,7 @@ export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
           ))}
         </div>
         {!local && (<>
+        <GeminiDialog hook={geminiHook} />
         <Select
           value={runMode}
           onValueChange={(v) => setRunMode(v as RunMode)}
@@ -117,7 +126,6 @@ export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
         )}
 
         </>)}
-        <div className="flex-1" />
 
         {isProcessing ? (
           <Button variant="destructive" size="sm" onClick={onStop} className="gap-1.5">
@@ -143,7 +151,7 @@ export function ProcessingControls({ onStart, onStop, hasImages }: Props) {
               </TooltipTrigger>
               <TooltipContent>
                 {autoRotate
-                  ? 'On: after reading, each photo (and its RAW) is turned so the envelope text is upright. Lossless; Undo in step 1 or Restore reverts it.'
+                  ? 'On: after reading, each photo (and its RAW) is turned so the envelope text is upright. Lossless; Undo or Restore reverts it.'
                   : 'Off: rotations are only suggested in Review and written when you rename.'}
               </TooltipContent>
             </Tooltip>

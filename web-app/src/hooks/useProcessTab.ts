@@ -468,7 +468,7 @@ export function useProcessTab() {
   const startProcessing = useCallback(async () => {
     if (settings.engine === 'local') return startLocalProcessing()
     if (apiKeys.length === 0) {
-      toast.error('No API keys configured. Go to the API Keys tab.')
+      toast.error('No API keys configured: add them in Gemini settings (the gear button).')
       return
     }
     // Re-read directory for fresh File objects (handles renamed/restored files)

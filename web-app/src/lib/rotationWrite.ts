@@ -52,7 +52,7 @@ async function writeRotations(
   return { rows: out, entries, failed }
 }
 
-/** Add entries to the folder's rotation log (so Undo in Select & Rotate and Restore can revert them). */
+/** Add entries to the folder's rotation log (so Undo and Restore can revert them). */
 export async function appendRotationLog(dirHandle: FileSystemDirectoryHandle, entries: RotationLogEntry[]) {
   if (!entries.length) return
   const log = [...(await getRotationLog(dirHandle)), ...entries]

@@ -2,15 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 import { Check } from 'lucide-react'
 import { loadImagePreview, canvasToBlobUrl } from '@/lib/imageProcessing'
 import { getErrorMessage } from '@/lib/errors'
-import type { FileEntry } from '@/types'
+import type { FileEntry, PhotoRow } from '@/types'
 
 interface CardProps {
   entry: FileEntry
   selected: boolean
   onToggle: () => void
+  /** the reading of this photo, once read */
+  row?: PhotoRow
+  onOpen?: (photoId: number) => void
 }
 
-function ImageSelectionCard({ entry, selected, onToggle }: CardProps) {
+function ImageSelectionCard({ entry, selected, onToggle, row, onOpen }: CardProps) {
   const [thumb, setThumb] = useState<string | null>(null)
   const [nearView, setNearView] = useState(false)
   const ref = useRef<HTMLButtonElement>(null)
@@ -54,7 +57,7 @@ function ImageSelectionCard({ entry, selected, onToggle }: CardProps) {
       ref={ref}
       type="button"
       onClick={onToggle}
-      className={`overflow-hidden rounded border bg-card text-left transition ${selected ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-primary/60'}`}
+      className={`overflow-hidden rounded border bg-card text-left transition ${selected ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-primary/60'}${row?.review ? ' outline outline-2 outline-offset-1 outline-amber-500' : ''}`}
     >
       <div className="relative">
         {thumb ? (
@@ -75,9 +78,22 @@ function ImageSelectionCard({ entry, selected, onToggle }: CardProps) {
       </div>
       <div className="space-y-0.5 p-2">
         <div className="truncate text-xs font-medium">{entry.name}</div>
-        <div className="text-[10px] text-muted-foreground">
-          {entry.extension.toUpperCase()} · {new Date(entry.file.lastModified).toLocaleDateString()}
-        </div>
+        {row ? (
+          <span
+            role="link"
+            tabIndex={0}
+            onClick={(e) => { e.stopPropagation(); onOpen?.(row.photoId) }}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onOpen?.(row.photoId) } }}
+            className={`block truncate font-mono text-[11px] hover:underline ${row.review ? 'text-amber-600 dark:text-amber-400' : row.mainValue ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}
+            title="Open in review"
+          >
+            {row.status === 'Renamed' ? row.currentPath : row.mainValue ? `${row.mainValue}${row.suffix}` : '·······'}
+          </span>
+        ) : (
+          <div className="text-[10px] text-muted-foreground">
+            {entry.extension.toUpperCase()} · {new Date(entry.file.lastModified).toLocaleDateString()}
+          </div>
+        )}
       </div>
     </button>
   )
@@ -87,9 +103,11 @@ interface Props {
   files: FileEntry[]
   selectedNames: Set<string>
   onToggle: (name: string) => void
+  rows?: Map<string, PhotoRow>
+  onOpen?: (photoId: number) => void
 }
 
-export function ImageSelectionGrid({ files, selectedNames, onToggle }: Props) {
+export function ImageSelectionGrid({ files, selectedNames, onToggle, rows, onOpen }: Props) {
   if (files.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
@@ -106,6 +124,8 @@ export function ImageSelectionGrid({ files, selectedNames, onToggle }: Props) {
           entry={entry}
           selected={selectedNames.has(entry.name)}
           onToggle={() => onToggle(entry.name)}
+          row={rows?.get(entry.name)}
+          onOpen={onOpen}
         />
       ))}
     </div>

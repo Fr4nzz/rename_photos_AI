@@ -31,22 +31,21 @@ Use Chrome or Edge. Opening a folder with write access, which rotating and renam
 
 Use Chrome or Edge, or Brave with `brave://flags/#file-system-access-api` enabled. Other browsers can only read a folder (they ask to "upload" it, but nothing leaves the computer), so rotating and renaming in place is not available there.
 
-1. **1 · Select & Rotate:**
-   - Open the photo folder.
-   - Filter and select the photos.
-   - Rotate any that need it by hand; this is lossless. With Auto-rotate on, step 2 does this for you.
-2. **2 · Read:** click **Run PaddleOCR**. Photos are read in the background, at about 1 s per photo on a laptop.
-   - With **Auto-rotate** on (the default), each photo and its RAW files are then turned so the envelope text is upright. Only the orientation tag changes; Undo in step 1 or Restore reverts it.
+Everything happens in one view:
+
+1. **Open folder**, then filter and select the photos in the grid. The ↺ ↻ 180° buttons rotate the selected photos by hand (lossless, RAW files too); the last button undoes rotations.
+2. Click **Run PaddleOCR**. Photos are read in the background, at about 1 s per photo on a laptop.
+   - With **Auto-rotate** on (the default), each photo and its RAW files are then turned so the envelope text is upright. Only the orientation tag changes; Undo or Restore reverts it.
    - Photos whose ID could not be read, or is not in the database, are left as they are.
-3. **3 · Review & Rename:**
-   - The tab opens on the photos that need a person.
+3. The view switches to **Review** (the clipboard button; the grid button goes back to the photos, which now show their CAMIDs, flagged ones outlined; click a CAMID to open its card):
+   - The review opens on the photos that need a person.
    - Confirm or correct each one: press Enter, click the check mark, or click a suggestion.
    - The strip at the top shows every CAMID in shooting order, so gaps and repeats stand out.
    - Click **Rename Files**.
 
 ## Gemini Mode
 
-Switch the reader to Gemini (the sparkle button next to **Run PaddleOCR**) to use the original prompt-based workflow with your API key.
+Switch the reader to Gemini (the sparkle button next to **Run PaddleOCR**) to use the original prompt-based workflow with your API key. The gear button that appears opens its settings: prompt, grids, model and API keys.
 
 ## Gemini Defaults
 

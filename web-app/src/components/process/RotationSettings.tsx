@@ -52,9 +52,6 @@ export function RotationSettings() {
         </Label>
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        File rotation is handled in Select Images so it can use the current selection and undo log.
-      </p>
     </div>
   )
 }

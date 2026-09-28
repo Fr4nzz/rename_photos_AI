@@ -1,17 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react'
 import { toast } from 'sonner'
-import { FolderOpen, Lock, RotateCcw, Undo2 } from 'lucide-react'
+import { ClipboardCheck, FolderOpen, LayoutGrid, Lock, RefreshCw, RotateCcw, RotateCw, Undo2 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { useProcessingStore } from '@/stores/processingStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { BROWSER_ROTATABLE_EXTENSIONS } from '@/lib/constants'
@@ -23,11 +16,8 @@ import {
   supportsDirectoryPicker,
 } from '@/lib/fileAccess'
 import {
-  canvasToBlobUrl,
   clearPreviewCache,
-  loadImagePreview,
   rotateBrowserImageFile,
-  rotateCanvas,
 } from '@/lib/imageProcessing'
 import { getRotationLog, saveDirHandle, saveRotationLog } from '@/lib/csvHandler'
 import { rotateLossless, writeOrientation } from '@/lib/orientation'
@@ -39,8 +29,11 @@ import {
   sortImageFiles,
   type ImageSortOption,
 } from '@/lib/selection'
-import { ImageSelectionGrid } from './ImageSelectionGrid'
-import { ImageSelectionToolbar } from './ImageSelectionToolbar'
+import { ImageSelectionGrid } from '@/components/select/ImageSelectionGrid'
+import { ImageSelectionToolbar } from '@/components/select/ImageSelectionToolbar'
+import { ProcessingControls } from '@/components/process/ProcessingControls'
+import { ReviewPane } from '@/components/review/ReviewPane'
+import { useProcessTab } from '@/hooks/useProcessTab'
 import type { RotationLogEntry } from '@/types'
 
 const ROTATION_BACKUP_DIR = 'rotation_backups'
@@ -65,7 +58,22 @@ function isPlaywrightPickerIntercept(error: unknown): boolean {
     && getErrorMessage(error).includes('Intercepted by Page.setInterceptFileChooserDialog')
 }
 
-export function SelectImagesTab() {
+export function PhotosView() {
+  const hook = useProcessTab()
+  const photoRows = useProcessingStore((s) => s.photoRows)
+  const isProcessing = useProcessingStore((s) => s.isProcessing)
+  const [view, setView] = useState<'photos' | 'review'>('photos')
+  const [focus, setFocus] = useState<{ photoId: number } | null>(null)
+  const rowsByName = useMemo(() => new Map(photoRows.map((r) => [r.from, r])), [photoRows])
+  const reviewCount = photoRows.filter((r) => r.review).length
+
+  // a finished read opens the review
+  const wasProcessing = useRef(false)
+  useEffect(() => {
+    if (wasProcessing.current && !isProcessing && photoRows.length) setView('review')
+    wasProcessing.current = isProcessing
+  }, [isProcessing, photoRows.length])
+
   const {
     imageFiles,
     selectedImageNames,
@@ -78,17 +86,13 @@ export function SelectImagesTab() {
     rotationLog,
     setRotationLog,
   } = useProcessingStore()
-  const { rotationAngle, useExif, previewRaw, updateSetting } = useSettingsStore()
+  const { useExif, previewRaw, updateSetting } = useSettingsStore()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
   const [inputFolderName, setInputFolderName] = useState('')
   const [extensionFilter, setExtensionFilter] = useState('all')
   const [sortOption, setSortOption] = useState<ImageSortOption>('name-asc')
   const [busy, setBusy] = useState(false)
-  const [rotationPreview, setRotationPreview] = useState<{ original: string | null; rotated: string | null }>({
-    original: null,
-    rotated: null,
-  })
   const directoryInputProps = {
     webkitdirectory: '',
   } as InputHTMLAttributes<HTMLInputElement>
@@ -108,52 +112,6 @@ export function SelectImagesTab() {
     () => Array.from(new Set(imageFiles.map((entry) => entry.extension))).sort(),
     [imageFiles]
   )
-  const rotationPreviewEntry = useMemo(
-    () => imageFiles.find((entry) => selectedImageNames.has(entry.name)) ?? null,
-    [imageFiles, selectedImageNames]
-  )
-
-  useEffect(() => {
-    let cancelled = false
-    let originalUrl: string | null = null
-    let rotatedUrl: string | null = null
-
-    async function updateRotationPreview() {
-      if (!rotationPreviewEntry) {
-        setRotationPreview({ original: null, rotated: null })
-        return
-      }
-
-      try {
-        const original = await loadImagePreview(rotationPreviewEntry.file, 520, useExif)
-        const rotated = rotateCanvas(original, rotationAngle)
-        const nextOriginalUrl = await canvasToBlobUrl(original)
-        const nextRotatedUrl = await canvasToBlobUrl(rotated)
-
-        if (cancelled) {
-          URL.revokeObjectURL(nextOriginalUrl)
-          URL.revokeObjectURL(nextRotatedUrl)
-          return
-        }
-
-        originalUrl = nextOriginalUrl
-        rotatedUrl = nextRotatedUrl
-        setRotationPreview({ original: nextOriginalUrl, rotated: nextRotatedUrl })
-      } catch (error: unknown) {
-        if (!cancelled) setRotationPreview({ original: null, rotated: null })
-        console.warn(`Could not build rotation preview: ${getErrorMessage(error)}`)
-      }
-    }
-
-    updateRotationPreview()
-
-    return () => {
-      cancelled = true
-      if (originalUrl) URL.revokeObjectURL(originalUrl)
-      if (rotatedUrl) URL.revokeObjectURL(rotatedUrl)
-    }
-  }, [rotationAngle, rotationPreviewEntry, useExif])
-
   async function refreshFiles(handle = dirHandle) {
     if (!handle) return
     const files = await getImageFilesFromHandle(handle, previewRaw ? 'all' : 'compressed')
@@ -225,13 +183,9 @@ export function SelectImagesTab() {
     toast.info(`Added ${matches.size} matching image(s).`)
   }
 
-  async function rotateSelectedImages() {
+  async function rotateSelectedImages(rotationAngle: number) {
     if (!dirHandle) {
       toast.error('Open a folder first.')
-      return
-    }
-    if (rotationAngle === 0) {
-      toast.info('Rotation is set to 0°.')
       return
     }
 
@@ -325,25 +279,50 @@ export function SelectImagesTab() {
     toast.success(`Restored ${restored} file(s).`)
   }
 
+  const rotateButtons = (
+    <div className="flex items-center gap-1">
+      {([[-90, RotateCcw, 'Rotate the selected photos 90° counter-clockwise'], [90, RotateCw, 'Rotate the selected photos 90° clockwise'], [180, RefreshCw, 'Rotate the selected photos 180°']] as const).map(([angle, Icon, tip]) => (
+        <Tooltip key={angle}>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="icon" className="h-8 w-8" aria-label={tip} disabled={busy || !dirHandle || selectedImageNames.size === 0}
+              onClick={() => rotateSelectedImages((angle + 360) % 360)}>
+              <Icon className="h-3.5 w-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{tip} (lossless, RAW files too)</TooltipContent>
+        </Tooltip>
+      ))}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="outline" size="icon" className="h-8 w-8" aria-label="Undo rotations" disabled={busy || rotationLog.length === 0} onClick={undoRotations}>
+            <Undo2 className="h-3.5 w-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Undo every rotation written in this folder</TooltipContent>
+      </Tooltip>
+    </div>
+  )
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b p-3">
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          {...directoryInputProps}
-          onChange={(event) => loadFolderFromInput(event.target.files)}
-        />
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        {...directoryInputProps}
+        onChange={(event) => loadFolderFromInput(event.target.files)}
+      />
+
+      <ProcessingControls onStart={hook.startProcessing} onStop={hook.stopProcessing} hasImages={hook.imageFiles.length > 0} geminiHook={hook}>
         <Button variant="outline" size="sm" onClick={openFolder} className="gap-1.5">
           <FolderOpen className="h-3.5 w-3.5" />
-          Open Input Folder
+          Open folder
         </Button>
-        <div className="text-sm text-muted-foreground">
+        <div className="max-w-56 truncate text-sm text-muted-foreground">
           {dirHandle ? dirHandle.name : inputFolderName || 'No folder selected'}
         </div>
-        {!dirHandle && !supportsDirectoryPicker() && (
+        {!dirHandle && inputFolderName && !supportsDirectoryPicker() && (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-400">
@@ -354,123 +333,58 @@ export function SelectImagesTab() {
             <TooltipContent className="max-w-xs">{folderAccessHelp()}</TooltipContent>
           </Tooltip>
         )}
-        <div className="flex items-center gap-2">
-          <Checkbox
-            id="select-raw"
-            checked={previewRaw}
-            onCheckedChange={(checked) => setIncludeRaw(!!checked)}
-          />
-          <Label htmlFor="select-raw" className="text-xs">Include RAW images</Label>
+        <div className="flex items-center gap-1.5">
+          <Checkbox id="select-raw" checked={previewRaw} onCheckedChange={(checked) => setIncludeRaw(!!checked)} />
+          <Label htmlFor="select-raw" className="text-xs">RAW</Label>
         </div>
-      </div>
+        {photoRows.length > 0 && (
+          <div className="ml-2 flex rounded-md border p-0.5" role="radiogroup" aria-label="View">
+            {([['photos', LayoutGrid, 'Photos: select and rotate', null], ['review', ClipboardCheck, 'Review CAMIDs and rename', reviewCount]] as const).map(([value, Icon, tip, count]) => (
+              <Tooltip key={value}>
+                <TooltipTrigger asChild>
+                  <Button variant={view === value ? 'secondary' : 'ghost'} size="sm" role="radio" aria-checked={view === value} aria-label={tip}
+                    onClick={() => setView(value)} className="h-7 gap-1 px-2 text-xs">
+                    <Icon className="h-4 w-4" />
+                    {count ? <span className="text-amber-600 dark:text-amber-400">{count}</span> : null}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{tip}</TooltipContent>
+              </Tooltip>
+            ))}
+          </div>
+        )}
+      </ProcessingControls>
 
-      <ImageSelectionToolbar
-        query={query}
-        onQueryChange={setQuery}
-        extensionFilter={extensionFilter}
-        onExtensionFilterChange={setExtensionFilter}
-        extensions={extensions}
-        sortOption={sortOption}
-        onSortOptionChange={setSortOption}
-        selectedCount={selectedImageNames.size}
-        totalCount={imageFiles.length}
-        onSelectAll={() => setSelectedImageNames(selectAllImageNames(imageFiles))}
-        onClear={() => setSelectedImageNames(new Set())}
-        onInvert={() => setSelectedImageNames(invertImageSelection(imageFiles, selectedImageNames))}
-        onReplaceMatches={replaceMatches}
-        onAddMatches={addMatches}
-      />
-
-      <div className="flex min-h-0 flex-1">
+      {view === 'review' && photoRows.length > 0 ? (
+        <ReviewPane focus={focus} />
+      ) : (<>
+        <ImageSelectionToolbar
+          query={query}
+          onQueryChange={setQuery}
+          extensionFilter={extensionFilter}
+          onExtensionFilterChange={setExtensionFilter}
+          extensions={extensions}
+          sortOption={sortOption}
+          onSortOptionChange={setSortOption}
+          selectedCount={selectedImageNames.size}
+          totalCount={imageFiles.length}
+          onSelectAll={() => setSelectedImageNames(selectAllImageNames(imageFiles))}
+          onClear={() => setSelectedImageNames(new Set())}
+          onInvert={() => setSelectedImageNames(invertImageSelection(imageFiles, selectedImageNames))}
+          onReplaceMatches={replaceMatches}
+          onAddMatches={addMatches}
+          trailing={rotateButtons}
+        />
         <div className="min-h-0 flex-1 overflow-auto">
           <ImageSelectionGrid
             files={visibleFiles}
             selectedNames={selectedImageNames}
             onToggle={toggleSelectedImage}
+            rows={rowsByName}
+            onOpen={(photoId) => { setFocus({ photoId }); setView('review') }}
           />
         </div>
-
-        <aside className="flex w-[420px] shrink-0 flex-col gap-3 overflow-y-auto border-l bg-background p-3">
-          <div>
-            <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Rotation
-            </div>
-            <div className="mt-1 truncate text-xs text-muted-foreground">
-              {rotationPreviewEntry
-                ? `${rotationPreviewEntry.name} · ${rotationAngle}°`
-                : 'Select an image to preview rotation.'}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-[96px_1fr] gap-2">
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Degrees</Label>
-              <Select
-                value={String(rotationAngle)}
-                onValueChange={(value) => updateSetting('rotationAngle', Number(value))}
-              >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="0">0°</SelectItem>
-                  <SelectItem value="90">90°</SelectItem>
-                  <SelectItem value="180">180°</SelectItem>
-                  <SelectItem value="270">270°</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Actions</Label>
-              <div className="grid grid-cols-2 gap-2">
-                <Button size="sm" onClick={rotateSelectedImages} disabled={busy || selectedImageNames.size === 0} className="h-8 gap-1.5 px-2 text-xs">
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  Rotate
-                </Button>
-                <Button variant="outline" size="sm" onClick={undoRotations} disabled={busy || rotationLog.length === 0} className="h-8 gap-1.5 px-2 text-xs">
-                  <Undo2 className="h-3.5 w-3.5" />
-                  Undo
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-                <Checkbox
-                  id="select-exif"
-                  checked={useExif}
-                  onCheckedChange={(checked) => updateSetting('useExif', !!checked)}
-                />
-                <Label htmlFor="select-exif" className="text-xs">Use EXIF</Label>
-          </div>
-
-          <div className="rounded border bg-card p-2">
-            <div className="mb-1 text-xs font-medium text-muted-foreground">Original</div>
-            {rotationPreview.original ? (
-              <img src={rotationPreview.original} alt="Original rotation preview" className="h-56 w-full object-contain bg-muted" />
-            ) : (
-              <div className="flex h-56 items-center justify-center bg-muted text-xs text-muted-foreground">
-                No preview
-              </div>
-            )}
-          </div>
-
-          <div className="rounded border bg-card p-2">
-            <div className="mb-1 text-xs font-medium text-muted-foreground">Rotated</div>
-            {rotationPreview.rotated ? (
-              <img src={rotationPreview.rotated} alt="Rotated preview" className="h-56 w-full object-contain bg-muted" />
-            ) : (
-              <div className="flex h-56 items-center justify-center bg-muted text-xs text-muted-foreground">
-                No preview
-              </div>
-            )}
-          </div>
-
-          <p className="text-xs text-muted-foreground">
-            Rotation is lossless: only the photo's orientation tag changes (JPEG and RAW). Undo restores it.
-          </p>
-        </aside>
-      </div>
+      </>)}
     </div>
   )
 }

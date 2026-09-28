@@ -1,7 +1,7 @@
+import type React from 'react'
 import type { ImageSortOption } from '@/lib/selection'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -25,6 +25,7 @@ interface Props {
   onInvert: () => void
   onReplaceMatches: () => void
   onAddMatches: () => void
+  trailing?: React.ReactNode
 }
 
 export function ImageSelectionToolbar({
@@ -42,22 +43,20 @@ export function ImageSelectionToolbar({
   onInvert,
   onReplaceMatches,
   onAddMatches,
+  trailing,
 }: Props) {
   return (
-    <div className="flex flex-wrap items-end gap-2 border-b p-3">
-      <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">Selected Images</Label>
-        <div className="text-sm font-medium">{selectedCount} / {totalCount}</div>
-      </div>
+    <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+      <div className="text-sm font-medium tabular-nums" title="Selected photos">{selectedCount} / {totalCount}</div>
 
       <Button variant="outline" size="sm" onClick={selectedCount === totalCount ? onClear : onSelectAll}>
         {selectedCount === totalCount ? 'Unselect All' : 'Select All'}
       </Button>
       <Button variant="outline" size="sm" onClick={onInvert}>Invert</Button>
 
-      <div className="min-w-48 flex-1 space-y-1">
-        <Label className="text-xs text-muted-foreground">Filename contains</Label>
+      <div className="min-w-48 flex-1">
         <Input
+          aria-label="Filename contains"
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           className="h-8 text-xs"
@@ -91,6 +90,8 @@ export function ImageSelectionToolbar({
           <SelectItem value="type-asc" className="text-xs">File Type</SelectItem>
         </SelectContent>
       </Select>
+      {trailing && <div className="mx-1 h-5 w-px bg-border" />}
+      {trailing}
     </div>
   )
 }

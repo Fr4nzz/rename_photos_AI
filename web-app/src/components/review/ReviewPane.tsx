@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useReviewTab } from '@/hooks/useReviewTab'
 import { ReviewToolbar } from './ReviewToolbar'
 import { ReviewPagination } from './ReviewPagination'
@@ -5,7 +6,7 @@ import { ReviewGrid } from './ReviewGrid'
 import { ReviewActionBar } from './ReviewActionBar'
 import { IdTimeline } from './IdTimeline'
 
-export function ReviewTab() {
+export function ReviewPane({ focus }: { focus?: { photoId: number } | null }) {
   const hook = useReviewTab()
 
   // jump from the timeline to a photo's card: show it (clearing a filter that hides it), then scroll
@@ -18,6 +19,12 @@ export function ReviewTab() {
     hook.setCurrentPage(Math.floor(Math.max(0, index) / hook.itemsPerPage) + 1)
     setTimeout(() => document.getElementById(`card-${photoId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150)
   }
+
+  // opened from a photo tile: show that photo's card
+  useEffect(() => {
+    if (focus) jumpTo(focus.photoId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus])
 
   return (
     <div className="flex h-full min-h-0 flex-col">
