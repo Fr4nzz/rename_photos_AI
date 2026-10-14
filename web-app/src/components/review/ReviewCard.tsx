@@ -171,8 +171,8 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
                   <span className="font-semibold">{hostChange.id.to}</span>
                 </div>
               )}
-              {hostChange.what.filter((w) => !w.startsWith('ID ')).length > 0 && (
-                <div>{hostChange.what.filter((w) => !w.startsWith('ID ')).join(' · ')}</div>
+              {hostChange.what.some((w) => !w.startsWith('ID ')) && (
+                <div>{[...new Set(hostChange.what.filter((w) => !w.startsWith('ID ')))].join(' · ')}</div>
               )}
             </div>
           )}
