@@ -1,4 +1,4 @@
-import { RefreshCw, Crop, ImageIcon, CheckCheck, Undo2 } from 'lucide-react'
+import { RefreshCw, Crop, ImageIcon, CheckCheck, Undo2, Images, LayoutGrid, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -66,13 +66,26 @@ export function ReviewToolbar({
   reviewCount,
   onConfirmShown,
 }: Props) {
-  const { reviewCropEnabled, reviewThumbSize, updateSetting } = useSettingsStore()
+  const { reviewCropEnabled, reviewThumbSize, reviewLayout, updateSetting } = useSettingsStore()
+  // the controls few people need stay behind «More options» (hidden at first inside another app)
+  const advanced = useProcessingStore((s) => s.advanced)
+  const setAdvanced = useProcessingStore((s) => s.setAdvanced)
   // embedded mode: the rows the hosting page's assistant changed
   const hostChanged = useProcessingStore((s) => s.hostChanges.size)
   const hostName = useProcessingStore((s) => s.hostName)
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+      <div className="flex rounded-md border p-0.5" role="radiogroup" aria-label="Cards">
+        {([['specimens', Images, 'One card per specimen: its photos side by side'], ['photos', LayoutGrid, 'One card per photo']] as const).map(([value, Icon, tip]) => (
+          <Button key={value} variant={reviewLayout === value ? 'secondary' : 'ghost'} size="sm" role="radio" aria-checked={reviewLayout === value}
+            aria-label={tip} title={tip} onClick={() => updateSetting('reviewLayout', value)} className="h-7 w-8 px-0">
+            <Icon className="h-4 w-4" />
+          </Button>
+        ))}
+      </div>
+
+      {advanced && (<>
       <Select value={selectedCsv} onValueChange={onSelectCsv}>
         <SelectTrigger className="h-8 w-56 text-xs">
           <SelectValue placeholder="Select CSV..." />
@@ -95,6 +108,7 @@ export function ReviewToolbar({
       </Button>
 
       <div className="mx-2 h-5 w-px bg-border" />
+      </>)}
 
       <Select value={filter} onValueChange={(v) => onFilterChange(v as FilterType)}>
         <SelectTrigger className="h-8 w-36 text-xs">
@@ -135,6 +149,7 @@ export function ReviewToolbar({
         </Button>
       )}
 
+      {reviewLayout === 'photos' && (
       <Select value={sortOption} onValueChange={(v) => onSortChange(v as SortOption)}>
         <SelectTrigger className="h-8 w-40 text-xs">
           <SelectValue />
@@ -147,9 +162,16 @@ export function ReviewToolbar({
           ))}
         </SelectContent>
       </Select>
+      )}
 
-      <div className="mx-2 h-5 w-px bg-border" />
+      <div className="flex-1" />
+      <Button variant={advanced ? 'secondary' : 'ghost'} size="sm" className="h-8 gap-1.5 text-xs" aria-pressed={advanced}
+        title="Results files, selected photos only, crop and thumbnail size; saving a copy or a ZIP" onClick={() => setAdvanced(!advanced)}>
+        <SlidersHorizontal className="h-3.5 w-3.5" />
+        More options
+      </Button>
 
+      {advanced && (<>
       <div className="flex items-center gap-1.5">
         <Checkbox
           id="review-selected"
@@ -190,6 +212,7 @@ export function ReviewToolbar({
         />
         <span className="text-[10px] text-muted-foreground w-8">{reviewThumbSize}</span>
       </div>
+      </>)}
     </div>
   )
 }

@@ -1,22 +1,41 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useReviewTab } from '@/hooks/useReviewTab'
+import { useSettingsStore } from '@/stores/settingsStore'
+import { groupSpecimens } from '@/lib/specimens'
 import { ReviewToolbar } from './ReviewToolbar'
 import { ReviewPagination } from './ReviewPagination'
 import { ReviewGrid } from './ReviewGrid'
+import { SpecimenGrid } from './SpecimenGrid'
+import { HostChangesStrip } from './HostChangesStrip'
 import { ReviewActionBar } from './ReviewActionBar'
 import { IdTimeline } from './IdTimeline'
 
 export function ReviewPane({ focus }: { focus?: { photoId: number } | null }) {
   const hook = useReviewTab()
+  const { reviewLayout, suffixMode } = useSettingsStore()
+  const bySpecimen = reviewLayout === 'specimens'
+  // by specimen: every photo the filter leaves, grouped (no pages: the ready ones are a line each)
+  const specimens = useMemo(() => (bySpecimen ? groupSpecimens(hook.filteredRows, suffixMode) : []), [bySpecimen, hook.filteredRows, suffixMode])
+  const [open, setOpen] = useState<Set<number>>(new Set())
+  const toggle = (key: number) => setOpen((now) => {
+    const next = new Set(now)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
+  })
 
-  // jump from the timeline to a photo's card: show it (clearing a filter that hides it), then scroll
+  // jump from the strips above to a photo's card: show it (clearing a filter that hides it), then scroll
   const jumpTo = (photoId: number) => {
     let index = hook.filteredRows.findIndex((r) => r.photoId === photoId)
     if (index < 0) {
       hook.setFilter('all')
       index = [...hook.photoRows].sort((a, b) => a.from.localeCompare(b.from)).findIndex((r) => r.photoId === photoId)
     }
-    hook.setCurrentPage(Math.floor(Math.max(0, index) / hook.itemsPerPage) + 1)
+    if (bySpecimen) {
+      const row = hook.photoRows.find((r) => r.photoId === photoId)
+      const group = row && groupSpecimens(hook.photoRows, suffixMode).find((s) => s.rows.some((r) => r.photoId === photoId))
+      if (group) setOpen((now) => new Set(now).add(group.key))
+    } else hook.setCurrentPage(Math.floor(Math.max(0, index) / hook.itemsPerPage) + 1)
     setTimeout(() => document.getElementById(`card-${photoId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150)
   }
 
@@ -45,19 +64,23 @@ export function ReviewPane({ focus }: { focus?: { photoId: number } | null }) {
       />
 
       <IdTimeline rows={hook.photoRows} onJump={jumpTo} />
+      <HostChangesStrip rows={hook.photoRows} onJump={jumpTo} />
 
-      <ReviewPagination
-        currentPage={hook.currentPage}
-        totalPages={hook.totalPages}
-        totalItems={hook.filteredRows.length}
-        onPageChange={hook.setCurrentPage}
-      />
-
-      <ReviewGrid
-        rows={hook.pagedRows}
-        onUpdateRow={hook.updateRow}
-        duplicatePairs={hook.duplicatePairs}
-      />
+      {bySpecimen ? (
+        <SpecimenGrid specimens={specimens} open={open} onToggle={toggle} onUpdateRow={hook.updateRow} onUpdateRows={hook.updateRows} />
+      ) : (<>
+        <ReviewPagination
+          currentPage={hook.currentPage}
+          totalPages={hook.totalPages}
+          totalItems={hook.filteredRows.length}
+          onPageChange={hook.setCurrentPage}
+        />
+        <ReviewGrid
+          rows={hook.pagedRows}
+          onUpdateRow={hook.updateRow}
+          duplicatePairs={hook.duplicatePairs}
+        />
+      </>)}
 
       <ReviewActionBar
         onSave={hook.saveChanges}

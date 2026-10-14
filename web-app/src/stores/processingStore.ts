@@ -30,6 +30,9 @@ interface ProcessingState {
   /** …and, by file, what was changed in each row (shown on its card) and who made them */
   hostChanges: Map<string, HostChange>
   hostName: string
+  /** the controls few people need (results files, the Gemini reader, crop, ZIP) are shown; hidden at first inside another app */
+  advanced: boolean
+  setAdvanced: (value: boolean) => void
   addHostChanges: (changes: HostChange[], by: string) => void
   clearHostChanges: () => void
 
@@ -74,6 +77,8 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
   hostLog: [],
   hostChanges: new Map(),
   hostName: '',
+  advanced: !(typeof window !== 'undefined' && window.parent !== window && new URLSearchParams(window.location.search).has('embed')),
+  setAdvanced: (value) => set({ advanced: value }),
   addHostChanges: (changes, by) =>
     set((state) => {
       const byFile = new Map(state.hostChanges)

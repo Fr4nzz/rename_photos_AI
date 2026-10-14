@@ -25,6 +25,8 @@ export interface AppSettings {
   reviewItemsPerPage: number
   reviewThumbHeight: string
   reviewThumbSize: number
+  /** the review's cards: one per specimen (its photos side by side), or one per photo */
+  reviewLayout: 'specimens' | 'photos'
   previewTileHeight: number
   suffixMode: SuffixMode
   customSuffixes: string

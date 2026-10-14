@@ -77,6 +77,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   reviewItemsPerPage: 50,
   reviewThumbHeight: '720p',
   reviewThumbSize: 180,
+  reviewLayout: 'specimens',
   previewTileHeight: 240,
   suffixMode: 'Standard',
   customSuffixes: 'd,v',

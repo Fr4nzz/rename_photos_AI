@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
-import { Cpu, Play, ScanText, Sparkles, Square, Wand2 } from 'lucide-react'
+import { Cpu, Play, ScanText, Sparkles, Square, Wand2, SlidersHorizontal } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { listStoredCsvs } from '@/lib/csvHandler'
 import type { RunMode } from '@/types'
@@ -52,6 +52,8 @@ export function ProcessingControls({ onStart, onStop, hasImages, children, gemin
   }, [runMode])
 
   const local = engine === 'local'
+  // the choice of reader sits behind the review's «More options» (hidden at first inside another app)
+  const advanced = useProcessingStore((s) => s.advanced)
   const canStart = hasImages && !isProcessing && (local || (apiKeys.length > 0 && !!modelName))
 
   return (
@@ -59,6 +61,13 @@ export function ProcessingControls({ onStart, onStop, hasImages, children, gemin
       <div className="flex flex-wrap items-center gap-2">
         {children}
         <div className="flex-1" />
+        {!advanced && local && (
+          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="More options" title="More options: the other reader, results files, copies"
+            onClick={() => useProcessingStore.getState().setAdvanced(true)}>
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+          </Button>
+        )}
+        {(advanced || !local) && (
         <div className="flex rounded-md border p-0.5" role="radiogroup" aria-label="Reader">
           {([['local', Cpu, 'On this computer: built-in CAMID reader, no API key, photos stay local'],
              ['gemini', Sparkles, 'Gemini: sends photo grids to Google with your API key']] as const).map(([value, Icon, tip]) => (
@@ -81,6 +90,7 @@ export function ProcessingControls({ onStart, onStop, hasImages, children, gemin
             </Tooltip>
           ))}
         </div>
+        )}
         {!local && (<>
         <GeminiDialog hook={geminiHook} />
         <Select

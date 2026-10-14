@@ -270,6 +270,17 @@ export function useReviewTab() {
     [photoRows, setPhotoRows, mainColumn, suffixMode, customSuffixes]
   )
 
+  /** The same change to several photos at once (a specimen's ID typed on its card). */
+  const updateRows = useCallback(
+    (photoIds: number[], updates: Partial<PhotoRow>) => {
+      const ids = new Set(photoIds)
+      let rows = photoRows.map((r) => (ids.has(r.photoId) ? { ...r, ...updates } : r))
+      if ('mainValue' in updates || 'skip' in updates) rows = calculateFinalNames(rows, mainColumn, suffixMode, customSuffixes)
+      setPhotoRows(rows)
+    },
+    [photoRows, setPhotoRows, mainColumn, suffixMode, customSuffixes]
+  )
+
   /** Confirm every shown photo whose CAM field holds a valid CAMID (the rest stay in review). */
   const confirmShown = useCallback(() => {
     const ids = new Set(filteredRows.filter((r) => r.review && /^CAM\d{6}$/.test(r.mainValue.trim())).map((r) => r.photoId))
@@ -329,6 +340,7 @@ export function useReviewTab() {
     createNewCsv,
     loadCsv,
     updateRow,
+    updateRows,
     recalculateNames,
     saveChanges,
     exportCsv,

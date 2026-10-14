@@ -407,12 +407,15 @@ export function ReviewActionBar({
     }
   }
 
+  // the suffix mode, the results file and the copies sit behind the toolbar's «More options»
+  const advanced = useProcessingStore((s) => s.advanced)
   const saveAsInfo = getBrowserSaveAsInstructions()
   const showSaveAsTip = tier === 'zip-fallback'
 
   return (
     <div className="border-t bg-card px-3 py-2 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
+        {advanced && (<>
         {/* Suffix mode */}
         <Select
           value={suffixMode}
@@ -481,6 +484,7 @@ export function ReviewActionBar({
           <FileDown className="h-3.5 w-3.5" />
           Export CSV
         </Button>
+        </>)}
 
         <div className="flex-1" />
 
@@ -537,6 +541,7 @@ export function ReviewActionBar({
               Restore
             </Button>
 
+            {advanced && (<>
             <div className="mx-1 h-5 w-px bg-border" />
 
             <Button
@@ -549,9 +554,11 @@ export function ReviewActionBar({
               <FolderDown className="h-3.5 w-3.5" />
               Save to Folder
             </Button>
+            </>)}
           </>
         )}
 
+        {(advanced || !canSaveToFolder) && (
         <Button
           variant={canSaveToFolder ? 'outline' : 'default'}
           size="sm"
@@ -562,6 +569,7 @@ export function ReviewActionBar({
           <Download className="h-3.5 w-3.5" />
           Download ZIP
         </Button>
+        )}
 
         {showSaveAsTip && (
           <Tooltip>
