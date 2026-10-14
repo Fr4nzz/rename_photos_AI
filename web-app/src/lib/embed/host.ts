@@ -207,6 +207,8 @@ export function startHostBridge() {
       soon()
     }
     if (m.type === 'hello') tell()
+    // The page asks to show a part of the app: the review, when it starts a chat about the batch.
+    if (m.type === 'show') window.dispatchEvent(new CustomEvent('rename:show', { detail: (m as { view?: string }).view }))
     if (m.type === 'command' && typeof m.id === 'string' && typeof m.name === 'string') {
       run(m.name, m.args ?? {}).then(
         (data) => post({ type: 'result', id: m.id, ok: true, data }),

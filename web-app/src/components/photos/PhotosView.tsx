@@ -65,17 +65,30 @@ export function PhotosView() {
   const hook = useProcessTab()
   const photoRows = useProcessingStore((s) => s.photoRows)
   const isProcessing = useProcessingStore((s) => s.isProcessing)
-  const [view, setView] = useState<'photos' | 'review'>('photos')
+  // With results (read, or loaded with the folder) the review is where the work is.
+  const [view, setView] = useState<'photos' | 'review'>(() => (useProcessingStore.getState().photoRows.length ? 'review' : 'photos'))
   const [focus, setFocus] = useState<{ photoId: number } | null>(null)
   const rowsByName = useMemo(() => new Map(photoRows.map((r) => [r.from, r])), [photoRows])
   const reviewCount = photoRows.filter((r) => r.review).length
 
-  // a finished read opens the review
+  // a finished read opens the review, and so do results arriving (the folder's, loaded with it)
   const wasProcessing = useRef(false)
+  const hadRows = useRef(photoRows.length > 0)
   useEffect(() => {
-    if (wasProcessing.current && !isProcessing && photoRows.length) setView('review')
+    if ((wasProcessing.current && !isProcessing && photoRows.length) || (!hadRows.current && photoRows.length && !isProcessing)) setView('review')
     wasProcessing.current = isProcessing
+    hadRows.current = photoRows.length > 0
   }, [isProcessing, photoRows.length])
+  // the assistant changing rows, or the page holding this app asking for it (embed: «Review with Claude»)
+  const hostChanges = useProcessingStore((s) => s.hostLog.length)
+  useEffect(() => {
+    if (hostChanges && photoRows.length) setView('review')
+  }, [hostChanges]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const show = (e: Event) => (e as CustomEvent<string>).detail === 'review' && useProcessingStore.getState().photoRows.length && setView('review')
+    window.addEventListener('rename:show', show)
+    return () => window.removeEventListener('rename:show', show)
+  }, [])
 
   const {
     imageFiles,

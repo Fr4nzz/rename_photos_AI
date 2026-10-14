@@ -17,8 +17,9 @@ import { RotationBadge } from './RotationBadge'
 
 /**
  * The review by specimen: one card per ID with its photos side by side (dorsal, ventral), the ID
- * line of the envelope enlarged, and the ID in large type. The specimens that need a person come
- * first, each open; the rest are a line each, opened with a click (or all at once: «Show all photos»). What is rarely touched (suffix,
+ * line of the envelope enlarged, and the ID in large type. In the order taken (the IDs around a doubtful
+ * one often say what it is) the specimens that need a person are open among the others, a line each,
+ * opened with a click (or all at once: «Show all photos»); «To look at first» puts them first. What is rarely touched (suffix,
  * crossed out, notes, a photo's own ID) sits behind each photo's «more».
  */
 interface Props {
@@ -208,69 +209,105 @@ function SpecimenCard({ specimen, onUpdateRow, onUpdateRows, onClose }: {
 }
 
 const ALL_OPEN_KEY = 'review:all-open'
+const ORDER_KEY = 'review:order'
+
+/** A ready butterfly as one line: its ID, views and files; a click opens its card. */
+function SpecimenLine({ specimen: s, onOpen }: { specimen: Specimen; onOpen: () => void }) {
+  return (
+    <button type="button" onClick={onOpen} data-specimen-line={s.id}
+      className="flex w-full items-center gap-2 rounded-md border bg-card px-2 py-1 text-left text-xs hover:bg-accent">
+      <Check className="h-3.5 w-3.5 flex-shrink-0 text-emerald-600" />
+      <span className="font-mono font-semibold">{s.id}</span>
+      <span className="text-muted-foreground">{s.rows.filter((r) => r.skip !== 'x').map((r) => r.suffix).join(' · ')}</span>
+      <span className="min-w-0 flex-1 truncate text-muted-foreground">{s.rows.map((r) => r.currentPath).join(', ')}</span>
+      <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+    </button>
+  )
+}
 
 export function SpecimenGrid({ specimens, open, onToggle, onUpdateRow, onUpdateRows }: Props) {
   const [shown, setShown] = useState(FIRST)
   // Every butterfly's photos, the ready ones too (to look through the whole batch): kept for next time.
   const [allOpen, setAllOpen] = useState(() => localStorage.getItem(ALL_OPEN_KEY) === '1')
+  // As taken (the doubtful ones among the IDs around them, which often say what a misread ID is), or the doubtful first.
+  const [order, setOrder] = useState<'taken' | 'attention'>(() => (localStorage.getItem(ORDER_KEY) === 'attention' ? 'attention' : 'taken'))
   const [shownReady, setShownReady] = useState(FIRST)
   const showAll = (on: boolean) => {
     setAllOpen(on)
     localStorage.setItem(ALL_OPEN_KEY, on ? '1' : '0')
+  }
+  const sortBy = (value: 'taken' | 'attention') => {
+    setOrder(value)
+    localStorage.setItem(ORDER_KEY, value)
   }
   if (specimens.length === 0) {
     return <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No data to display. Read a folder's photos first.</div>
   }
   const attention = specimens.filter((s) => s.state !== 'ok')
   const ready = specimens.filter((s) => s.state === 'ok')
+  const card = (s: Specimen, closable: boolean) => (
+    <SpecimenCard key={s.key} specimen={s} onUpdateRow={onUpdateRow} onUpdateRows={onUpdateRows} {...(closable ? { onClose: () => onToggle(s.key) } : {})} />
+  )
+  const controls = (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+      <span className="font-medium text-amber-700 dark:text-amber-300">To look at · {attention.length}</span>
+      <span className="text-emerald-700 dark:text-emerald-300">Ready · {ready.length}</span>
+      <span className="ml-auto flex items-center gap-1 text-muted-foreground">
+        Order:
+        {([['taken', 'As taken'], ['attention', 'To look at first']] as const).map(([value, label]) => (
+          <button key={value} type="button" data-order={value} aria-pressed={order === value}
+            className={`rounded px-1.5 py-0.5 ${order === value ? 'bg-secondary font-medium text-foreground' : 'hover:text-foreground'}`}
+            onClick={() => sortBy(value)}>{label}</button>
+        ))}
+      </span>
+      <button type="button" data-show-all className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={() => showAll(!allOpen)}>
+        {allOpen ? 'Show ready as lines' : 'Show all photos'}
+      </button>
+    </div>
+  )
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="space-y-3 p-3">
-        {attention.length > 0 && (
-          <section className="space-y-2" aria-label="To look at">
-            <h3 className="text-xs font-medium text-amber-700 dark:text-amber-300">To look at · {attention.length}</h3>
-            <div className="grid grid-cols-1 gap-2 xl:grid-cols-2 2xl:grid-cols-3">
-              {attention.slice(0, shown).map((s) => <SpecimenCard key={s.key} specimen={s} onUpdateRow={onUpdateRow} onUpdateRows={onUpdateRows} />)}
-            </div>
-            {attention.length > shown && (
-              <Button variant="outline" size="sm" className="text-xs" onClick={() => setShown(shown + FIRST)}>Show {Math.min(FIRST, attention.length - shown)} more</Button>
+        {controls}
+        {order === 'taken' ? (
+          // One list in the order taken: the doubtful ones open (outlined), the ready ones a line each unless all are open.
+          <div className="space-y-1.5" data-order-list="taken">
+            {specimens.slice(0, allOpen ? shownReady + attention.length : specimens.length).map((s) =>
+              s.state !== 'ok' ? card(s, false) : allOpen || open.has(s.key) ? card(s, !allOpen) : <SpecimenLine key={s.key} specimen={s} onOpen={() => onToggle(s.key)} />,
             )}
-          </section>
-        )}
-        {ready.length > 0 && (
-          <section className="space-y-1.5" aria-label="Ready">
-            <h3 className="flex items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-              Ready · {ready.length}
-              <button type="button" data-show-all className="ml-auto font-normal text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={() => showAll(!allOpen)}>
-                {allOpen ? 'Show as lines' : 'Show all photos'}
-              </button>
-            </h3>
-            {allOpen ? (
-              <>
+            {allOpen && specimens.length > shownReady + attention.length && (
+              <Button variant="outline" size="sm" className="text-xs" onClick={() => setShownReady(shownReady + FIRST)}>Show more</Button>
+            )}
+          </div>
+        ) : (
+          <>
+            {attention.length > 0 && (
+              <section className="space-y-2" aria-label="To look at">
                 <div className="grid grid-cols-1 gap-2 xl:grid-cols-2 2xl:grid-cols-3">
-                  {ready.slice(0, shownReady).map((s) => <SpecimenCard key={s.key} specimen={s} onUpdateRow={onUpdateRow} onUpdateRows={onUpdateRows} />)}
+                  {attention.slice(0, shown).map((s) => card(s, false))}
                 </div>
-                {ready.length > shownReady && (
-                  <Button variant="outline" size="sm" className="text-xs" onClick={() => setShownReady(shownReady + FIRST)}>Show {Math.min(FIRST, ready.length - shownReady)} more</Button>
+                {attention.length > shown && (
+                  <Button variant="outline" size="sm" className="text-xs" onClick={() => setShown(shown + FIRST)}>Show {Math.min(FIRST, attention.length - shown)} more</Button>
                 )}
-              </>
-            ) : (
-            <div className="grid grid-cols-1 gap-1.5 xl:grid-cols-2 2xl:grid-cols-3">
-              {ready.map((s) => open.has(s.key)
-                ? <SpecimenCard key={s.key} specimen={s} onUpdateRow={onUpdateRow} onUpdateRows={onUpdateRows} onClose={() => onToggle(s.key)} />
-                : (
-                  <button key={s.key} type="button" onClick={() => onToggle(s.key)} data-specimen-line={s.id}
-                    className="flex items-center gap-2 rounded-md border bg-card px-2 py-1 text-left text-xs hover:bg-accent">
-                    <Check className="h-3.5 w-3.5 flex-shrink-0 text-emerald-600" />
-                    <span className="font-mono font-semibold">{s.id}</span>
-                    <span className="text-muted-foreground">{s.rows.filter((r) => r.skip !== 'x').map((r) => r.suffix).join(' · ')}</span>
-                    <span className="min-w-0 flex-1 truncate text-muted-foreground">{s.rows.map((r) => r.currentPath).join(', ')}</span>
-                    <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-                  </button>
-                ))}
-            </div>
+              </section>
             )}
-          </section>
+            {ready.length > 0 && (
+              <section className="space-y-1.5" aria-label="Ready">
+                {allOpen ? (
+                  <>
+                    <div className="grid grid-cols-1 gap-2 xl:grid-cols-2 2xl:grid-cols-3">{ready.slice(0, shownReady).map((s) => card(s, false))}</div>
+                    {ready.length > shownReady && (
+                      <Button variant="outline" size="sm" className="text-xs" onClick={() => setShownReady(shownReady + FIRST)}>Show {Math.min(FIRST, ready.length - shownReady)} more</Button>
+                    )}
+                  </>
+                ) : (
+                  <div className="grid grid-cols-1 gap-1.5 xl:grid-cols-2 2xl:grid-cols-3">
+                    {ready.map((s) => (open.has(s.key) ? card(s, true) : <SpecimenLine key={s.key} specimen={s} onOpen={() => onToggle(s.key)} />))}
+                  </div>
+                )}
+              </section>
+            )}
+          </>
         )}
       </div>
     </ScrollArea>
