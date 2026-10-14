@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import { restoreSidecar, saveSidecar } from '@/lib/reviewSidecar'
 import { toast } from 'sonner'
 import type { PhotoRow } from '@/types'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -93,8 +94,11 @@ export function useReviewTab() {
       if (!csvName) return
       const text = toCsvString(photoRows, mainColumn)
       await saveCsvToStorage(csvName, text)
-      // Also persist to rename_files/ on disk
-      if (dirHandle) await saveCsvToFolder(dirHandle, csvName, text)
+      // Also persist to rename_files/ on disk, with what the CSV does not hold
+      if (dirHandle) {
+        await saveCsvToFolder(dirHandle, csvName, text)
+        await saveSidecar(dirHandle, csvName)
+      }
       logger.info(`Auto-saved: ${csvName}`)
     }, 2000)
 
@@ -108,7 +112,9 @@ export function useReviewTab() {
         toast.error(`CSV "${name}" not found`)
         return
       }
-      const rows = parseCsv(text, mainColumn)
+      const dir = useProcessingStore.getState().dirHandle
+      const parsed = parseCsv(text, mainColumn)
+      const rows = dir ? await restoreSidecar(dir, name, parsed) : parsed
       setPhotoRows(rows)
       setSelectedCsv(name)
       setCurrentPage(1)

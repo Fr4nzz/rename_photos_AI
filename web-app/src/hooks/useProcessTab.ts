@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { runLocalOcr } from '@/lib/ocr/runLocal'
 import { calculateFinalNames } from '@/lib/nameCalculator'
 import type { PhotoRow } from '@/types'
+import { restoreSidecar, saveSidecar } from '@/lib/reviewSidecar'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useApiKeysStore } from '@/stores/apiKeysStore'
 import { useProcessingStore } from '@/stores/processingStore'
@@ -115,7 +116,8 @@ export function useProcessTab() {
     const text = await loadCsvFromFolder(handle, latest)
     if (text) {
       const { mainColumn } = useSettingsStore.getState()
-      const rows = parseCsv(text, mainColumn)
+      // With what was kept beside it: the reader's results, the photos' times, the assistant's changes.
+      const rows = await restoreSidecar(handle, latest, parseCsv(text, mainColumn))
       if (rows.length > 0) {
         processing.setPhotoRows(rows)
         processing.setCurrentCsvName(latest)
@@ -452,7 +454,10 @@ export function useProcessTab() {
       await saveCsvToStorage(csvName, csvText)
       await saveLastCsvName(csvName)
       processing.setCurrentCsvName(csvName)
-      if (currentDirHandle) await saveCsvToFolder(currentDirHandle, csvName, csvText)
+      if (currentDirHandle) {
+        await saveCsvToFolder(currentDirHandle, csvName, csvText)
+        await saveSidecar(currentDirHandle, csvName)
+      }
       const review = rows.filter((r) => r.review).length
       processing.setProgress(100, `Done: ${rows.length - review} ready, ${review} to review`)
       toast.success(`Read ${rows.length} photos: ${rows.length - review} ready to rename, ${review} to review${turned ? ` · turned ${turned} upright` : ''}.`)
