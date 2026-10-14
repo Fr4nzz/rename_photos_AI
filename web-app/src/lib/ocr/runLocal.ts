@@ -8,7 +8,7 @@ import { loadCamidSet, type CamidSet } from './database'
 import { decide, type Decision, type PhotoInput } from './decide'
 import { readPhotos } from './engine'
 import type { PhotoReading } from './pipeline'
-import { fillFromNeighbours, uprightRotation } from '../rotationPlan'
+import { oneTurn, uprightRotation } from '../rotationPlan'
 import { readOrientation } from '../orientation'
 
 export const REASON_LABEL: Record<string, string> = {
@@ -18,6 +18,7 @@ export const REASON_LABEL: Record<string, string> = {
   'repeated-id': 'Same ID on another photo',
   'unreadable-photo': 'Photo not readable',
   'rotation-outlier': 'Rotation differs from the photos around it',
+  'turn-unsure': 'Which way up? Check the wings: forewings on top',
   assistant: 'Left for you by the assistant',
 }
 
@@ -90,6 +91,11 @@ export async function runLocalOcr(
       batchNumber: 0,
     }
   })
-  // photos the reader could not orient follow their neighbours in the session
-  return { rows: fillFromNeighbours(rows, new Map(files.map((f, i) => [f.name, tags[i]]))), readings, decisions, database }
+  // One turn for the batch, in the camera's own frame, keeping the photos landscape
+  const tagCw = new Map(files.map((f, i) => [f.name, tags[i]]))
+  const wide = new Map(files.map((f) => {
+    const size = readings.get(f.name)?.size
+    return [f.name, size ? size[0] >= size[1] : null] as const
+  }))
+  return { rows: oneTurn(rows, wide, tagCw), readings, decisions, database }
 }

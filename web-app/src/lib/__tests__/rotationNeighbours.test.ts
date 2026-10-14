@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fillFromNeighbours } from '../rotationPlan'
+import { oneTurn } from '../rotationPlan'
 import type { PhotoRow } from '@/types'
 
 const row = (from: string, minute: number, rot: string): PhotoRow => ({
@@ -8,58 +8,27 @@ const row = (from: string, minute: number, rot: string): PhotoRow => ({
   rotSuggested: rot, rotChosen: rot, rotSource: rot === '' ? '' : 'ocr', rotApplied: '',
 })
 
-describe('fillFromNeighbours', () => {
-  it('uses the sensor frame, not the flipping orientation tag', () => {
-    // same camera frame for all: photo 2's tag says 90 cw, so it needs 90 less than its neighbours
-    const rows = [row('a', 0, '180'), row('b', 1, ''), row('c', 2, '180')]
-    const tags = new Map<string, number | null>([['a', 0], ['b', 90], ['c', 0]])
-    expect(fillFromNeighbours(rows, tags)[1]).toMatchObject({ rotChosen: '90', rotSource: 'neighbours' })
+describe('oneTurn', () => {
+  const zero = (rows: PhotoRow[]) => new Map<string, number | null>(rows.map((r) => [r.from, 0]))
+  const wide = (rows: PhotoRow[], w: boolean | null = true) => new Map<string, boolean | null>(rows.map((r) => [r.from, w]))
+  it('gives every photo the turn most envelopes read upright or upside down say, in the camera frame', () => {
+    const rows = [row('a', 0, '180'), row('b', 1, '180'), row('c', 2, '0'), row('d', 3, '180'), row('e', 4, '180'), row('f', 5, ''), row('g', 90, '270')]
+    const tags = new Map<string, number | null>([['a', 0], ['b', 0], ['c', 0], ['d', 0], ['e', 0], ['f', 90], ['g', 0]])
+    const out = oneTurn(rows, new Map([...wide(rows)].map(([k]) => [k, k !== 'f'])), tags)
+    // f shows standing because its tag turns it a quarter: in the camera frame it needs 180 too, so 90 from how it shows.
+    expect(out.map((r) => r.rotChosen)).toEqual(['180', '180', '180', '180', '180', '90', '180'])
+    expect(out.every((r) => r.review === '')).toBe(true)
   })
-
-  it('follows the nearer run at a change of setup and stays within the session', () => {
-    const rows = [row('a', 0, '0'), row('b', 1, '0'), row('x', 2, ''), row('c', 3, '90'), row('d', 60, '270'), row('y', 61, '')]
-    const tags = new Map<string, number | null>(rows.map((r) => [r.from, 0]))
-    const out = fillFromNeighbours(rows, tags)
-    expect(out[2].rotChosen).toBe('0') // two of three nearest read photos say 0
-    expect(out[5].rotChosen).toBe('270') // only its own session counts
+  it('a batch of sideways envelopes stays as shot, landscape, flagged', () => {
+    const rows = [row('a', 0, '270'), row('b', 1, '270'), row('c', 2, '90')]
+    const out = oneTurn(rows, wide(rows), zero(rows))
+    expect(out.map((r) => [r.rotChosen, r.review])).toEqual([['0', 'turn-unsure'], ['0', 'turn-unsure'], ['0', 'turn-unsure']])
   })
-
-  it('leaves manual choices and mirrored tags alone', () => {
-    const rows = [row('a', 0, '90'), { ...row('b', 1, ''), rotSource: 'manual' as const, rotChosen: '180' }, row('c', 2, '')]
-    const out = fillFromNeighbours(rows, new Map<string, number | null>([['a', 0], ['b', 0], ['c', null]]))
-    expect(out[1].rotChosen).toBe('180')
-    expect(out[2].rotChosen).toBe('')
-  })
-  it('flags a photo whose envelope points another way than both neighbours', () => {
-    const rows = [row('a', 0, '90'), row('b', 1, '90'), row('c', 2, '0'), row('d', 3, '90'), row('e', 4, '180')]
-    const tags = new Map<string, number | null>(rows.map((r) => [r.from, 0]))
-    const out = fillFromNeighbours(rows, tags)
-    expect(out[2]).toMatchObject({ rotChosen: '90', rotSource: 'neighbours', review: 'rotation-outlier' })
-    expect(out[4].review).toBe('') // at the end of the session: no second side to compare with
-    expect(out[1].review).toBe('')
-  })
-
-  it('gives a session photographed with one setup one rotation', () => {
-    // two envelopes in a row laid down turned, and one at the end; one photo unread
-    const turns = ['180', '180', '180', '90', '90', '180', '', '180', '90', '180', '180', '180', '180', '180', '180', '180', '0']
-    const rows = turns.map((rot, i) => row(`p${i}`, i, rot))
-    const tags = new Map<string, number | null>(rows.map((r) => [r.from, 0]))
-    tags.set('p8', 90) // the gyro's tag of this one differs: it needs 90 less to end up like the rest
-    const out = fillFromNeighbours(rows, tags)
-    expect(out.map((r) => r.rotChosen)).toEqual(turns.map((_, i) => (i === 8 ? '90' : '180')))
-    expect(out.map((r) => r.review).map((r, i) => (r ? i : -1)).filter((i) => i >= 0)).toEqual([3, 4, 16])
-    expect(out[3].review).toBe('rotation-outlier')
-    expect(out[6].rotSource).toBe('neighbours') // unread: the session's rotation, nothing to review
-    expect(out[0].rotSource).toBe('ocr')
-  })
-
-  it('keeps both rotations of a session with two setups, and a rotation set by hand', () => {
-    const turns = ['0', '0', '0', '0', '90', '90', '90']
-    const rows = turns.map((rot, i) => row(`p${i}`, i, rot))
-    const tags = new Map<string, number | null>(rows.map((r) => [r.from, 0]))
-    expect(fillFromNeighbours(rows, tags).map((r) => [r.rotChosen, r.review])).toEqual(turns.map((t) => [t, '']))
-    const one = ['0', '0', '0', '0', '0', '0', '0', '0', '0', '90'].map((rot, i) => row(`p${i}`, i, rot))
-    one[9] = { ...one[9], rotSource: 'manual' }
-    expect(fillFromNeighbours(one, new Map<string, number | null>(one.map((r) => [r.from, 0])))[9]).toMatchObject({ rotChosen: '90', review: '' })
+  it('a split batch is flagged; manual turns and unknown shapes are left alone', () => {
+    const rows = [row('a', 0, '180'), row('b', 1, '0'), row('c', 2, '180'), { ...row('d', 3, '90'), rotSource: 'manual' as const }, row('e', 4, '0')]
+    const out = oneTurn(rows, new Map([...wide(rows)].map(([k]) => [k, k === 'e' ? null : true])), zero(rows))
+    expect(out.slice(0, 3).map((r) => [r.rotChosen, r.review])).toEqual([['180', 'turn-unsure'], ['180', 'turn-unsure'], ['180', 'turn-unsure']])
+    expect(out[3].rotChosen).toBe('90')
+    expect(out[4].rotChosen).toBe('0')
   })
 })

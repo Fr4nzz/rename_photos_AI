@@ -18,7 +18,7 @@ import { RotationBadge } from './RotationBadge'
 /**
  * The review by specimen: one card per ID with its photos side by side (dorsal, ventral), the ID
  * line of the envelope enlarged, and the ID in large type. The specimens that need a person come
- * first, each open; the rest are a line each, opened with a click. What is rarely touched (suffix,
+ * first, each open; the rest are a line each, opened with a click (or all at once: «Show all photos»). What is rarely touched (suffix,
  * crossed out, notes, a photo's own ID) sits behind each photo's «more».
  */
 interface Props {
@@ -207,8 +207,17 @@ function SpecimenCard({ specimen, onUpdateRow, onUpdateRows, onClose }: {
   )
 }
 
+const ALL_OPEN_KEY = 'review:all-open'
+
 export function SpecimenGrid({ specimens, open, onToggle, onUpdateRow, onUpdateRows }: Props) {
   const [shown, setShown] = useState(FIRST)
+  // Every butterfly's photos, the ready ones too (to look through the whole batch): kept for next time.
+  const [allOpen, setAllOpen] = useState(() => localStorage.getItem(ALL_OPEN_KEY) === '1')
+  const [shownReady, setShownReady] = useState(FIRST)
+  const showAll = (on: boolean) => {
+    setAllOpen(on)
+    localStorage.setItem(ALL_OPEN_KEY, on ? '1' : '0')
+  }
   if (specimens.length === 0) {
     return <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No data to display. Read a folder's photos first.</div>
   }
@@ -230,7 +239,22 @@ export function SpecimenGrid({ specimens, open, onToggle, onUpdateRow, onUpdateR
         )}
         {ready.length > 0 && (
           <section className="space-y-1.5" aria-label="Ready">
-            <h3 className="text-xs font-medium text-emerald-700 dark:text-emerald-300">Ready · {ready.length}</h3>
+            <h3 className="flex items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+              Ready · {ready.length}
+              <button type="button" data-show-all className="ml-auto font-normal text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={() => showAll(!allOpen)}>
+                {allOpen ? 'Show as lines' : 'Show all photos'}
+              </button>
+            </h3>
+            {allOpen ? (
+              <>
+                <div className="grid grid-cols-1 gap-2 xl:grid-cols-2 2xl:grid-cols-3">
+                  {ready.slice(0, shownReady).map((s) => <SpecimenCard key={s.key} specimen={s} onUpdateRow={onUpdateRow} onUpdateRows={onUpdateRows} />)}
+                </div>
+                {ready.length > shownReady && (
+                  <Button variant="outline" size="sm" className="text-xs" onClick={() => setShownReady(shownReady + FIRST)}>Show {Math.min(FIRST, ready.length - shownReady)} more</Button>
+                )}
+              </>
+            ) : (
             <div className="grid grid-cols-1 gap-1.5 xl:grid-cols-2 2xl:grid-cols-3">
               {ready.map((s) => open.has(s.key)
                 ? <SpecimenCard key={s.key} specimen={s} onUpdateRow={onUpdateRow} onUpdateRows={onUpdateRows} onClose={() => onToggle(s.key)} />
@@ -245,6 +269,7 @@ export function SpecimenGrid({ specimens, open, onToggle, onUpdateRow, onUpdateR
                   </button>
                 ))}
             </div>
+            )}
           </section>
         )}
       </div>

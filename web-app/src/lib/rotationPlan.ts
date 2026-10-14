@@ -2,7 +2,8 @@
  * Orientation suggestions from the CAMID reading, manual corrections, and learning from them.
  *
  * Angles are clockwise degrees (0, 90, 180, 270) relative to how the photo currently displays
- * (its EXIF orientation applied). "Envelope text upright" is taken to mean "photo upright".
+ * (its EXIF orientation applied). An envelope read upright or upside down votes for the batch's one
+ * turn (oneTurn); the photos stay landscape, so an envelope laid sideways does not count.
  */
 import type { PhotoReading } from './ocr/pipeline'
 import type { PhotoRow } from '@/types'
@@ -29,112 +30,52 @@ export function pendingRotation(row: Pick<PhotoRow, 'rotChosen' | 'rotApplied'>)
   return norm(Number(row.rotChosen || 0) - Number(row.rotApplied || 0))
 }
 
-const SESSION_GAP_MS = 30 * 60 * 1000
-
-/** Group rows into shooting sessions: consecutive capture times less than 30 minutes apart. */
-export function sessionsOf(rows: PhotoRow[]): number[][] {
-  const order = rows.map((r, i) => ({ i, t: r.captureDate ? Date.parse(r.captureDate) : NaN }))
-    .sort((a, b) => (a.t || Infinity) - (b.t || Infinity) || a.i - b.i)
-  const sessions: number[][] = []
-  let last = NaN
-  for (const { i, t } of order) {
-    if (!sessions.length || isNaN(t) || isNaN(last) || t - last > SESSION_GAP_MS) sessions.push([])
-    sessions[sessions.length - 1].push(i)
-    last = t
-  }
-  return sessions
-}
-
 /**
- * Photos without a trusted reading take their rotation from the read photos around them in the
- * same session (capture order). The comparison is made in the camera's own frame, ignoring the
- * orientation tag: on a copy stand the camera points at the floor, so its gyro-based tag flips
- * between shots while the sensor frame stays the same. `tagCw` gives, per photo, the clockwise
- * turn its current orientation tag applies (null when the tag is mirrored: no suggestion).
- * The majority of the (up to) two nearest read photos on each side wins; a tie goes to the nearest.
- *
- * A read photo whose envelope points another way than the nearest read photos on both sides, while
- * those two agree (e.g. an envelope laid down turned), takes their rotation instead and is flagged
- * 'rotation-outlier' for review.
- *
- * A session photographed with one setup has one rotation: when nearly all of its read photos agree
- * (SESSION_AGREES of at least SESSION_MIN), every photo of the session takes that rotation, and the
- * read ones that differ are flagged 'rotation-outlier' (envelopes laid down turned, however many in
- * a row, and at the session's ends). A session with two setups has no such rotation, and the rules
- * above apply photo by photo.
+ * One turn for the whole batch. On a copy stand the camera stays put, so in its own frame (its
+ * orientation tag ignored: the tag flips between shots) every photo needs the same turn, and the
+ * photos are landscape (the wings side by side, forewings above hindwings): in the camera's frame the
+ * turn is none or a half for a camera whose frame is landscape. The envelopes read upright or upside
+ * down vote between those two; one laid down sideways says nothing. With a clear majority (at least
+ * TURN_MIN votes, TURN_AGREES of them alike) every photo takes it; otherwise they take the one most
+ * voted (none without votes) and are flagged 'turn-unsure': which way up needs a look at the wings.
+ * `landscape`: whether each photo shows landscape now (its tag applied; null: unknown); a manual
+ * turn is left as it is.
  */
-const SESSION_MIN = 3
-const SESSION_AGREES = 0.8
-export function fillFromNeighbours(rows: PhotoRow[], tagCw: Map<string, number | null>): PhotoRow[] {
+const TURN_MIN = 3
+const TURN_AGREES = 0.8
+export function oneTurn(rows: PhotoRow[], landscape: Map<string, boolean | null>, tagCw: Map<string, number | null>): PhotoRow[] {
   const out = rows.map((r) => ({ ...r }))
-  const time = (r: PhotoRow) => (r.captureDate ? Date.parse(r.captureDate) : NaN)
-  // upright orientation of each read photo, in its sensor frame
-  const sensor = (r: PhotoRow): number | null => {
+  /** Whether the camera's own frame is landscape, from how the photo shows and its tag. */
+  const frameWide = (r: PhotoRow): boolean | null => {
+    const wide = landscape.get(r.from)
     const t = tagCw.get(r.from)
-    return r.rotSuggested === '' || t === null || t === undefined ? null : norm(t + Number(r.rotSuggested))
+    return wide === null || wide === undefined || t === null || t === undefined ? null : (norm(t) % 180 === 0) === wide
   }
-  for (const session of sessionsOf(rows)) {
-    const ordered = [...session].sort((a, b) => time(rows[a]) - time(rows[b]))
-    // the session's own rotation, when nearly all of its read photos share it
-    const read = ordered.map((k) => sensor(rows[k])).filter((a): a is number => a !== null)
-    const tally = new Map<number, number>()
-    for (const a of read) tally.set(a, (tally.get(a) ?? 0) + 1)
-    const [agreed, share] = [...tally].sort((x, y) => y[1] - x[1])[0] ?? [0, 0]
-    if (read.length >= SESSION_MIN && share / read.length >= SESSION_AGREES) {
-      for (const k of ordered) {
-        const r = out[k]
-        const t = tagCw.get(r.from)
-        if (t === null || t === undefined || r.rotSource === 'manual') continue
-        const own = sensor(rows[k])
-        if (own === agreed) continue
-        const turn = String(norm(agreed - t))
-        Object.assign(r, { rotSuggested: turn, rotChosen: turn, rotSource: 'neighbours' as const,
-          ...(own === null ? {} : { review: [...r.review.split(',').filter(Boolean), 'rotation-outlier'].join(',') }) })
-      }
-      continue
-    }
-    // outliers among the read photos
-    for (let k = 0; k < ordered.length; k++) {
-      const own = sensor(rows[ordered[k]])
-      const t = tagCw.get(rows[ordered[k]].from)
-      if (own === null || t === null || t === undefined || rows[ordered[k]].rotSource === 'manual') continue
-      const side = (dir: number) => {
-        for (let j = k + dir; j >= 0 && j < ordered.length; j += dir) {
-          const a = sensor(rows[ordered[j]])
-          if (a !== null) return a
-        }
-        return null
-      }
-      const before = side(-1), after = side(1)
-      if (before === null || before !== after || before === own) continue
-      const r = out[ordered[k]]
-      const turn = String(norm(before - t))
-      Object.assign(r, { rotSuggested: turn, rotChosen: turn, rotSource: 'neighbours' as const,
-        review: [...r.review.split(',').filter(Boolean), 'rotation-outlier'].join(',') })
-    }
-    for (let k = 0; k < ordered.length; k++) {
-      const r = out[ordered[k]]
-      const t = tagCw.get(r.from)
-      if (rows[ordered[k]].rotSuggested !== '' || r.rotSource === 'manual' || t === null || t === undefined) continue
-      const near: { a: number; dt: number }[] = []
-      for (const dir of [-1, 1]) {
-        let found = 0
-        for (let j = k + dir; j >= 0 && j < ordered.length && found < 2; j += dir) {
-          const a = sensor(rows[ordered[j]])
-          if (a === null) continue
-          near.push({ a, dt: Math.abs(time(rows[ordered[j]]) - time(rows[ordered[k]])) })
-          found++
-        }
-      }
-      if (!near.length) continue
-      const votes = new Map<number, number>()
-      for (const n of near) votes.set(n.a, (votes.get(n.a) ?? 0) + 1)
-      const top = Math.max(...votes.values())
-      const tied = new Set([...votes].filter(([, v]) => v === top).map(([a]) => a))
-      const pick = near.filter((n) => tied.has(n.a)).sort((x, y) => x.dt - y.dt)[0].a
-      const turn = String(norm(pick - t))
-      Object.assign(r, { rotSuggested: turn, rotChosen: turn, rotSource: 'neighbours' as const })
-    }
+  const fits = (sensorTurn: number, wide: boolean) => (norm(sensorTurn) % 180 === 0) === wide
+  const votes = new Map<number, number>()
+  for (const r of rows) {
+    const t = tagCw.get(r.from)
+    const wide = frameWide(r)
+    if (r.rotSource !== 'ocr' || r.rotSuggested === '' || t === null || t === undefined || wide === null) continue
+    const turn = norm(t + Number(r.rotSuggested))
+    if (fits(turn, wide)) votes.set(turn, (votes.get(turn) ?? 0) + 1)
+  }
+  const total = [...votes.values()].reduce((a, b) => a + b, 0)
+  const [best, most] = [...votes].sort((a, b) => b[1] - a[1])[0] ?? [0, 0]
+  const sure = total >= TURN_MIN && most / total >= TURN_AGREES
+  for (const r of out) {
+    const t = tagCw.get(r.from)
+    const wide = frameWide(r)
+    if (r.rotSource === 'manual' || t === null || t === undefined || wide === null) continue
+    // A camera whose frame stands (not this setup's, usually): the quarter that lays it down.
+    const turn = String(norm((fits(best, wide) ? best : best + 90) - t))
+    const review = r.review.split(',').filter(Boolean).filter((x) => x !== 'rotation-outlier' && x !== 'turn-unsure')
+    Object.assign(r, {
+      rotSuggested: turn,
+      rotChosen: turn,
+      rotSource: r.rotSource === 'ocr' && r.rotSuggested === turn ? 'ocr' : ('neighbours' as const),
+      review: [...review, ...(sure ? [] : ['turn-unsure'])].join(','),
+    })
   }
   return out
 }
