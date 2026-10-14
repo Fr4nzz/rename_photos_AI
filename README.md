@@ -40,7 +40,7 @@ Everything happens in one view:
    - Each RAW file gets exactly the orientation tag of its JPEG, so the pair always matches.
    - A session photographed with one setup has one rotation: when nearly all the read photos of a session (photos taken less than 30 minutes apart) agree, every photo of it takes that rotation. The ones whose envelope pointed another way (an envelope laid down turned, however many in a row) are flagged **Rotation differs from the photos around it**; turn one with ↺/↻ if its envelope was right.
    - In a session with two setups, a photo whose envelope points another way than the photos on both sides of it (which agree) takes their rotation and gets the same flag.
-3. The view switches to **Review** (the clipboard button; the grid button goes back to the photos, which now show their CAMIDs, flagged ones outlined; click a CAMID to open its card):
+3. The view switches to **Review** (the clipboard button; the grid button goes back to the photos, which now show their CAMIDs, flagged ones outlined; click a CAMID to open its card). It shows one card per specimen, its photos side by side under the enlarged ID line of the envelope: the specimens that need a look come first (a photo in doubt, only one photo, three or more), the ready ones are a line each. The two buttons at the left of its toolbar switch to one card per photo; **More options** shows the results files, the suffix mode, the crop and the copies (folder, ZIP).
    - Choose **Needs review** in the filter to see only the photos that need a person.
    - Confirm or correct each one: press Enter, click the check mark, or click a suggestion.
    - The strip at the top shows every CAMID in shooting order, so gaps and repeats stand out.

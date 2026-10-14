@@ -6,6 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useProcessingStore } from '@/stores/processingStore'
+import { useSettingsStore } from '@/stores/settingsStore'
 import { loadImagePreview, rotateCanvas } from '@/lib/imageProcessing'
 import { pendingRotation } from '@/lib/rotationPlan'
 import { REASON_LABEL } from '@/lib/ocr/runLocal'
@@ -155,6 +156,8 @@ function SpecimenCard({ specimen, onUpdateRow, onUpdateRows, onClose }: {
   const ids = specimen.rows.map((r) => r.photoId)
   const waiting = specimen.rows.filter((r) => r.review && r.skip !== 'x').map((r) => r.photoId)
   const ok = specimen.state === 'ok'
+  // dorsal and ventral: only the standard naming expects two photos of a specimen
+  const pairs = useSettingsStore((s) => s.suffixMode === 'Standard')
   return (
     <div className={`space-y-2 rounded-lg border bg-card p-2.5 ${ok ? '' : 'ring-2 ring-amber-500/70'}`} data-specimen={specimen.id || 'none'}>
       <div className="flex items-center gap-2">
@@ -194,7 +197,7 @@ function SpecimenCard({ specimen, onUpdateRow, onUpdateRows, onClose }: {
       <div className="flex gap-2">
         {specimen.rows.map((row) => <PhotoCell key={row.photoId} row={row} onUpdate={(u) => onUpdateRow(row.photoId, u)} />)}
         {/* a specimen has two photos: the place of the one that is not there */}
-        {specimen.state === 'count' && specimen.photos === 1 && specimen.rows.length === 1 && (
+        {pairs && specimen.id && specimen.rows.length === 1 && (
           <div className="flex min-h-28 flex-1 items-center justify-center rounded-sm border border-dashed text-center text-[11px] text-muted-foreground">
             No second photo<br />(dorsal and ventral)
           </div>
