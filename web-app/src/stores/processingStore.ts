@@ -79,7 +79,9 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
       const byFile = new Map(state.hostChanges)
       for (const c of changes) {
         const earlier = byFile.get(c.file)
-        byFile.set(c.file, { file: c.file, what: [...(earlier?.what ?? []), ...c.what], before: { ...c.before, ...(earlier?.before ?? {}) } })
+        // an ID changed twice: from what the reader had to what the host set last
+        const id = c.id && earlier?.id ? { from: earlier.id.from, to: c.id.to } : (c.id ?? earlier?.id)
+        byFile.set(c.file, { file: c.file, what: [...(earlier?.what ?? []), ...c.what], before: { ...c.before, ...(earlier?.before ?? {}) }, ...(id ? { id } : {}) })
       }
       return { hostLog: [...state.hostLog, ...changes], hostChanges: byFile, hostName: by }
     }),

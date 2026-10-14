@@ -44,6 +44,15 @@ export interface HostRow {
   byHost?: string[]
 }
 
+/** The total size of a folder's files, photos and RAW files alike (what an upload of it takes). */
+export async function folderBytes(dir: FileSystemDirectoryHandle): Promise<number> {
+  let bytes = 0
+  for await (const entry of (dir as unknown as { values(): AsyncIterable<FileSystemHandle> }).values()) {
+    if (entry.kind === 'file') bytes += (await (entry as FileSystemFileHandle).getFile()).size
+  }
+  return bytes
+}
+
 export interface HostState {
   version: number
   folder: string | null
@@ -51,6 +60,8 @@ export interface HostState {
   canWrite: boolean
   /** photos in the folder, and those with a row (read, or loaded from a results file) */
   files: number
+  /** the size of everything in the folder, RAW files too (null until it is counted) */
+  folderBytes: number | null
   reading: { on: boolean; percent: number; message: string }
   database: { ids: number; source: string } | null
   rows: HostRow[]
@@ -78,6 +89,8 @@ export interface HostChange {
   file: string
   what: string[]
   before: Partial<PhotoRow>
+  /** the ID it replaced: what the reader (or the person) had, and what the host set */
+  id?: { from: string; to: string }
 }
 
 const lower = (s: string) => s.trim().toLowerCase()
@@ -146,6 +159,7 @@ export function applyEdits(
     const row = found[0]
     const before: Partial<PhotoRow> = {}
     const what: string[] = []
+    let idChange: HostChange['id']
     const set = <K extends keyof PhotoRow>(key: K, value: PhotoRow[K], label: string) => {
       if (row[key] === value) return
       if (!(key in before)) before[key] = row[key]
@@ -159,6 +173,7 @@ export function applyEdits(
         continue
       }
       if (id !== row.mainValue.trim()) {
+        idChange = { from: row.mainValue.trim(), to: id }
         set('mainValue', id, `ID ${row.mainValue.trim() || '(none)'} → ${id}`)
         rename = true
       }
@@ -186,7 +201,7 @@ export function applyEdits(
       set('review', '', 'confirmed')
     }
     if (e.view !== undefined && String(e.view).trim()) views.set(row.photoId, String(e.view).trim().slice(0, 6))
-    if (what.length || views.has(row.photoId)) changes.push({ file: row.from, what: what.filter(Boolean), before })
+    if (what.length || views.has(row.photoId)) changes.push({ file: row.from, what: what.filter(Boolean), before, ...(idChange ? { id: idChange } : {}) })
   }
   if (rename) {
     const named = calculateFinalNames(out, names.mainColumn, names.suffixMode, names.customSuffixes)

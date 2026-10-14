@@ -101,7 +101,7 @@ export function ReviewToolbar({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {FILTERS.map((f) => (
+          {[...FILTERS, ...(hostChanged > 0 ? [{ label: `Changed by ${hostName}`, value: 'byHost' as FilterType }] : [])].map((f) => (
             <SelectItem key={f.value} value={f.value} className="text-xs">
               {f.label}
             </SelectItem>

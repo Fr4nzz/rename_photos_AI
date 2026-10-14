@@ -10,7 +10,7 @@ import { loadImagePreview, cropCanvas, rotateCanvas } from '@/lib/imageProcessin
 import { pendingRotation } from '@/lib/rotationPlan'
 import { RotationBadge } from './RotationBadge'
 import type { PhotoRow } from '@/types'
-import { Check, TriangleAlert } from 'lucide-react'
+import { ArrowRight, Check, Sparkles, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { REASON_LABEL } from '@/lib/ocr/runLocal'
 import { IdLineZoom } from './IdLineZoom'
@@ -152,6 +152,27 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
                     </button>
                   ))}
                 </div>
+              )}
+            </div>
+          )}
+          {/* embedded mode: what the hosting page's assistant changed in this photo */}
+          {hostChange && (
+            <div className="space-y-1 rounded-md bg-sky-500/10 p-1.5 text-[11px] text-sky-800 dark:text-sky-300" data-host-change>
+              <div className="flex items-center gap-1.5 font-medium">
+                <Sparkles className="h-3.5 w-3.5 flex-shrink-0" />
+                <span>Changed by {hostName}</span>
+              </div>
+              {hostChange.id && (
+                <div className="flex flex-wrap items-center gap-1 font-mono">
+                  <span className="text-muted-foreground" title="What the reader had before">Reader:</span>
+                  <span className="line-through decoration-sky-700/60">{hostChange.id.from || '(none)'}</span>
+                  <ArrowRight className="h-3 w-3" />
+                  <span title={`Set by ${hostName}`}>{hostName}:</span>
+                  <span className="font-semibold">{hostChange.id.to}</span>
+                </div>
+              )}
+              {hostChange.what.filter((w) => !w.startsWith('ID ')).length > 0 && (
+                <div>{hostChange.what.filter((w) => !w.startsWith('ID ')).join(' · ')}</div>
               )}
             </div>
           )}

@@ -17,7 +17,7 @@ import {
 } from '@/lib/csvHandler'
 import { logger } from '@/lib/logger'
 
-export type FilterType = 'all' | 'review' | 'crossedOut' | 'hasNotes' | 'skipped' | 'mismatches'
+export type FilterType = 'all' | 'review' | 'crossedOut' | 'hasNotes' | 'skipped' | 'mismatches' | 'byHost'
 export type SortOption =
   | 'name-asc' | 'name-desc'
   | 'batch-asc' | 'batch-desc'
@@ -36,6 +36,8 @@ export function useReviewTab() {
     setReviewSelectedOnly,
   } = useProcessingStore()
 
+  // embedded mode: the rows the hosting page's assistant changed (a filter shows only those)
+  const hostChanges = useProcessingStore((s) => s.hostChanges)
   const [csvFiles, setCsvFiles] = useState<string[]>([])
   const [selectedCsv, setSelectedCsv] = useState('')
   const [filter, setFilter] = useState<FilterType>('all')
@@ -196,6 +198,9 @@ export function useReviewTab() {
       case 'skipped':
         rows = rows.filter((r) => r.skip === 'x')
         break
+      case 'byHost':
+        rows = rows.filter((r) => hostChanges.has(r.from))
+        break
       case 'mismatches': {
         const idCounts = new Map<string, number>()
         const suffixKeys = new Set<string>()
@@ -240,7 +245,7 @@ export function useReviewTab() {
     })
 
     return sorted
-  }, [photoRows, filter, sortOption, reviewSelectedOnly, selectedImageNames])
+  }, [photoRows, filter, sortOption, reviewSelectedOnly, selectedImageNames, hostChanges])
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / reviewItemsPerPage))
   const pagedRows = filteredRows.slice(

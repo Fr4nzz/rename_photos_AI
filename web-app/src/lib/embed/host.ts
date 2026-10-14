@@ -19,7 +19,7 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { canvasToBlob, loadImagePreview, rotateCanvas } from '../imageProcessing'
 import { pendingRotation } from '../rotationPlan'
 import { setHostCamids, hostDatabase } from '../ocr/database'
-import { PROTOCOL_VERSION, applyEdits, snapshotRows, undoEdits, type HostEdit, type HostState } from './protocol'
+import { PROTOCOL_VERSION, applyEdits, folderBytes, snapshotRows, undoEdits, type HostEdit, type HostState } from './protocol'
 import type { PhotoRow } from '@/types'
 
 export const isEmbedded = () =>
@@ -33,6 +33,9 @@ const namesOf = () => {
   return { mainColumn, suffixMode, customSuffixes }
 }
 
+/** The open folder's size, counted once when it is opened. */
+let sized: { dir: FileSystemDirectoryHandle; bytes: number } | null = null
+
 export function hostState(): HostState {
   const s = useProcessingStore.getState()
   const database = hostDatabase()
@@ -41,6 +44,7 @@ export function hostState(): HostState {
     folder: s.dirHandle?.name ?? null,
     canWrite: !!s.dirHandle,
     files: s.imageFiles.length,
+    folderBytes: sized && sized.dir === s.dirHandle ? sized.bytes : null,
     reading: { on: s.isProcessing, percent: Math.round(s.progress.percent), message: s.progress.message },
     database,
     rows: snapshotRows(s.photoRows, s.ocrReadings, s.hostChanges),
@@ -184,6 +188,13 @@ export function startHostBridge() {
     timer = setTimeout(tell, Math.max(250, 1000 - (Date.now() - last)))
   }
   useProcessingStore.subscribe((now, before) => {
+    if (now.dirHandle !== before.dirHandle && now.dirHandle) {
+      const dir = now.dirHandle
+      folderBytes(dir).then((bytes) => {
+        sized = { dir, bytes }
+        soon()
+      }, () => {})
+    }
     if (now.photoRows !== before.photoRows || now.isProcessing !== before.isProcessing || now.progress !== before.progress ||
         now.dirHandle !== before.dirHandle || now.imageFiles !== before.imageFiles || now.hostChanges !== before.hostChanges) soon()
   })

@@ -46,6 +46,9 @@ describe("the host's corrections", () => {
       ['IMG_8.JPG', ['left for you', 'note']],
       ['IMG_1.JPG', ['turned 180°']],
     ])
+    // what the reader had and what was set, for the card
+    expect(changes[0].id).toEqual({ from: 'CAM077008', to: 'CAM077002' })
+    expect(changes[1].id).toBeUndefined()
     expect(problems).toEqual([
       { file: 'IMG_99.JPG', error: 'no photo of that name in the batch' },
       { file: 'IMG_2.JPG', error: 'rotate is 90, 180 or 270 (clockwise)' },
