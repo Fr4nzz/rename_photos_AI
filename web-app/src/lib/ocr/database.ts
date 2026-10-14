@@ -53,9 +53,26 @@ async function fetchLive(): Promise<string[]> {
   return ids
 }
 
-export interface CamidSet { ids: Set<string>; source: 'live' | 'cache' | 'bundled'; updated: string }
+export interface CamidSet { ids: Set<string>; source: 'live' | 'cache' | 'bundled' | 'host'; updated: string }
+
+// Embedded in a database app (lib/embed/host.ts): the IDs come from that app, as it has them now.
+let hostIds: { ids: Set<string>; updated: string } | null = null
+let hostWaiting: (() => void)[] = []
+export function setHostCamids(ids: string[]) {
+  hostIds = { ids: new Set(ids.map((id) => String(id).trim().toUpperCase()).filter(Boolean)), updated: new Date().toISOString() }
+  hostWaiting.forEach((resolve) => resolve())
+  hostWaiting = []
+}
+/** What the host gave, for the state told back to it (null: not embedded, or not given yet). */
+export const hostDatabase = () => (hostIds ? { ids: hostIds.ids.size, source: 'host' } : null)
+const embedded = () => typeof window !== 'undefined' && window.parent !== window && new URLSearchParams(window.location.search).has('embed')
 
 export async function loadCamidSet(): Promise<CamidSet> {
+  if (embedded()) {
+    // the host sends them when the frame says it is ready; a moment's wait covers a slow answer
+    if (!hostIds) await Promise.race([new Promise<void>((resolve) => hostWaiting.push(resolve)), new Promise((resolve) => setTimeout(resolve, 8000))])
+    if (hostIds) return { ids: hostIds.ids, source: 'host', updated: hostIds.updated }
+  }
   try {
     const cached = JSON.parse(localStorage.getItem(CACHE_KEY) ?? 'null') as { ids: string[]; t: number } | null
     if (cached && Date.now() - cached.t < MAX_AGE_MS) {

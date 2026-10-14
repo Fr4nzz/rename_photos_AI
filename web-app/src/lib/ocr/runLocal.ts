@@ -18,6 +18,7 @@ export const REASON_LABEL: Record<string, string> = {
   'repeated-id': 'Same ID on another photo',
   'unreadable-photo': 'Photo not readable',
   'rotation-outlier': 'Rotation differs from the photos around it',
+  assistant: 'Left for you by the assistant',
 }
 
 async function captureTime(file: File): Promise<number | null> {

@@ -6,7 +6,7 @@ const SOURCE = {
   ocr: { Icon: ScanText, text: 'suggested from the envelope text' },
   manual: { Icon: Hand, text: 'set by you (click to go back to the suggestion)' },
   learned: { Icon: Wand2, text: 'learned from corrections (earlier version)' },
-  neighbours: { Icon: ArrowLeftRight, text: 'no CAMID read: taken from the photos shot just before and after' },
+  neighbours: { Icon: ArrowLeftRight, text: 'taken from the other photos of its session' },
   '': { Icon: null, text: 'no suggestion (no CAMID read)' },
 } as const
 

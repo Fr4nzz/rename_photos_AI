@@ -38,12 +38,17 @@ Everything happens in one view:
    - With **Auto-rotate** on (the default), each photo and its RAW files are then turned so the envelope text is upright. Only the orientation tag changes; Undo or Restore reverts it.
    - Photos whose ID could not be read, or is not in the database, take the rotation of the read photos shot just before and after them in the same session. This is compared in the camera's own frame, because on a copy stand the camera's gyro-based orientation tag is unreliable.
    - Each RAW file gets exactly the orientation tag of its JPEG, so the pair always matches.
-   - A photo whose envelope points another way than the photos on both sides of it (which agree) takes their rotation and is flagged **Rotation differs from the photos around it**; turn it with ↺/↻ if the envelope was right.
+   - A session photographed with one setup has one rotation: when nearly all the read photos of a session (photos taken less than 30 minutes apart) agree, every photo of it takes that rotation. The ones whose envelope pointed another way (an envelope laid down turned, however many in a row) are flagged **Rotation differs from the photos around it**; turn one with ↺/↻ if its envelope was right.
+   - In a session with two setups, a photo whose envelope points another way than the photos on both sides of it (which agree) takes their rotation and gets the same flag.
 3. The view switches to **Review** (the clipboard button; the grid button goes back to the photos, which now show their CAMIDs, flagged ones outlined; click a CAMID to open its card):
    - Choose **Needs review** in the filter to see only the photos that need a person.
    - Confirm or correct each one: press Enter, click the check mark, or click a suggestion.
    - The strip at the top shows every CAMID in shooting order, so gaps and repeats stand out.
    - Click **Rename Files**.
+
+## Inside Another App
+
+The app can run in a frame of another page of the same site (address ending in `?embed`; build with `RENAME_APP_BASE=/its/path/`). That page can then give it the database's IDs, follow the batch, ask for small copies of photos and correct rows, so an assistant can double-check the readings before a person renames the files. It never renames or rotates files itself. The messages are described in [web-app/src/lib/embed/host.ts](web-app/src/lib/embed/host.ts).
 
 ## Gemini Mode
 

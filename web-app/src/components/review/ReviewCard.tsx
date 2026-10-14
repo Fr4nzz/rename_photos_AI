@@ -23,6 +23,9 @@ interface Props {
 
 export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
   const fileMap = useProcessingStore((s) => s.fileMap)
+  // embedded mode: what the hosting page's assistant changed in this row
+  const hostChange = useProcessingStore((s) => s.hostChanges.get(row.from))
+  const hostName = useProcessingStore((s) => s.hostName)
   const { reviewCropEnabled, reviewThumbSize, cropSettings, engine } = useSettingsStore()
   // the preview shows the photo turned by the rotation still to be written
   const pending = pendingRotation(row)
@@ -80,6 +83,11 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
             {row.currentPath !== row.from && <span className="ml-1.5 font-normal text-muted-foreground">{row.from}</span>}
           </CardTitle>
           <div className="flex items-center gap-1 flex-shrink-0">
+            {hostChange && (
+              <Badge variant="outline" className="border-sky-500 px-1.5 py-0 text-[10px] text-sky-700 dark:text-sky-400" title={`Changed by ${hostName}: ${hostChange.what.join(' · ')}`}>
+                {hostName}
+              </Badge>
+            )}
             {isDuplicate && (
               <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-500 text-amber-600">
                 Duplicate

@@ -56,7 +56,15 @@ export function sessionsOf(rows: PhotoRow[]): number[][] {
  * A read photo whose envelope points another way than the nearest read photos on both sides, while
  * those two agree (e.g. an envelope laid down turned), takes their rotation instead and is flagged
  * 'rotation-outlier' for review.
+ *
+ * A session photographed with one setup has one rotation: when nearly all of its read photos agree
+ * (SESSION_AGREES of at least SESSION_MIN), every photo of the session takes that rotation, and the
+ * read ones that differ are flagged 'rotation-outlier' (envelopes laid down turned, however many in
+ * a row, and at the session's ends). A session with two setups has no such rotation, and the rules
+ * above apply photo by photo.
  */
+const SESSION_MIN = 3
+const SESSION_AGREES = 0.8
 export function fillFromNeighbours(rows: PhotoRow[], tagCw: Map<string, number | null>): PhotoRow[] {
   const out = rows.map((r) => ({ ...r }))
   const time = (r: PhotoRow) => (r.captureDate ? Date.parse(r.captureDate) : NaN)
@@ -67,6 +75,24 @@ export function fillFromNeighbours(rows: PhotoRow[], tagCw: Map<string, number |
   }
   for (const session of sessionsOf(rows)) {
     const ordered = [...session].sort((a, b) => time(rows[a]) - time(rows[b]))
+    // the session's own rotation, when nearly all of its read photos share it
+    const read = ordered.map((k) => sensor(rows[k])).filter((a): a is number => a !== null)
+    const tally = new Map<number, number>()
+    for (const a of read) tally.set(a, (tally.get(a) ?? 0) + 1)
+    const [agreed, share] = [...tally].sort((x, y) => y[1] - x[1])[0] ?? [0, 0]
+    if (read.length >= SESSION_MIN && share / read.length >= SESSION_AGREES) {
+      for (const k of ordered) {
+        const r = out[k]
+        const t = tagCw.get(r.from)
+        if (t === null || t === undefined || r.rotSource === 'manual') continue
+        const own = sensor(rows[k])
+        if (own === agreed) continue
+        const turn = String(norm(agreed - t))
+        Object.assign(r, { rotSuggested: turn, rotChosen: turn, rotSource: 'neighbours' as const,
+          ...(own === null ? {} : { review: [...r.review.split(',').filter(Boolean), 'rotation-outlier'].join(',') }) })
+      }
+      continue
+    }
     // outliers among the read photos
     for (let k = 0; k < ordered.length; k++) {
       const own = sensor(rows[ordered[k]])

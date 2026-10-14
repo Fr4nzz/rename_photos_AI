@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { FileEntry, PhotoRow, RotationLogEntry, RunMode } from '@/types'
 import type { PhotoReading } from '@/lib/ocr/pipeline'
 import { selectAllImageNames } from '@/lib/selection'
+import type { HostChange } from '@/lib/embed/protocol'
 
 interface ProcessingState {
   photoRows: PhotoRow[]
@@ -24,6 +25,13 @@ interface ProcessingState {
   /** local OCR readings of this session (line boxes for the review zoom), by file name */
   ocrReadings: Map<string, PhotoReading>
   setOcrReadings: (m: Map<string, PhotoReading>) => void
+  /** embedded mode: the corrections made by the page hosting the app, in order (to take them back)… */
+  hostLog: HostChange[]
+  /** …and, by file, what was changed in each row (shown on its card) and who made them */
+  hostChanges: Map<string, HostChange>
+  hostName: string
+  addHostChanges: (changes: HostChange[], by: string) => void
+  clearHostChanges: () => void
 
   setPhotoRows: (rows: PhotoRow[]) => void
   setImageFiles: (files: FileEntry[], selectAll?: boolean) => void
@@ -63,6 +71,19 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
   failedBatches: [],
   ocrReadings: new Map(),
   setOcrReadings: (m) => set({ ocrReadings: m }),
+  hostLog: [],
+  hostChanges: new Map(),
+  hostName: '',
+  addHostChanges: (changes, by) =>
+    set((state) => {
+      const byFile = new Map(state.hostChanges)
+      for (const c of changes) {
+        const earlier = byFile.get(c.file)
+        byFile.set(c.file, { file: c.file, what: [...(earlier?.what ?? []), ...c.what], before: { ...c.before, ...(earlier?.before ?? {}) } })
+      }
+      return { hostLog: [...state.hostLog, ...changes], hostChanges: byFile, hostName: by }
+    }),
+  clearHostChanges: () => set({ hostLog: [], hostChanges: new Map() }),
 
   setPhotoRows: (rows) => set({ photoRows: rows }),
   setImageFiles: (files, selectAll = true) =>
@@ -111,5 +132,7 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
       isProcessing: false,
       progress: { percent: 0, message: '' },
       failedBatches: [],
+      hostLog: [],
+      hostChanges: new Map(),
     }),
 }))

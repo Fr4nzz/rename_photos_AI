@@ -38,4 +38,28 @@ describe('fillFromNeighbours', () => {
     expect(out[4].review).toBe('') // at the end of the session: no second side to compare with
     expect(out[1].review).toBe('')
   })
+
+  it('gives a session photographed with one setup one rotation', () => {
+    // two envelopes in a row laid down turned, and one at the end; one photo unread
+    const turns = ['180', '180', '180', '90', '90', '180', '', '180', '90', '180', '180', '180', '180', '180', '180', '180', '0']
+    const rows = turns.map((rot, i) => row(`p${i}`, i, rot))
+    const tags = new Map<string, number | null>(rows.map((r) => [r.from, 0]))
+    tags.set('p8', 90) // the gyro's tag of this one differs: it needs 90 less to end up like the rest
+    const out = fillFromNeighbours(rows, tags)
+    expect(out.map((r) => r.rotChosen)).toEqual(turns.map((_, i) => (i === 8 ? '90' : '180')))
+    expect(out.map((r) => r.review).map((r, i) => (r ? i : -1)).filter((i) => i >= 0)).toEqual([3, 4, 16])
+    expect(out[3].review).toBe('rotation-outlier')
+    expect(out[6].rotSource).toBe('neighbours') // unread: the session's rotation, nothing to review
+    expect(out[0].rotSource).toBe('ocr')
+  })
+
+  it('keeps both rotations of a session with two setups, and a rotation set by hand', () => {
+    const turns = ['0', '0', '0', '0', '90', '90', '90']
+    const rows = turns.map((rot, i) => row(`p${i}`, i, rot))
+    const tags = new Map<string, number | null>(rows.map((r) => [r.from, 0]))
+    expect(fillFromNeighbours(rows, tags).map((r) => [r.rotChosen, r.review])).toEqual(turns.map((t) => [t, '']))
+    const one = ['0', '0', '0', '0', '0', '0', '0', '0', '0', '90'].map((rot, i) => row(`p${i}`, i, rot))
+    one[9] = { ...one[9], rotSource: 'manual' }
+    expect(fillFromNeighbours(one, new Map<string, number | null>(one.map((r) => [r.from, 0])))[9]).toMatchObject({ rotChosen: '90', review: '' })
+  })
 })

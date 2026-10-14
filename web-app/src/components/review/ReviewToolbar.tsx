@@ -1,4 +1,5 @@
-import { RefreshCw, Crop, ImageIcon, CheckCheck } from 'lucide-react'
+import { RefreshCw, Crop, ImageIcon, CheckCheck, Undo2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -10,6 +11,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { useProcessingStore } from '@/stores/processingStore'
+import { undoHostChanges } from '@/lib/embed/host'
 import type { FilterType, SortOption } from '@/hooks/useReviewTab'
 
 interface Props {
@@ -64,6 +67,9 @@ export function ReviewToolbar({
   onConfirmShown,
 }: Props) {
   const { reviewCropEnabled, reviewThumbSize, updateSetting } = useSettingsStore()
+  // embedded mode: the rows the hosting page's assistant changed
+  const hostChanged = useProcessingStore((s) => s.hostChanges.size)
+  const hostName = useProcessingStore((s) => s.hostName)
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
@@ -113,6 +119,19 @@ export function ReviewToolbar({
         >
           <CheckCheck className="h-3.5 w-3.5" />
           {reviewCount}
+        </Button>
+      )}
+
+      {hostChanged > 0 && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1.5 border-sky-500/60 text-xs"
+          onClick={() => toast.success(`Took back the changes to ${undoHostChanges()} photo(s).`)}
+          title={`Take back every change made by ${hostName} (${hostChanged} photos)`}
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+          {hostName}: {hostChanged}
         </Button>
       )}
 
