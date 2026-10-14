@@ -71,7 +71,7 @@ function PhotoCell({ row, onUpdate }: { row: PhotoRow; onUpdate: (updates: Parti
   const other = hostChange?.what.filter((w) => !w.startsWith('ID ')) ?? []
 
   return (
-    <div id={`card-${row.photoId}`} className={`min-w-0 flex-1 space-y-1 ${skipped ? 'opacity-50' : ''}`}>
+    <div id={`card-${row.photoId}`} className={`min-w-0 max-w-[50%] flex-1 space-y-1 ${skipped ? 'opacity-50' : ''}`}>
       <div className="relative overflow-hidden rounded-sm border bg-muted/40 leading-none">
         {url ? <img src={url} alt={row.from} className="max-h-44 w-full object-contain" /> : <div className="h-28" />}
         {file && <RotationBadge row={row} onChange={onUpdate} />}
@@ -193,6 +193,12 @@ function SpecimenCard({ specimen, onUpdateRow, onUpdateRows, onClose }: {
       </div>
       <div className="flex gap-2">
         {specimen.rows.map((row) => <PhotoCell key={row.photoId} row={row} onUpdate={(u) => onUpdateRow(row.photoId, u)} />)}
+        {/* a specimen has two photos: the place of the one that is not there */}
+        {specimen.state === 'count' && specimen.photos === 1 && specimen.rows.length === 1 && (
+          <div className="flex min-h-28 flex-1 items-center justify-center rounded-sm border border-dashed text-center text-[11px] text-muted-foreground">
+            No second photo<br />(dorsal and ventral)
+          </div>
+        )}
       </div>
     </div>
   )
