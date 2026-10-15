@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useProcessingStore } from '@/stores/processingStore'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { loadImagePreview, rotateCanvas } from '@/lib/imageProcessing'
+import { loadImagePreview } from '@/lib/imageProcessing'
+import { cutView, envelopeBox, wingsBox, type Box } from '@/lib/photoCrops'
 import { pendingRotation } from '@/lib/rotationPlan'
 import { REASON_LABEL } from '@/lib/ocr/runLocal'
 import { WingNotes } from './WingNotes'
@@ -46,22 +47,26 @@ function rawOf(name: string, files: FileEntry[]): File | undefined {
 /** Cards drawn at first; the rest wait for «Show more» (each loads its photos). */
 const FIRST = 40
 
-function useThumb(row: PhotoRow, file: File | undefined) {
+/** A part of a photo (`box`; null: all of it) as the card shows it, as an image address. */
+function usePart(row: PhotoRow, file: File | undefined, box: Box | null) {
   const [url, setUrl] = useState<string | null>(null)
-  const pending = pendingRotation(row)
+  const key = box ? box.map((v) => v.toFixed(3)).join(',') : ''
+  const { rotChosen, rotApplied } = row
   useEffect(() => {
     if (!file) return
     let cancelled = false
     let made: string | null = null
     ;(async () => {
       try {
-        const canvas = await loadImagePreview(file, 800)
+        // a part is cut from the larger copy (the one the reading and the assistant use), so it stays sharp
+        const preview = await loadImagePreview(file, key ? 1600 : 800)
         if (cancelled) return
-        ;(pending ? rotateCanvas(canvas, pending) : canvas).toBlob((blob) => {
+        const part = key ? (key.split(',').map(Number) as Box) : null
+        cutView(preview, { rotChosen, rotApplied }, part).toBlob((blob) => {
           if (cancelled || !blob) return
           made = URL.createObjectURL(blob)
           setUrl(made)
-        }, 'image/jpeg', 0.85)
+        }, 'image/jpeg', 0.88)
       } catch {
         if (!cancelled) setUrl(null)
       }
@@ -70,8 +75,8 @@ function useThumb(row: PhotoRow, file: File | undefined) {
       cancelled = true
       if (made) URL.revokeObjectURL(made)
     }
-  }, [file, pending])
-  return url
+  }, [file, key, rotChosen, rotApplied])
+  return file ? url : null
 }
 
 function PhotoCell({ row, onUpdate }: { row: PhotoRow; onUpdate: (updates: Partial<PhotoRow>) => void }) {
@@ -80,26 +85,35 @@ function PhotoCell({ row, onUpdate }: { row: PhotoRow; onUpdate: (updates: Parti
   const hostName = useProcessingStore((s) => s.hostName)
   const [more, setMore] = useState(false)
   const [viewing, setViewing] = useState(false)
-  const url = useThumb(row, file)
+  // zoomed to the wings (where the wing check found them), the envelope beside; or the whole photo
+  const zoom = useSettingsStore((st) => st.reviewZoom === 'wings')
+  const height = useSettingsStore((st) => st.reviewThumbSize)
+  const check = useProcessingStore((st) => st.wingChecks.get(row.from))
+  const reading = useProcessingStore((st) => st.ocrReadings.get(row.from))
+  const wings = zoom ? wingsBox(check) : null
+  const envelope = wings ? envelopeBox(reading) : null
+  const url = usePart(row, file, wings)
+  const envelopeUrl = usePart(row, envelope ? file : undefined, envelope)
   // its RAW file (shown when the folder's RAW files are), turned as it is now: it should match the photo
   const raw = useProcessingStore((s) => rawOf(row.currentPath, s.imageFiles))
-  const rawUrl = useThumb(row, raw)
+  const rawUrl = usePart(row, raw, wings)
   const skipped = row.skip === 'x'
   const other = hostChange?.what.filter((w) => !w.startsWith('ID ')) ?? []
 
   return (
     <div id={`card-${row.photoId}`} className={`min-w-0 max-w-[50%] flex-1 space-y-1 ${skipped ? 'opacity-50' : ''}`}>
-      <div className="relative overflow-hidden rounded-sm border bg-muted/40 leading-none">
-        {url ? (
-          <button type="button" className="block w-full cursor-zoom-in" title="See it large" onClick={() => setViewing(true)}>
-            <img src={url} alt={row.from} className="max-h-44 w-full object-contain" />
+      <div className="relative flex items-center justify-center gap-1 overflow-hidden rounded-sm border bg-muted/40 leading-none" style={{ height }}>
+        {url && (
+          <button type="button" className="h-full min-w-0 cursor-zoom-in" title="See the whole photo large" onClick={() => setViewing(true)}>
+            <img src={url} alt={row.from} className="h-full max-w-full object-contain" />
           </button>
-        ) : <div className="h-28" />}
+        )}
+        {envelopeUrl && <img src={envelopeUrl} alt={`Envelope of ${row.currentPath}`} title="Its envelope" className="h-full max-w-[40%] flex-shrink object-contain" />}
         {file && viewing && <PhotoViewer open={viewing} onOpenChange={setViewing} title={row.currentPath} file={file} raw={raw} pending={pendingRotation(row)} />}
         {file && <RotationBadge row={row} onChange={onUpdate} />}
         {rawUrl && (
           <figure className="absolute bottom-1 right-1 m-0 overflow-hidden rounded-sm border-2 border-background bg-background shadow" title="Its RAW file, turned as it is now">
-            <img src={rawUrl} alt={`RAW of ${row.currentPath}`} className="h-12 w-auto" />
+            <img src={rawUrl} alt={`RAW of ${row.currentPath}`} className="h-12 max-w-24 w-auto object-contain" />
             <figcaption className="absolute left-0 top-0 bg-background/80 px-0.5 text-[9px] font-semibold leading-3">RAW</figcaption>
           </figure>
         )}

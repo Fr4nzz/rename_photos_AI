@@ -88,3 +88,21 @@ export function oneTurn(rows: PhotoRow[], landscape: Map<string, boolean | null>
   }
   return out
 }
+
+/**
+ * One turn for each camera of the batch: a folder may hold the photos of two set-ups (another camera,
+ * held another way), and the photos of one say nothing of the other's. `camera`: each photo's make and
+ * model ('' unknown: those go with each other).
+ */
+export function oneTurnByCamera(
+  rows: PhotoRow[], landscape: Map<string, boolean | null>, tagCw: Map<string, number | null>, camera: Map<string, string>, wingCw?: Map<string, number | null>,
+): PhotoRow[] {
+  const groups = new Map<string, PhotoRow[]>()
+  for (const r of rows) {
+    const key = camera.get(r.from) ?? ''
+    groups.set(key, [...(groups.get(key) ?? []), r])
+  }
+  const turned = new Map<number, PhotoRow>()
+  for (const group of groups.values()) for (const r of oneTurn(group, landscape, tagCw, wingCw)) turned.set(r.photoId, r)
+  return rows.map((r) => turned.get(r.photoId) ?? r)
+}

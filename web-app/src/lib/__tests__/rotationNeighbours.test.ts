@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { oneTurn } from '../rotationPlan'
+import { oneTurn, oneTurnByCamera } from '../rotationPlan'
 import type { PhotoRow } from '@/types'
 
 const row = (from: string, minute: number, rot: string): PhotoRow => ({
@@ -42,5 +42,20 @@ describe('oneTurn', () => {
     const turned = [row('a', 0, '0'), row('b', 1, '0'), row('c', 2, '0'), row('d', 3, '')]
     const all180 = new Map<string, number | null>(turned.map((r) => [r.from, 180]))
     expect(oneTurn(turned, wide(turned), zero(turned), all180).map((r) => r.rotChosen)).toEqual(['180', '180', '180', '180'])
+  })
+})
+
+describe('oneTurnByCamera', () => {
+  it('gives the photos of each camera their own turn', () => {
+    const rows = ['a', 'b', 'c', 'd', 'e', 'f'].map((n, i): PhotoRow => ({ ...row(n, i, ''), rotSource: '' }))
+    const wide = new Map<string, boolean | null>(rows.map((r) => [r.from, true]))
+    const tags = new Map<string, number | null>(rows.map((r) => [r.from, 0]))
+    // four photos of one camera upright, two of another upside down (as the wings say)
+    const wings = new Map<string, number | null>([['a', 0], ['b', 0], ['c', 0], ['d', 0], ['e', 180], ['f', 180]])
+    const camera = new Map([['a', 'Canon'], ['b', 'Canon'], ['c', 'Canon'], ['d', 'Canon'], ['e', 'OLYMPUS TG-6'], ['f', 'OLYMPUS TG-6']])
+    const out = oneTurnByCamera(rows, wide, tags, camera, wings)
+    expect(out.map((r) => r.rotChosen)).toEqual(['0', '0', '0', '0', '180', '180'])
+    // two photos are too few to be sure of a turn: left to look at (the wing check clears it photo by photo)
+    expect(out.map((r) => r.review)).toEqual(['', '', '', '', 'turn-unsure', 'turn-unsure'])
   })
 })

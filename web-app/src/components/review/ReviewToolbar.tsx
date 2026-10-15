@@ -1,4 +1,4 @@
-import { RefreshCw, Crop, ImageIcon, CheckCheck, Undo2, Images, LayoutGrid, SlidersHorizontal } from 'lucide-react'
+import { RefreshCw, Crop, ImageIcon, ScanSearch, CheckCheck, Undo2, Images, LayoutGrid, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -71,7 +71,7 @@ export function ReviewToolbar({
   onConfirmShown,
   inline = false,
 }: Props) {
-  const { reviewCropEnabled, reviewThumbSize, reviewLayout, updateSetting } = useSettingsStore()
+  const { reviewCropEnabled, reviewThumbSize, reviewLayout, reviewZoom, updateSetting } = useSettingsStore()
   // the controls few people need stay behind «More options» (hidden at first inside another app)
   const advanced = useProcessingStore((s) => s.advanced)
   const setAdvanced = useProcessingStore((s) => s.setAdvanced)
@@ -156,6 +156,19 @@ export function ReviewToolbar({
 
       <NamingSelect />
 
+      <div className="flex items-center gap-1.5">
+        <div className="flex rounded-md border p-0.5" role="radiogroup" aria-label="Photos">
+          {([['photo', ImageIcon, 'The whole photos'], ['wings', ScanSearch, 'Zoomed to the wings, the envelope beside: to check dorsal and ventral at a glance']] as const).map(([value, Icon, tip]) => (
+            <Button key={value} variant={reviewZoom === value ? 'secondary' : 'ghost'} size="sm" role="radio" aria-checked={reviewZoom === value}
+              aria-label={tip} title={tip} onClick={() => updateSetting('reviewZoom', value)} className="h-7 gap-1 px-2 text-xs">
+              <Icon className="h-3.5 w-3.5" />{value === 'wings' ? 'Wings' : 'Photo'}
+            </Button>
+          ))}
+        </div>
+        <input type="range" min={120} max={640} step={20} value={reviewThumbSize} aria-label="Photo size" title={`Photo size: ${reviewThumbSize} px high`}
+          onChange={(e) => updateSetting('reviewThumbSize', Number(e.target.value))} className="h-1 w-24 cursor-pointer accent-primary" />
+      </div>
+
       <WingCheckButton />
 
       {reviewLayout === 'photos' && (
@@ -207,20 +220,6 @@ export function ReviewToolbar({
         </Label>
       </div>
 
-      {/* Thumb size slider */}
-      <div className="flex items-center gap-1.5">
-        <ImageIcon className="h-3 w-3 text-muted-foreground" />
-        <input
-          type="range"
-          min={80}
-          max={640}
-          step={10}
-          value={reviewThumbSize}
-          onChange={(e) => updateSetting('reviewThumbSize', Number(e.target.value))}
-          className="h-1 w-40 cursor-pointer accent-primary"
-        />
-        <span className="text-[10px] text-muted-foreground w-8">{reviewThumbSize}</span>
-      </div>
       </>)}
     </div>
   )

@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { runLocalOcr } from '@/lib/ocr/runLocal'
 import { applyWingChecks, checkPhotos, stopWingCheck, wingSummary } from '@/lib/wings/runWings'
 import { wingTurn, type WingCheck } from '@/lib/wings/checks'
-import { oneTurn } from '@/lib/rotationPlan'
+import { oneTurnByCamera } from '@/lib/rotationPlan'
 import { calculateFinalNames } from '@/lib/nameCalculator'
 import type { PhotoRow } from '@/types'
 import { restoreSidecar, saveSidecar } from '@/lib/reviewSidecar'
@@ -367,7 +367,7 @@ export function useProcessTab() {
         if (abortController.signal.aborted) return
         // the batch's turn again, the wings voting too: they say where the forewings are
         const wingCw = new Map(result.unturned.map((r) => [r.from, checks.has(r.from) ? wingTurn(checks.get(r.from)!, r) : null]))
-        rows = oneTurn(result.unturned, result.landscape, result.tagCw, wingCw)
+        rows = oneTurnByCamera(result.unturned, result.landscape, result.tagCw, result.camera, wingCw)
       }
       // the views: by the order taken, or by the wings when they settle them; and what the wings say
       let flagged = 0

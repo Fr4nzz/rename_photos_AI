@@ -8,7 +8,7 @@ import { loadCamidSet, type CamidSet } from './database'
 import { decide, type Decision, type PhotoInput } from './decide'
 import { readPhotos } from './engine'
 import type { PhotoReading } from './pipeline'
-import { oneTurn, uprightRotation } from '../rotationPlan'
+import { oneTurnByCamera, uprightRotation } from '../rotationPlan'
 import { readOrientation } from '../orientation'
 
 export const REASON_LABEL: Record<string, string> = {
@@ -25,13 +25,14 @@ export const REASON_LABEL: Record<string, string> = {
   'wing-turn': 'Wings: which way up?',
 }
 
-async function captureTime(file: File): Promise<number | null> {
+/** When a photo was taken, and the camera that took it (make and model; '' unknown). */
+async function shotOf(file: File): Promise<{ at: number | null; camera: string }> {
   try {
-    const t = await exifr.parse(file, ['DateTimeOriginal', 'CreateDate'])
+    const t = await exifr.parse(file, ['DateTimeOriginal', 'CreateDate', 'Make', 'Model'])
     const d: Date | undefined = t?.DateTimeOriginal ?? t?.CreateDate
-    return d instanceof Date && !isNaN(d.getTime()) ? d.getTime() : null
+    return { at: d instanceof Date && !isNaN(d.getTime()) ? d.getTime() : null, camera: [t?.Make, t?.Model].filter(Boolean).join(' ').trim() }
   } catch {
-    return null
+    return { at: null, camera: '' }
   }
 }
 
@@ -41,6 +42,8 @@ export interface LocalRunResult {
   unturned: PhotoRow[]
   landscape: Map<string, boolean | null>
   tagCw: Map<string, number | null>
+  /** the camera of each photo (one turn per camera) */
+  camera: Map<string, string>
   readings: Map<string, PhotoReading>
   decisions: Decision[]
   database: CamidSet
@@ -53,7 +56,7 @@ export async function runLocalOcr(
   signal: AbortSignal,
 ): Promise<LocalRunResult> {
   const databasePromise = loadCamidSet()
-  const timesPromise = Promise.all(files.map((f) => captureTime(f.file)))
+  const shotsPromise = Promise.all(files.map((f) => shotOf(f.file)))
   // clockwise turn applied by each photo's orientation tag (null when mirrored; 0 without a tag)
   const tagsPromise = Promise.all(files.map(async (f) => {
     const v = (await readOrientation(f.file).catch(() => null))?.value ?? 1
@@ -68,7 +71,8 @@ export async function runLocalOcr(
     done++
     onProgress(done, files.length, readings)
   }, signal)
-  const [database, times, tags] = await Promise.all([databasePromise, timesPromise, tagsPromise])
+  const [database, shots, tags] = await Promise.all([databasePromise, shotsPromise, tagsPromise])
+  const times = shots.map((x) => x.at)
 
   const inputs: PhotoInput[] = files.map((f, i) => ({
     name: f.name, reading: readings.get(f.name), error: errors.get(f.name), capturedAt: times[i],
@@ -104,5 +108,6 @@ export async function runLocalOcr(
     const size = readings.get(f.name)?.size
     return [f.name, size ? size[0] >= size[1] : null] as const
   }))
-  return { rows: oneTurn(rows, wide, tagCw), unturned: rows, landscape: wide, tagCw, readings, decisions, database }
+  const camera = new Map(files.map((f, i) => [f.name, shots[i].camera]))
+  return { rows: oneTurnByCamera(rows, wide, tagCw, camera), unturned: rows, landscape: wide, tagCw, camera, readings, decisions, database }
 }
