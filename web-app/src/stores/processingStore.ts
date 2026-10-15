@@ -3,6 +3,7 @@ import type { FileEntry, PhotoRow, RotationLogEntry, RunMode } from '@/types'
 import type { PhotoReading } from '@/lib/ocr/pipeline'
 import { selectAllImageNames } from '@/lib/selection'
 import type { HostChange } from '@/lib/embed/protocol'
+import type { WingCheck } from '@/lib/wings/checks'
 
 interface ProcessingState {
   photoRows: PhotoRow[]
@@ -25,6 +26,11 @@ interface ProcessingState {
   /** local OCR readings of this session (line boxes for the review zoom), by file name */
   ocrReadings: Map<string, PhotoReading>
   setOcrReadings: (m: Map<string, PhotoReading>) => void
+  /** the wing check's results, by file name, and its progress while it runs */
+  wingChecks: Map<string, WingCheck>
+  setWingChecks: (m: Map<string, WingCheck>) => void
+  wingRun: { done: number; total: number } | null
+  setWingRun: (run: { done: number; total: number } | null) => void
   /** embedded mode: the corrections made by the page hosting the app, in order (to take them back)… */
   hostLog: HostChange[]
   /** …and, by file, what was changed in each row (shown on its card) and who made them */
@@ -74,6 +80,10 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
   failedBatches: [],
   ocrReadings: new Map(),
   setOcrReadings: (m) => set({ ocrReadings: m }),
+  wingChecks: new Map(),
+  setWingChecks: (m) => set({ wingChecks: m }),
+  wingRun: null,
+  setWingRun: (run) => set({ wingRun: run }),
   hostLog: [],
   hostChanges: new Map(),
   hostName: '',
@@ -141,5 +151,7 @@ export const useProcessingStore = create<ProcessingState>()((set) => ({
       failedBatches: [],
       hostLog: [],
       hostChanges: new Map(),
+      wingChecks: new Map(),
+      wingRun: null,
     }),
 }))

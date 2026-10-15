@@ -11,6 +11,8 @@ import type { PhotoRow, SuffixMode } from '@/types'
 import type { PhotoReading } from '../ocr/pipeline'
 import { calculateFinalNames } from '../nameCalculator'
 import { pendingRotation } from '../rotationPlan'
+import { wingTurn, type WingCheck, type WingFinding } from '../wings/checks'
+import type { Side } from '../wings/model'
 
 export const PROTOCOL_VERSION = 1
 
@@ -42,6 +44,12 @@ export interface HostRow {
   rotationFrom: PhotoRow['rotSource']
   /** changed by the host: what it changed */
   byHost?: string[]
+  /** the wing check (when it ran on this photo): the side the wings show (dorsal: upper side up), P(dorsal),
+   *  each wing group's side, the wings found and the places without one, and the clockwise turn that puts
+   *  the forewings on top from how the file shows now (when the wings are sure of it) */
+  wings?: { side: Side; pDorsal: number | null; forewings: Side; hindwings: Side; count: number; missing?: string[]; turn?: number }
+  /** what the wings say against the name or the turn (a reason `wing-…` among `review` while it waits) */
+  wingNotes?: string[]
 }
 
 /** The total size of a folder's files, photos and RAW files alike (what an upload of it takes). */
@@ -64,6 +72,8 @@ export interface HostState {
   folderBytes: number | null
   reading: { on: boolean; percent: number; message: string }
   database: { ids: number; source: string } | null
+  /** the wing check: running (photos done of total), and how many photos it has checked */
+  wingCheck: { on: boolean; done: number; total: number; checked: number }
   rows: HostRow[]
 }
 
@@ -102,10 +112,15 @@ export function snapshotRows(
   rows: PhotoRow[],
   readings: Map<string, PhotoReading>,
   changed: Map<string, HostChange>,
+  wings: { checks: Map<string, WingCheck>; findings: Map<string, WingFinding[]> } = { checks: new Map(), findings: new Map() },
 ): HostRow[] {
+  const round = (p: number | null) => (p === null ? null : Math.round(p * 1000) / 1000)
   return rows.map((r) => {
     const reading = readings.get(r.from)
     const others = split(r.co, /\s+/)
+    const check = wings.checks.get(r.from)
+    const turn = check ? wingTurn(check, r) : null
+    const notes = wings.findings.get(r.from)?.map((f) => f.text) ?? []
     return {
       file: r.from,
       ...(r.currentPath && r.currentPath !== r.from ? { now: r.currentPath } : {}),
@@ -126,6 +141,13 @@ export function snapshotRows(
       rotationPending: pendingRotation(r),
       rotationFrom: r.rotSource,
       ...(changed.has(r.from) ? { byHost: changed.get(r.from)!.what } : {}),
+      ...(check ? {
+        wings: {
+          side: check.side, pDorsal: round(check.p), forewings: check.fore.side, hindwings: check.hind.side, count: check.wings.length,
+          ...(check.missing.length ? { missing: check.missing } : {}), ...(turn !== null ? { turn } : {}),
+        },
+      } : {}),
+      ...(notes.length ? { wingNotes: notes } : {}),
     }
   })
 }

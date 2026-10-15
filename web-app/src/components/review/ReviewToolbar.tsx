@@ -14,6 +14,7 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { useProcessingStore } from '@/stores/processingStore'
 import { undoHostChanges } from '@/lib/embed/host'
 import type { FilterType, SortOption } from '@/hooks/useReviewTab'
+import { WingCheckButton } from './WingCheckButton'
 
 interface Props {
   csvFiles: string[]
@@ -148,6 +149,8 @@ export function ReviewToolbar({
           {hostName}: {hostChanged}
         </Button>
       )}
+
+      <WingCheckButton />
 
       {reviewLayout === 'photos' && (
       <Select value={sortOption} onValueChange={(v) => onSortChange(v as SortOption)}>

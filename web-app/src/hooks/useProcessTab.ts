@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { appendRotationLog, listFolder, writeRotations } from '@/lib/rotationWrite'
 import { toast } from 'sonner'
 import { runLocalOcr } from '@/lib/ocr/runLocal'
+import { runWingCheck, stopWingCheck } from '@/lib/wings/runWings'
 import { calculateFinalNames } from '@/lib/nameCalculator'
 import type { PhotoRow } from '@/types'
 import { restoreSidecar, saveSidecar } from '@/lib/reviewSidecar'
@@ -410,6 +411,8 @@ export function useProcessTab() {
       toast.error('No images loaded. Select a folder first.')
       return
     }
+    stopWingCheck()
+    processing.setWingChecks(new Map())
     processing.setProcessing(true)
     processing.setProgress(0, 'Loading the CAMID reader…')
     const abortController = new AbortController()
@@ -463,6 +466,8 @@ export function useProcessTab() {
       processing.setProgress(100, `Done: ${rows.length - review} ready, ${review} to review`)
       toast.success(`Read ${rows.length} photos: ${rows.length - review} ready to rename, ${review} to review${turned ? ` · turned ${turned} upright` : ''}.`)
       if (result.database.source === 'bundled') toast.warning('Could not reach the specimen database; used the copy bundled with the app.')
+      // the wings after the IDs: Review is usable meanwhile, and the photos they flag join those to look at
+      if (settings.wingCheck && settings.suffixMode !== 'Wing Clips') void runWingCheck(true)
     } catch (e: unknown) {
       toast.error(`Reading failed: ${getErrorMessage(e)}`)
     } finally {

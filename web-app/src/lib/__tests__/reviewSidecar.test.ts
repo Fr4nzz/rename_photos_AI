@@ -3,6 +3,7 @@ import { restoreSidecar, saveSidecar } from '../reviewSidecar'
 import { useProcessingStore } from '@/stores/processingStore'
 import type { PhotoReading } from '../ocr/pipeline'
 import type { PhotoRow } from '@/types'
+import type { WingCheck } from '../wings/checks'
 
 // A folder opened again resumes as it was left: what the CSV does not hold is kept beside it.
 
@@ -28,12 +29,13 @@ const row = (from: string, extra: Partial<PhotoRow> = {}): PhotoRow => ({
 })
 
 describe('the review kept beside its CSV', () => {
-  it("keeps the reader's results, the photos' times and the assistant's changes, and puts them back", async () => {
+  it("keeps the reader's results, the photos' times, the assistant's changes and the wing check, and puts them back", async () => {
     const { dir, files } = folder()
     const reading = { camid: 'CAM000001', conf: 0.97, candidates: [], source: 'envelope', envelope: [1, 2, 3, 4], turned: 0, lines: [], size: [1600, 1067] } as PhotoReading
     const store = useProcessingStore.getState()
     store.setPhotoRows([row('IMG_1.JPG', { captureDate: '2026-10-14T10:00:00.000Z' }), row('IMG_2.JPG')])
     store.setOcrReadings(new Map([['IMG_1.JPG', reading]]))
+    store.setWingChecks(new Map([['IMG_1.JPG', { side: 'dorsal', p: 0.99, fore: { side: 'dorsal', p: 0.99 }, hind: { side: 'dorsal', p: 0.98 }, wings: [], missing: [], turnK: 0, pTurn: 1, size: [1600, 1067], applied: 0 } satisfies WingCheck]]))
     store.clearHostChanges()
     store.addHostChanges([{ file: 'IMG_2.JPG', what: ['id'], before: { mainValue: 'CAM000007' }, id: { from: 'CAM000007', to: 'CAM000001' } }], 'Claude')
     await saveSidecar(dir, 'batch.csv')
@@ -41,6 +43,7 @@ describe('the review kept beside its CSV', () => {
 
     // Closed and opened again: the store empty, the rows from the CSV.
     store.setOcrReadings(new Map())
+    store.setWingChecks(new Map())
     store.clearHostChanges()
     const rows = await restoreSidecar(dir, 'batch.csv', [row('IMG_1.JPG'), row('IMG_2.JPG')])
     const now = useProcessingStore.getState()
@@ -48,6 +51,7 @@ describe('the review kept beside its CSV', () => {
     expect(now.ocrReadings.get('IMG_1.JPG')?.conf).toBe(0.97)
     expect(now.hostChanges.get('IMG_2.JPG')?.id).toEqual({ from: 'CAM000007', to: 'CAM000001' })
     expect(now.hostName).toBe('Claude')
+    expect(now.wingChecks.get('IMG_1.JPG')?.side).toBe('dorsal')
   })
   it('without anything kept, the rows stay as they are and no earlier changes are left over', async () => {
     const { dir } = folder()

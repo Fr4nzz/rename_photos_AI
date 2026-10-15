@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { PhotoRow } from '@/types'
 import { applyEdits, snapshotRows, undoEdits, type HostChange } from '../protocol'
 import { calculateFinalNames } from '../../nameCalculator'
+import type { WingCheck } from '../../wings/checks'
 
 const names = { mainColumn: 'CAM', suffixMode: 'Standard' as const, customSuffixes: '' }
 const row = (n: number, id: string, extra: Partial<PhotoRow> = {}): PhotoRow => ({
@@ -22,6 +23,18 @@ describe('the batch as its host sees it', () => {
     expect(rows[3]).toMatchObject({ file: 'IMG_4.JPG', n: 4, id: 'CAM077008', view: 'd', to: 'CAM077008d.JPG', review: ['out-of-sequence'], suggest: ['CAM077002', 'CAM077003'], rotation: 0, rotationPending: 0 })
     expect(rows[6]).toMatchObject({ id: 'CAM077003', view: 'd2', to: 'CAM077003d2.JPG' })
     expect(rows[7]).toMatchObject({ id: '', to: '', review: ['no-reading'] })
+  })
+
+  it("tells the wing check of a photo: its wings in short, the turn they ask for, and what they say against its name", () => {
+    const fore = { side: 'ventral' as const, p: 0.01 }
+    const check: WingCheck = { side: 'ventral', p: 0.012345, fore, hind: fore, wings: [], missing: ['hindwing_left'], turnK: 2, pTurn: 0.99, size: [1600, 1067], applied: 0 }
+    check.wings = Array.from({ length: 3 }, () => ({ box: [0, 0, 1, 1], pDorsal: 0.01, pForewing: 1, kind: 'forewing', half: 'left' }))
+    const rows = snapshotRows(batch(), new Map(), new Map(), {
+      checks: new Map([['IMG_1.JPG', check]]), findings: new Map([['IMG_1.JPG', [{ code: 'wing-side', text: 'Named d but the wings show their underside' }]]]),
+    })
+    expect(rows[0].wings).toEqual({ side: 'ventral', pDorsal: 0.012, forewings: 'ventral', hindwings: 'ventral', count: 3, missing: ['hindwing_left'], turn: 180 })
+    expect(rows[0].wingNotes).toEqual(['Named d but the wings show their underside'])
+    expect(rows[1].wings).toBeUndefined()
   })
 })
 

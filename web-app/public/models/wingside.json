@@ -1,0 +1,34 @@
+{
+ "segmentation": {
+  "file": "wingseg_640.onnx",
+  "inputSize": 640,
+  "conf": 0.25,
+  "nmsIou": 0.6,
+  "maxWings": 8,
+  "letterboxFill": 114,
+  "maskThreshold": 0.0
+ },
+ "classifier": {
+  "file": "wing_side_cls.onnx",
+  "inputSize": 192,
+  "cropMargin": 1.15,
+  "cropMaskLogit": -1.5,
+  "grey": 114,
+  "cropSampling": "2x2 supersampled bilinear from the <=1600 px photo, rounded to uint8",
+  "outputs": [
+   "dorsal",
+   "forewing",
+   "wing",
+   "rot0",
+   "rot90ccw",
+   "rot180",
+   "rot270ccw"
+  ]
+ },
+ "decision": {
+  "wingMin": 0.5,
+  "lo": 0.05,
+  "hi": 0.95,
+  "photoLogitScale": 1.7
+ }
+}

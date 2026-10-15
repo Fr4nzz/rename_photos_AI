@@ -20,6 +20,7 @@ import { canvasToBlob, loadImagePreview, rotateCanvas } from '../imageProcessing
 import { pendingRotation } from '../rotationPlan'
 import { setHostCamids, hostDatabase } from '../ocr/database'
 import { PROTOCOL_VERSION, applyEdits, folderBytes, snapshotRows, undoEdits, type HostEdit, type HostState } from './protocol'
+import { wingFindings } from '../wings/checks'
 import type { PhotoRow } from '@/types'
 
 export const isEmbedded = () =>
@@ -47,7 +48,10 @@ export function hostState(): HostState {
     folderBytes: sized && sized.dir === s.dirHandle ? sized.bytes : null,
     reading: { on: s.isProcessing, percent: Math.round(s.progress.percent), message: s.progress.message },
     database,
-    rows: snapshotRows(s.photoRows, s.ocrReadings, s.hostChanges),
+    wingCheck: { on: !!s.wingRun, done: s.wingRun?.done ?? 0, total: s.wingRun?.total ?? 0, checked: s.wingChecks.size },
+    rows: snapshotRows(s.photoRows, s.ocrReadings, s.hostChanges, {
+      checks: s.wingChecks, findings: wingFindings(s.photoRows, s.wingChecks, useSettingsStore.getState().suffixMode),
+    }),
   }
 }
 
@@ -196,7 +200,8 @@ export function startHostBridge() {
       }, () => {})
     }
     if (now.photoRows !== before.photoRows || now.isProcessing !== before.isProcessing || now.progress !== before.progress ||
-        now.dirHandle !== before.dirHandle || now.imageFiles !== before.imageFiles || now.hostChanges !== before.hostChanges) soon()
+        now.dirHandle !== before.dirHandle || now.imageFiles !== before.imageFiles || now.hostChanges !== before.hostChanges ||
+        now.wingChecks !== before.wingChecks || now.wingRun !== before.wingRun) soon()
   })
   window.addEventListener('message', (event) => {
     if (event.origin !== window.location.origin || event.source !== window.parent) return

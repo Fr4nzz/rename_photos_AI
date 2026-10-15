@@ -14,6 +14,7 @@ import { ArrowRight, Check, Sparkles, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { REASON_LABEL } from '@/lib/ocr/runLocal'
 import { IdLineZoom } from './IdLineZoom'
+import { WingNotes } from './WingNotes'
 
 interface Props {
   row: PhotoRow
@@ -155,6 +156,7 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
               )}
             </div>
           )}
+          <WingNotes row={row} />
           {/* embedded mode: what the hosting page's assistant changed in this photo */}
           {hostChange && (
             <div className="space-y-1 rounded-md bg-sky-500/10 p-1.5 text-[11px] text-sky-800 dark:text-sky-300" data-host-change>

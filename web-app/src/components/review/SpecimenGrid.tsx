@@ -10,6 +10,7 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { loadImagePreview, rotateCanvas } from '@/lib/imageProcessing'
 import { pendingRotation } from '@/lib/rotationPlan'
 import { REASON_LABEL } from '@/lib/ocr/runLocal'
+import { WingNotes } from './WingNotes'
 import { specimenNote, type Specimen } from '@/lib/specimens'
 import type { PhotoRow } from '@/types'
 import { IdLineZoom } from './IdLineZoom'
@@ -107,6 +108,7 @@ function PhotoCell({ row, onUpdate }: { row: PhotoRow; onUpdate: (updates: Parti
           )}
         </div>
       )}
+      <WingNotes row={row} />
       {hostChange && (
         <div className="rounded-md bg-sky-500/10 p-1 text-[11px] text-sky-800 dark:text-sky-300" data-host-change>
           <div className="flex flex-wrap items-center gap-1">

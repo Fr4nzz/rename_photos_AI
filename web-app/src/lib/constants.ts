@@ -83,6 +83,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   customSuffixes: 'd,v',
   engine: 'local',
   autoRotate: true,
+  wingCheck: true,
 }
 
 export const GITHUB_REPO_URL = 'https://github.com/Fr4nzz/rename_photos_AI'

@@ -20,6 +20,9 @@ export const REASON_LABEL: Record<string, string> = {
   'rotation-outlier': 'Rotation differs from the photos around it',
   'turn-unsure': 'Which way up? Check the wings: forewings on top',
   assistant: 'Left for you by the assistant',
+  'wing-side': 'Wings: d/v?',
+  'wing-count': 'Wings: count differs',
+  'wing-turn': 'Wings: which way up?',
 }
 
 async function captureTime(file: File): Promise<number | null> {

@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
-import { Cpu, Play, ScanText, Sparkles, Square, Wand2, SlidersHorizontal } from 'lucide-react'
+import { Cpu, Play, ScanText, Sparkles, Square, Wand2, SlidersHorizontal, Feather } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { listStoredCsvs } from '@/lib/csvHandler'
 import type { RunMode } from '@/types'
@@ -30,7 +30,7 @@ interface Props {
 }
 
 export function ProcessingControls({ onStart, onStop, hasImages, children, geminiHook }: Props) {
-  const { modelName, engine, autoRotate, updateSetting } = useSettingsStore()
+  const { modelName, engine, autoRotate, wingCheck, updateSetting } = useSettingsStore()
   const { apiKeys } = useApiKeysStore()
   const {
     isProcessing,
@@ -163,6 +163,29 @@ export function ProcessingControls({ onStart, onStop, hasImages, children, gemin
                 {autoRotate
                   ? 'On: after reading, each photo (and its RAW) is turned so the envelope text is upright. Lossless; Undo or Restore reverts it.'
                   : 'Off: rotations are only suggested in Review and written when you rename.'}
+              </TooltipContent>
+            </Tooltip>
+          )}
+          {local && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={wingCheck ? 'secondary' : 'ghost'}
+                  size="sm"
+                  role="switch"
+                  aria-checked={wingCheck}
+                  aria-label="Check wings"
+                  onClick={() => updateSetting('wingCheck', !wingCheck)}
+                  className={`gap-1.5 text-xs ${wingCheck ? '' : 'text-muted-foreground line-through'}`}
+                >
+                  <Feather className="h-3.5 w-3.5" />
+                  Check wings
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {wingCheck
+                  ? 'On: after reading, the wings of each photo are checked on this computer (while you review): the side they show against d/v, a wing fewer in one photo of a pair, and which way up. The photos they flag wait for review.'
+                  : 'Off: no wing check after reading (Review has a button to run it).'}
               </TooltipContent>
             </Tooltip>
           )}
