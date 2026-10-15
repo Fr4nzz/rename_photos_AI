@@ -1,4 +1,5 @@
-import type { FileEntry } from '@/types'
+import type { FileEntry, PhotoRow } from '@/types'
+import { SUPPORTED_RAW_EXTENSIONS } from './constants'
 
 export type ImageSortOption = 'name-asc' | 'name-desc' | 'date-asc' | 'date-desc' | 'type-asc'
 
@@ -47,4 +48,31 @@ export function sortImageFiles(files: FileEntry[], sortOption: ImageSortOption):
     }
   })
   return sorted
+}
+
+const stemOf = (name: string) => (name.lastIndexOf('.') > 0 ? name.slice(0, name.lastIndexOf('.')) : name).toLowerCase()
+const isRaw = (entry: FileEntry) => SUPPORTED_RAW_EXTENSIONS.has(entry.extension.toLowerCase())
+
+/**
+ * The photos a reading takes: a RAW file shot with a JPG (same name) is the same photo and follows
+ * the JPG's renaming and rotation, so only RAWs without one are read.
+ */
+export function photosToRead(files: FileEntry[]): FileEntry[] {
+  const withJpg = new Set(files.filter((entry) => !isRaw(entry)).map((entry) => stemOf(entry.name)))
+  return files.filter((entry) => !isRaw(entry) || !withJpg.has(stemOf(entry.name)))
+}
+
+/** Rows by file name, a RAW file shown with its JPG's reading (and its new name, in its own extension). */
+export function rowsWithRaws(rows: PhotoRow[], files: FileEntry[]): Map<string, PhotoRow> {
+  const byName = new Map(rows.map((r) => [r.from, r]))
+  const byStem = new Map(rows.map((r) => [stemOf(r.from), r]))
+  for (const entry of files) {
+    if (byName.has(entry.name) || !isRaw(entry)) continue
+    const row = byStem.get(stemOf(entry.name))
+    if (!row) continue
+    const ext = entry.name.slice(entry.name.lastIndexOf('.'))
+    const renamed = row.currentPath.lastIndexOf('.') > 0 ? row.currentPath.slice(0, row.currentPath.lastIndexOf('.')) + ext : row.currentPath
+    byName.set(entry.name, { ...row, currentPath: renamed })
+  }
+  return byName
 }

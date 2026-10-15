@@ -27,6 +27,7 @@ import { getErrorMessage, getErrorName } from '@/lib/errors'
 import {
   invertImageSelection,
   matchImageNames,
+  rowsWithRaws,
   selectAllImageNames,
   sortImageFiles,
   type ImageSortOption,
@@ -68,7 +69,6 @@ export function PhotosView() {
   // With results (read, or loaded with the folder) the review is where the work is.
   const [view, setView] = useState<'photos' | 'review'>(() => (useProcessingStore.getState().photoRows.length ? 'review' : 'photos'))
   const [focus, setFocus] = useState<{ photoId: number } | null>(null)
-  const rowsByName = useMemo(() => new Map(photoRows.map((r) => [r.from, r])), [photoRows])
   const reviewCount = photoRows.filter((r) => r.review).length
 
   // a finished read opens the review, and so do results arriving (the folder's, loaded with it)
@@ -102,6 +102,7 @@ export function PhotosView() {
     rotationLog,
     setRotationLog,
   } = useProcessingStore()
+  const rowsByName = useMemo(() => rowsWithRaws(photoRows, imageFiles), [photoRows, imageFiles])
   const { useExif, previewRaw, updateSetting } = useSettingsStore()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')

@@ -40,7 +40,7 @@ import {
 } from '@/lib/csvHandler'
 import { BROWSER_ROTATABLE_EXTENSIONS } from '@/lib/constants'
 import { getErrorMessage, getErrorName } from '@/lib/errors'
-import { getSelectedImageFiles } from '@/lib/selection'
+import { getSelectedImageFiles, photosToRead } from '@/lib/selection'
 import { logger } from '@/lib/logger'
 
 export interface Previews {
@@ -405,6 +405,7 @@ export function useProcessTab() {
       processing.setSelectedImageNames(selectedNames)
       files = getSelectedImageFiles(refreshed, selectedNames)
     }
+    files = photosToRead(files)
     if (files.length === 0) {
       toast.error('No images loaded. Select a folder first.')
       return
@@ -486,6 +487,7 @@ export function useProcessTab() {
       processing.setSelectedImageNames(selectedNames)
       files = getSelectedImageFiles(refreshed, selectedNames)
     }
+    files = photosToRead(files)
 
     if (files.length === 0) {
       toast.error('No images loaded. Select a folder first.')

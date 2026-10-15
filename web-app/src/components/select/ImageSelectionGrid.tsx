@@ -15,6 +15,7 @@ interface CardProps {
 
 function ImageSelectionCard({ entry, selected, onToggle, row, onOpen }: CardProps) {
   const [thumb, setThumb] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
   const [nearView, setNearView] = useState(false)
   const ref = useRef<HTMLButtonElement>(null)
 
@@ -42,7 +43,7 @@ function ImageSelectionCard({ entry, selected, onToggle, row, onOpen }: CardProp
         setThumb(nextUrl)
       })
       .catch((error: unknown) => {
-        if (!cancelled) setThumb(null)
+        if (!cancelled) { setThumb(null); setFailed(true) }
         console.warn(`Could not preview ${entry.name}: ${getErrorMessage(error)}`)
       })
 
@@ -64,7 +65,7 @@ function ImageSelectionCard({ entry, selected, onToggle, row, onOpen }: CardProp
           <img src={thumb} alt={entry.name} className="h-32 w-full object-contain bg-muted" />
         ) : (
           <div className="flex h-32 items-center justify-center bg-muted text-xs text-muted-foreground">
-            No preview
+            {failed ? 'No preview' : nearView ? 'Loading…' : ''}
           </div>
         )}
         <div
