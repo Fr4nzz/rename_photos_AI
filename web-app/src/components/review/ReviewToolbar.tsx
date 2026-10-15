@@ -15,6 +15,7 @@ import { useProcessingStore } from '@/stores/processingStore'
 import { undoHostChanges } from '@/lib/embed/host'
 import type { FilterType, SortOption } from '@/hooks/useReviewTab'
 import { WingCheckButton } from './WingCheckButton'
+import { NamingSelect } from './NamingSelect'
 
 interface Props {
   csvFiles: string[]
@@ -152,6 +153,8 @@ export function ReviewToolbar({
           {hostName}: {hostChanged}
         </Button>
       )}
+
+      <NamingSelect />
 
       <WingCheckButton />
 

@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { REASON_LABEL } from '@/lib/ocr/runLocal'
 import { IdLineZoom } from './IdLineZoom'
 import { WingNotes } from './WingNotes'
+import { PhotoViewer } from './PhotoViewer'
 
 interface Props {
   row: PhotoRow
@@ -31,6 +32,7 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
   // the preview shows the photo turned by the rotation still to be written
   const pending = pendingRotation(row)
   const [thumbUrl, setThumbUrl] = useState<string | null>(null)
+  const [viewing, setViewing] = useState(false)
   const file = fileMap.get(row.from)
 
   useEffect(() => {
@@ -114,8 +116,11 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
               src={thumbUrl}
               alt={row.from}
               style={{ maxHeight: reviewThumbSize, maxWidth: '100%', height: 'auto', width: 'auto' }}
-              className="rounded-sm border"
+              className="cursor-zoom-in rounded-sm border"
+              title="See it large"
+              onClick={() => setViewing(true)}
             />
+            {viewing && <PhotoViewer open={viewing} onOpenChange={setViewing} title={row.currentPath} file={file} pending={pending} />}
           </div>
         )}
 

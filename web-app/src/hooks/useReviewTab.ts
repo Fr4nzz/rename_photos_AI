@@ -259,32 +259,61 @@ export function useReviewTab() {
     currentPage * reviewItemsPerPage
   )
 
+  /** The rows with their final names worked out again (after an ID, a skip or a view changed). */
+  const named = useCallback(
+    (rows: PhotoRow[]) => calculateFinalNames(rows, mainColumn, suffixMode, customSuffixes),
+    [mainColumn, suffixMode, customSuffixes]
+  )
+
+  /** A view typed stays (an empty one goes back to the order taken, or the wings); the ID's other photos follow. */
+  const withView = (r: PhotoRow, updates: Partial<PhotoRow>): PhotoRow =>
+    'suffix' in updates ? { ...r, ...updates, suffix: String(updates.suffix ?? '').trim(), viewBy: String(updates.suffix ?? '').trim() ? 'manual' : '' } : { ...r, ...updates }
+
   const updateRow = useCallback(
     (photoId: number, updates: Partial<PhotoRow>) => {
-      let rows = photoRows.map((r) =>
-        r.photoId === photoId ? { ...r, ...updates } : r
-      )
-      if ('mainValue' in updates || 'skip' in updates) {
-        // final names follow every edit (no separate Recalculate step)
-        rows = calculateFinalNames(rows, mainColumn, suffixMode, customSuffixes)
-      } else if ('suffix' in updates) {
-        rows = rows.map((r) => r.photoId === photoId && r.mainValue.trim()
-          ? { ...r, to: `${r.mainValue.trim()}${r.suffix}${r.from.slice(r.from.lastIndexOf('.'))}` } : r)
-      }
-      setPhotoRows(rows)
+      const rows = photoRows.map((r) => (r.photoId === photoId ? withView(r, updates) : r))
+      // final names follow every edit (no separate Recalculate step)
+      setPhotoRows('mainValue' in updates || 'skip' in updates || 'suffix' in updates ? named(rows) : rows)
     },
-    [photoRows, setPhotoRows, mainColumn, suffixMode, customSuffixes]
+    [photoRows, setPhotoRows, named]
   )
 
   /** The same change to several photos at once (a specimen's ID typed on its card). */
   const updateRows = useCallback(
     (photoIds: number[], updates: Partial<PhotoRow>) => {
       const ids = new Set(photoIds)
-      let rows = photoRows.map((r) => (ids.has(r.photoId) ? { ...r, ...updates } : r))
-      if ('mainValue' in updates || 'skip' in updates) rows = calculateFinalNames(rows, mainColumn, suffixMode, customSuffixes)
-      setPhotoRows(rows)
+      const rows = photoRows.map((r) => (ids.has(r.photoId) ? withView(r, updates) : r))
+      setPhotoRows('mainValue' in updates || 'skip' in updates || 'suffix' in updates ? named(rows) : rows)
     },
-    [photoRows, setPhotoRows, mainColumn, suffixMode, customSuffixes]
+    [photoRows, setPhotoRows, named]
+  )
+
+  /** A specimen's d and v the other way round (kept as typed views). */
+  const swapViews = useCallback(
+    (photoIds: number[]) => {
+      const pair = photoRows.filter((r) => photoIds.includes(r.photoId) && r.skip !== 'x')
+      const d = pair.find((r) => r.suffix === 'd'), v = pair.find((r) => r.suffix === 'v')
+      if (!d || !v) return
+      const swap = new Map([[d.photoId, 'v'], [v.photoId, 'd']])
+      setPhotoRows(named(photoRows.map((r) => (swap.has(r.photoId) ? { ...r, suffix: swap.get(r.photoId)!, viewBy: 'manual' as const } : r))))
+    },
+    [photoRows, setPhotoRows, named]
+  )
+
+  // another naming (d/v, wing clips, custom): the names follow at once
+  const namingRef = useRef(`${suffixMode}|${customSuffixes}`)
+  useEffect(() => {
+    const now = `${suffixMode}|${customSuffixes}`
+    if (namingRef.current === now) return
+    namingRef.current = now
+    const rows = useProcessingStore.getState().photoRows
+    if (rows.length) setPhotoRows(calculateFinalNames(rows, mainColumn, suffixMode, customSuffixes))
+  }, [suffixMode, customSuffixes, mainColumn, setPhotoRows])
+
+  /** The photos Rename, Restore and the copies act on: the whole batch (or the selected photos with «Selected only»), whatever the filter shows. */
+  const batchRows = useMemo(
+    () => (reviewSelectedOnly ? photoRows.filter((row) => selectedImageNames.has(row.from)) : photoRows),
+    [photoRows, reviewSelectedOnly, selectedImageNames]
   )
 
   /** Confirm every shown photo whose CAM field holds a valid CAMID (the rest stay in review). */
@@ -299,12 +328,6 @@ export function useReviewTab() {
     setPhotoRows(photoRows.map((r) => (ids.has(r.photoId) ? { ...r, review: '' } : r)))
     toast.success(`Confirmed ${ids.size} photo(s).`)
   }, [filteredRows, photoRows, setPhotoRows])
-
-  const recalculateNames = useCallback(() => {
-    const updated = calculateFinalNames(photoRows, mainColumn, suffixMode, customSuffixes)
-    setPhotoRows(updated)
-    toast.success('Names recalculated')
-  }, [photoRows, mainColumn, suffixMode, customSuffixes, setPhotoRows])
 
   const saveChanges = useCallback(async () => {
     const csvName = selectedCsv || `results_${Date.now()}.csv`
@@ -347,7 +370,8 @@ export function useReviewTab() {
     loadCsv,
     updateRow,
     updateRows,
-    recalculateNames,
+    swapViews,
+    batchRows,
     saveChanges,
     exportCsv,
     itemsPerPage: reviewItemsPerPage,

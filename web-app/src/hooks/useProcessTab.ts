@@ -22,7 +22,6 @@ import {
   loadImagePreview,
   clearPreviewCache,
   rotateCanvas,
-  rotateBrowserImageFile,
   preprocessImage,
   mergeImages,
   canvasToBase64,
@@ -222,84 +221,6 @@ export function useProcessTab() {
     [fileType, processing]
   )
 
-  const applyRotationToFiles = useCallback(async () => {
-    if (!dirHandle) {
-      toast.error('Open a folder first so the app can write rotated files.')
-      return
-    }
-    if (settings.rotationAngle === 0) {
-      toast.info('Rotation is set to 0°, so no files need changes.')
-      return
-    }
-
-    const rotatableFiles = imageFiles.filter((entry) =>
-      BROWSER_ROTATABLE_EXTENSIONS.has(entry.extension)
-    )
-    const skippedCount = imageFiles.length - rotatableFiles.length
-
-    if (rotatableFiles.length === 0) {
-      toast.error('No JPEG or PNG files are loaded for browser rotation.')
-      return
-    }
-
-    const confirmed = window.confirm(
-      `Rotate ${rotatableFiles.length} JPEG/PNG file(s) in place? ` +
-      'This rewrites image pixels and may remove some metadata. Keep your originals backed up.'
-    )
-    if (!confirmed) return
-
-    processing.setProcessing(true)
-    processing.setProgress(0, 'Applying rotation to files...')
-
-    let rotatedCount = 0
-    const failed: string[] = []
-
-    for (let i = 0; i < rotatableFiles.length; i++) {
-      const entry = rotatableFiles[i]
-      try {
-        const fileHandle = await dirHandle.getFileHandle(entry.path)
-        const latestFile = await fileHandle.getFile()
-        const rotatedBlob = await rotateBrowserImageFile(
-          latestFile,
-          settings.rotationAngle,
-          settings.useExif
-        )
-        if (!rotatedBlob) continue
-
-        const writable = await fileHandle.createWritable()
-        await writable.write(rotatedBlob)
-        await writable.close()
-        rotatedCount++
-      } catch (error: unknown) {
-        failed.push(`${entry.name}: ${getErrorMessage(error)}`)
-        logger.warn(`Could not rotate ${entry.name}: ${getErrorMessage(error)}`)
-      }
-
-      processing.setProgress(
-        Math.round(((i + 1) / rotatableFiles.length) * 100),
-        `Rotated ${i + 1}/${rotatableFiles.length} browser-supported files`
-      )
-    }
-
-    clearPreviewCache()
-    const refreshedFiles = await getImageFilesFromHandle(dirHandle, fileType)
-    processing.setImageFiles(refreshedFiles, false)
-    const fMap = new Map<string, File>()
-    for (const entry of refreshedFiles) fMap.set(entry.name, entry.file)
-    processing.setFileMap(fMap)
-
-    processing.setProcessing(false)
-    processing.setProgress(100, 'Rotation complete')
-
-    if (failed.length > 0) {
-      toast.warning(`Rotated ${rotatedCount} file(s); ${failed.length} failed. Check console logs.`)
-    } else if (skippedCount > 0) {
-      toast.success(`Rotated ${rotatedCount} JPEG/PNG file(s). Skipped ${skippedCount} unsupported file(s).`)
-    } else {
-      toast.success(`Rotated ${rotatedCount} JPEG/PNG file(s).`)
-    }
-  }, [dirHandle, fileType, imageFiles, processing, settings.rotationAngle, settings.useExif])
-
   // Update previews when selection or settings change
   const updatePreviews = useCallback(async () => {
     if (imageFiles.length === 0 || selectedImageIndex >= imageFiles.length) {
@@ -448,7 +369,10 @@ export function useProcessTab() {
         const wingCw = new Map(result.unturned.map((r) => [r.from, checks.has(r.from) ? wingTurn(checks.get(r.from)!, r) : null]))
         rows = oneTurn(result.unturned, result.landscape, result.tagCw, wingCw)
       }
-      rows = calculateFinalNames(rows, settings.mainColumn, settings.suffixMode, settings.customSuffixes)
+      // the views: by the order taken, or by the wings when they settle them; and what the wings say
+      let flagged = 0
+      if (withWings) ({ rows, flagged } = applyWingChecks(rows, checks))
+      else rows = calculateFinalNames(rows, settings.mainColumn, settings.suffixMode, settings.customSuffixes)
       let turned = 0
       if (settings.autoRotate && !currentDirHandle) {
         toast.info(`Rotations are suggested in Review but cannot be written: ${folderAccessHelp()}`, { duration: 12000 })
@@ -468,8 +392,6 @@ export function useProcessTab() {
         const fresh = new Map(freshEntries.map((e) => [e.name, e.file]))
         processing.setFileMap(new Map(rows.flatMap((r) => (fresh.has(r.currentPath) ? [[r.from, fresh.get(r.currentPath)!]] : []))))
       }
-      let flagged = 0
-      if (withWings) ({ rows, flagged } = applyWingChecks(rows, checks))
       processing.setPhotoRows(rows)
       processing.setOcrReadings(result.readings)
       const csvName = `${folderName || currentDirHandle?.name || 'results'}_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.csv`
@@ -841,7 +763,6 @@ export function useProcessTab() {
     ),
     selectDirectory,
     handleFileInput,
-    applyRotationToFiles,
     startProcessing,
     stopProcessing,
   }

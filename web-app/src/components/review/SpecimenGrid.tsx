@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowRight, Check, ChevronDown, ChevronRight, Sparkles, TriangleAlert } from 'lucide-react'
+import { ArrowLeftRight, ArrowRight, Check, ChevronDown, ChevronRight, Sparkles, TriangleAlert } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -16,6 +16,7 @@ import type { FileEntry, PhotoRow } from '@/types'
 import { SUPPORTED_RAW_EXTENSIONS } from '@/lib/constants'
 import { IdLineZoom } from './IdLineZoom'
 import { RotationBadge } from './RotationBadge'
+import { PhotoViewer } from './PhotoViewer'
 
 /**
  * The review by specimen: one card per ID with its photos side by side (dorsal, ventral), the ID
@@ -31,6 +32,8 @@ interface Props {
   onToggle: (key: number) => void
   onUpdateRow: (photoId: number, updates: Partial<PhotoRow>) => void
   onUpdateRows: (photoIds: number[], updates: Partial<PhotoRow>) => void
+  /** a specimen's d and v the other way round */
+  onSwapViews: (photoIds: number[]) => void
 }
 
 const VALID = /^CAM\d{6}$/
@@ -76,6 +79,7 @@ function PhotoCell({ row, onUpdate }: { row: PhotoRow; onUpdate: (updates: Parti
   const hostChange = useProcessingStore((s) => s.hostChanges.get(row.from))
   const hostName = useProcessingStore((s) => s.hostName)
   const [more, setMore] = useState(false)
+  const [viewing, setViewing] = useState(false)
   const url = useThumb(row, file)
   // its RAW file (shown when the folder's RAW files are), turned as it is now: it should match the photo
   const raw = useProcessingStore((s) => rawOf(row.currentPath, s.imageFiles))
@@ -86,7 +90,12 @@ function PhotoCell({ row, onUpdate }: { row: PhotoRow; onUpdate: (updates: Parti
   return (
     <div id={`card-${row.photoId}`} className={`min-w-0 max-w-[50%] flex-1 space-y-1 ${skipped ? 'opacity-50' : ''}`}>
       <div className="relative overflow-hidden rounded-sm border bg-muted/40 leading-none">
-        {url ? <img src={url} alt={row.from} className="max-h-44 w-full object-contain" /> : <div className="h-28" />}
+        {url ? (
+          <button type="button" className="block w-full cursor-zoom-in" title="See it large" onClick={() => setViewing(true)}>
+            <img src={url} alt={row.from} className="max-h-44 w-full object-contain" />
+          </button>
+        ) : <div className="h-28" />}
+        {file && viewing && <PhotoViewer open={viewing} onOpenChange={setViewing} title={row.currentPath} file={file} raw={raw} pending={pendingRotation(row)} />}
         {file && <RotationBadge row={row} onChange={onUpdate} />}
         {rawUrl && (
           <figure className="absolute bottom-1 right-1 m-0 overflow-hidden rounded-sm border-2 border-background bg-background shadow" title="Its RAW file, turned as it is now">
@@ -96,7 +105,10 @@ function PhotoCell({ row, onUpdate }: { row: PhotoRow; onUpdate: (updates: Parti
         )}
       </div>
       <div className="flex items-baseline gap-1.5 text-[11px]" title={row.to ? `${row.currentPath} → ${row.to}` : row.currentPath}>
-        <span className="rounded bg-muted px-1 font-mono font-semibold">{skipped ? 'skip' : row.suffix || '–'}</span>
+        <span className={`rounded px-1 font-mono font-semibold ${row.viewBy ? 'bg-sky-500/15 text-sky-800 dark:text-sky-300' : 'bg-muted'}`}
+          title={row.viewBy === 'wings' ? 'Named by its wings: this side was photographed out of the usual order' : row.viewBy === 'manual' ? 'Set by hand (empty it under «more» to go back)' : 'By the order taken'}>
+          {skipped ? 'skip' : row.suffix || '–'}{!skipped && row.viewBy === 'wings' ? ' · by its wings' : ''}
+        </span>
         <span className="truncate text-muted-foreground">{row.currentPath}</span>
         {row.status === 'Renamed' && <Check className="h-3 w-3 flex-shrink-0 text-emerald-600" aria-label="Renamed" />}
       </div>
@@ -164,10 +176,11 @@ function PhotoCell({ row, onUpdate }: { row: PhotoRow; onUpdate: (updates: Parti
   )
 }
 
-function SpecimenCard({ specimen, onUpdateRow, onUpdateRows, onClose }: {
+function SpecimenCard({ specimen, onUpdateRow, onUpdateRows, onSwapViews, onClose }: {
   specimen: Specimen
   onUpdateRow: Props['onUpdateRow']
   onUpdateRows: Props['onUpdateRows']
+  onSwapViews: Props['onSwapViews']
   onClose?: () => void
 }) {
   const first = specimen.rows[0]
@@ -177,6 +190,7 @@ function SpecimenCard({ specimen, onUpdateRow, onUpdateRows, onClose }: {
   const ok = specimen.state === 'ok'
   // dorsal and ventral: only the standard naming expects two photos of a specimen
   const pairs = useSettingsStore((s) => s.suffixMode === 'Standard')
+  const views = specimen.rows.filter((r) => r.skip !== 'x').map((r) => r.suffix)
   return (
     <div className={`space-y-2 rounded-lg border bg-card p-2.5 ${ok ? '' : 'ring-2 ring-amber-500/70'}`} data-specimen={specimen.id || 'none'}>
       <div className="flex items-center gap-2">
@@ -201,6 +215,12 @@ function SpecimenCard({ specimen, onUpdateRow, onUpdateRows, onClose }: {
         <span className={`ml-auto flex-shrink-0 rounded px-1.5 py-0.5 text-[11px] ${ok ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'}`}>
           {specimenNote(specimen)}
         </span>
+        {pairs && views.includes('d') && views.includes('v') && (
+          <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" title="The dorsal photo is the other one: swap d and v"
+            onClick={() => onSwapViews(ids)}>
+            <ArrowLeftRight className="h-3.5 w-3.5" /> Swap d/v
+          </Button>
+        )}
         {waiting.length > 0 && (
           <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" disabled={!VALID.test(specimen.id)}
             title="The ID is right: confirm its photos (Enter)" onClick={() => onUpdateRows(waiting, { review: '' })}>
@@ -243,7 +263,7 @@ function SpecimenLine({ specimen: s, onOpen }: { specimen: Specimen; onOpen: () 
   )
 }
 
-export function SpecimenGrid({ specimens, open, onToggle, onUpdateRow, onUpdateRows }: Props) {
+export function SpecimenGrid({ specimens, open, onToggle, onUpdateRow, onUpdateRows, onSwapViews }: Props) {
   const [shown, setShown] = useState(FIRST)
   // Every butterfly's photos, the ready ones too (to look through the whole batch): kept for next time.
   const [allOpen, setAllOpen] = useState(() => localStorage.getItem(ALL_OPEN_KEY) === '1')
@@ -264,7 +284,7 @@ export function SpecimenGrid({ specimens, open, onToggle, onUpdateRow, onUpdateR
   const attention = specimens.filter((s) => s.state !== 'ok')
   const ready = specimens.filter((s) => s.state === 'ok')
   const card = (s: Specimen, closable: boolean) => (
-    <SpecimenCard key={s.key} specimen={s} onUpdateRow={onUpdateRow} onUpdateRows={onUpdateRows} {...(closable ? { onClose: () => onToggle(s.key) } : {})} />
+    <SpecimenCard key={s.key} specimen={s} onUpdateRow={onUpdateRow} onUpdateRows={onUpdateRows} onSwapViews={onSwapViews} {...(closable ? { onClose: () => onToggle(s.key) } : {})} />
   )
   const controls = (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">

@@ -1,10 +1,8 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { useSettingsStore } from '@/stores/settingsStore'
 import { useProcessingStore } from '@/stores/processingStore'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { companionsOf, indexByStem, planRenames } from '@/lib/renamePlan'
@@ -12,13 +10,6 @@ import { writeOrientation } from '@/lib/orientation'
 import { pendingRotation } from '@/lib/rotationPlan'
 import { appendRotationLog, writeRotations } from '@/lib/rotationWrite'
 import { getRotationLog, saveRotationLog } from '@/lib/csvHandler'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Tooltip,
   TooltipContent,
@@ -39,7 +30,7 @@ import { folderAccessHelp, supportsDirectoryPicker, getImageFilesFromHandle } fr
 import { SUPPORTED_RAW_EXTENSIONS } from '@/lib/constants'
 import { getErrorMessage, getErrorName } from '@/lib/errors'
 import { logger } from '@/lib/logger'
-import type { PhotoRow, SuffixMode } from '@/types'
+import type { PhotoRow } from '@/types'
 import {
   Save,
   Download,
@@ -140,7 +131,6 @@ export function ReviewActionBar({
   hasData,
   rowsToActOn,
 }: Props) {
-  const { suffixMode, customSuffixes, updateSetting } = useSettingsStore()
   const { photoRows, fileMap, renameCompanions, setPhotoRows, setRenameCompanions } = useProcessingStore()
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null)
   const [isRenaming, setIsRenaming] = useState(false)
@@ -211,7 +201,8 @@ export function ReviewActionBar({
     }
 
     // photos still waiting for review are never renamed
-    const rowsToRename = rowsToActOn.filter((r) => r.to?.trim() && r.skip !== 'x' && r.status !== 'Renamed' && !r.review)
+    // a photo no longer in the folder has nothing to rename
+    const rowsToRename = rowsToActOn.filter((r) => r.to?.trim() && r.skip !== 'x' && r.status !== 'Renamed' && !r.review && (fileMap.has(r.from) || fileMap.has(r.currentPath)))
     const waiting = rowsToActOn.filter((r) => r.review && r.skip !== 'x').length
     if (waiting) toast.info(`${waiting} photo(s) still need review and will keep their names.`)
     if (rowsToRename.length === 0 && (mode === 'rename' || pendingCount === 0)) {
@@ -416,37 +407,6 @@ export function ReviewActionBar({
     <div className="border-t bg-card px-3 py-2 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         {advanced && (<>
-        {/* Suffix mode */}
-        <Select
-          value={suffixMode}
-          onValueChange={(v) => updateSetting('suffixMode', v as SuffixMode)}
-        >
-          <SelectTrigger className="h-8 w-44 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="Standard" className="text-xs">
-              Standard (d, v, d2, v2, ...)
-            </SelectItem>
-            <SelectItem value="Wing Clips" className="text-xs">
-              Wing Clips (v1, v2, v3, ...)
-            </SelectItem>
-            <SelectItem value="Custom" className="text-xs">
-              Custom
-            </SelectItem>
-          </SelectContent>
-        </Select>
-
-        {suffixMode === 'Custom' && (
-          <Input
-            value={customSuffixes}
-            onChange={(e) => updateSetting('customSuffixes', e.target.value)}
-            placeholder="d,v,body"
-            className="h-8 w-28 text-xs"
-          />
-        )}
-
-        <div className="mx-1 h-5 w-px bg-border" />
 
         <div className="flex items-center gap-1.5">
           <Checkbox

@@ -85,7 +85,9 @@ describe("the host's corrections", () => {
     expect(rows[3]).toMatchObject({ mainValue: 'CAM077002', review: 'out-of-sequence' })
     expect(rows[5]).toMatchObject({ suffix: 'v', to: 'CAM077003v.JPG' })
     expect(rows[6]).toMatchObject({ suffix: 'v2', to: 'CAM077003v2.JPG' })
-    expect(changes.map((c) => c.what)).toEqual([['ID CAM077008 → CAM077002'], ['view v2']])
+    // a view set is kept as set, also one the order gave already
+    expect(changes.map((c) => c.what)).toEqual([['ID CAM077008 → CAM077002'], ['view v'], ['view v2']])
+    expect(rows[5].viewBy).toBe('manual')
   })
 
   it('takes two rounds of changes back to the first state', () => {

@@ -11,6 +11,7 @@ import { SpecimenGrid } from './SpecimenGrid'
 import { HostChangesStrip } from './HostChangesStrip'
 import { ReviewActionBar } from './ReviewActionBar'
 import { IdTimeline } from './IdTimeline'
+import { FolderStrip } from './FolderStrip'
 
 /** `toolbarSlot`: a place in the bar above for the review's few controls (the many of «More options» keep a row). */
 export function ReviewPane({ focus, toolbarSlot }: { focus?: { photoId: number } | null; toolbarSlot?: HTMLElement | null }) {
@@ -74,10 +75,11 @@ export function ReviewPane({ focus, toolbarSlot }: { focus?: { photoId: number }
       {inline ? createPortal(toolbar, toolbarSlot!) : toolbar}
 
       <IdTimeline rows={hook.photoRows} onJump={jumpTo} />
+      <FolderStrip />
       <HostChangesStrip rows={hook.photoRows} onJump={jumpTo} />
 
       {bySpecimen ? (
-        <SpecimenGrid specimens={specimens} open={open} onToggle={toggle} onUpdateRow={hook.updateRow} onUpdateRows={hook.updateRows} />
+        <SpecimenGrid specimens={specimens} open={open} onToggle={toggle} onUpdateRow={hook.updateRow} onUpdateRows={hook.updateRows} onSwapViews={hook.swapViews} />
       ) : (<>
         <ReviewPagination
           currentPage={hook.currentPage}
@@ -96,7 +98,7 @@ export function ReviewPane({ focus, toolbarSlot }: { focus?: { photoId: number }
         onSave={hook.saveChanges}
         onExportCsv={hook.exportCsv}
         hasData={hook.photoRows.length > 0}
-        rowsToActOn={hook.filteredRows}
+        rowsToActOn={hook.batchRows}
       />
     </div>
   )

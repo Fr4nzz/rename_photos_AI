@@ -100,6 +100,8 @@ export function parseCsv(csvText: string, mainColumn: string): PhotoRow[] {
       rotChosen: obj['rot_chosen'] ?? '',
       rotSource: (obj['rot_source'] ?? '') as PhotoRow['rotSource'],
       rotApplied: obj['rot_applied'] ?? '',
+      viewBy: (['wings', 'manual'].includes(obj['view_by']) ? obj['view_by'] : '') as PhotoRow['viewBy'],
+      pDorsal: obj['p_dorsal'] ?? '',
     })
   }
 
@@ -113,7 +115,7 @@ export function toCsvString(rows: PhotoRow[], mainColumn: string): string {
   const headers = [
     'from', 'photo_ID', mainColumn, 'co', 'n', 'skip', 'to', 'suffix',
     'batch_number', 'status', 'current_path', 'review', 'suggest',
-    'rot_suggested', 'rot_chosen', 'rot_source', 'rot_applied',
+    'rot_suggested', 'rot_chosen', 'rot_source', 'rot_applied', 'view_by', 'p_dorsal',
   ]
   const lines = [headers.join(',')]
 
@@ -132,7 +134,7 @@ export function toCsvString(rows: PhotoRow[], mainColumn: string): string {
       escapeCsv(row.currentPath),
       escapeCsv(row.review ?? ''),
       escapeCsv(row.suggest ?? ''),
-      row.rotSuggested ?? '', row.rotChosen ?? '', row.rotSource ?? '', row.rotApplied ?? '',
+      row.rotSuggested ?? '', row.rotChosen ?? '', row.rotSource ?? '', row.rotApplied ?? '', row.viewBy ?? '', row.pDorsal ?? '',
     ]
     lines.push(values.join(','))
   }

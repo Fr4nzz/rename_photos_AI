@@ -61,6 +61,10 @@ export interface PhotoRow {
   rotSource: '' | 'ocr' | 'manual' | 'learned' | 'neighbours'
   /** clockwise rotation already written to the file(s) by this app ('' = none) */
   rotApplied: string
+  /** where `suffix` came from: '' the order taken, 'wings' the wings (against that order), 'manual' typed (kept when names are worked out again) */
+  viewBy?: '' | 'wings' | 'manual'
+  /** P(dorsal) of the photo's wings, from the wing check ('' = not checked) */
+  pDorsal?: string
 }
 
 export interface RotationLogEntry {

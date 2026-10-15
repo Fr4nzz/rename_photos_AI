@@ -24,8 +24,9 @@ export interface HostRow {
   now?: string
   n: number
   id: string
-  /** d, v, d2…: by the order the photos of one ID were taken in */
+  /** d, v, d2…: by the order the photos of one ID were taken in, or by their wings (`viewFrom`), or as set */
   view: string
+  viewFrom?: 'wings' | 'manual'
   to: string
   taken: string | null
   status: PhotoRow['status']
@@ -127,6 +128,7 @@ export function snapshotRows(
       n: r.photoId,
       id: r.mainValue.trim(),
       view: r.suffix,
+      ...(r.viewBy ? { viewFrom: r.viewBy } : {}),
       to: r.to,
       taken: r.captureDate,
       status: r.status,
@@ -225,23 +227,25 @@ export function applyEdits(
     if (e.view !== undefined && String(e.view).trim()) views.set(row.photoId, String(e.view).trim().slice(0, 6))
     if (what.length || views.has(row.photoId)) changes.push({ file: row.from, what: what.filter(Boolean), before, ...(idChange ? { id: idChange } : {}) })
   }
+  // a view set stays as set (like one typed); the ID's other photos follow when the names are worked out
+  for (const [photoId, view] of views) {
+    const row = out.find((r) => r.photoId === photoId)!
+    const c = changes.find((x) => x.file === row.from)!
+    if ((row.suffix === view && row.viewBy === 'manual') || !row.mainValue.trim()) continue
+    if (!('suffix' in c.before)) Object.assign(c.before, { suffix: row.suffix, to: row.to, viewBy: row.viewBy ?? '' })
+    row.suffix = view
+    row.viewBy = 'manual'
+    c.what.push(`view ${view}`)
+    rename = true
+  }
   if (rename) {
     const named = calculateFinalNames(out, names.mainColumn, names.suffixMode, names.customSuffixes)
     out = named.map((r, i) => {
       const c = changes.find((x) => x.file === r.from)
       // names of other rows move too (a third photo of an ID becomes d2): theirs are not "changes"
-      if (c && !('suffix' in c.before) && r.suffix !== rows[i].suffix) Object.assign(c.before, { suffix: rows[i].suffix, to: rows[i].to })
+      if (c && !('suffix' in c.before) && r.suffix !== rows[i].suffix) Object.assign(c.before, { suffix: rows[i].suffix, to: rows[i].to, viewBy: rows[i].viewBy ?? '' })
       return r
     })
-  }
-  for (const [photoId, view] of views) {
-    const row = out.find((r) => r.photoId === photoId)!
-    const c = changes.find((x) => x.file === row.from)!
-    if (row.suffix === view || !row.mainValue.trim()) continue
-    if (!('suffix' in c.before)) Object.assign(c.before, { suffix: row.suffix, to: row.to })
-    row.suffix = view
-    row.to = `${row.mainValue.trim()}${view}${row.from.slice(row.from.lastIndexOf('.'))}`
-    c.what.push(`view ${view}`)
   }
   return { rows: out, changes: changes.filter((c) => c.what.length), problems }
 }
@@ -256,7 +260,7 @@ export function undoEdits(
   const first = new Map<string, Partial<PhotoRow>>()
   for (const c of changes) first.set(c.file, { ...c.before, ...(first.get(c.file) ?? {}) })
   const restored = rows.map((r) => (first.has(r.from) ? { ...r, ...first.get(r.from) } : r))
-  const views = new Map(restored.filter((r) => 'suffix' in (first.get(r.from) ?? {})).map((r) => [r.photoId, { suffix: r.suffix, to: r.to }]))
+  const views = new Map(restored.filter((r) => 'suffix' in (first.get(r.from) ?? {})).map((r) => [r.photoId, { suffix: r.suffix, to: r.to, viewBy: r.viewBy }]))
   // the names of the other photos of the IDs concerned follow, as after a person's edit
   const named = calculateFinalNames(restored, names.mainColumn, names.suffixMode, names.customSuffixes)
   return named.map((r) => (views.has(r.photoId) && r.mainValue.trim() ? { ...r, ...views.get(r.photoId)! } : r))

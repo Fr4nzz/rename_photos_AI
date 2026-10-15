@@ -5,8 +5,8 @@
  * results are kept with the batch (beside the CSV) and told to the hosting page's assistant.
  */
 import { SUPPORTED_RAW_EXTENSIONS } from '../constants'
-import { saveCsvToFolder, saveCsvToStorage, toCsvString } from '../csvHandler'
-import { saveSidecar } from '../reviewSidecar'
+import { saveBatch } from '../saveBatch'
+import { calculateFinalNames } from '../nameCalculator'
 import { useProcessingStore } from '@/stores/processingStore'
 import type { PhotoRow } from '@/types'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -98,11 +98,22 @@ export async function checkPhotos(rows: PhotoRow[], onProgress: (done: number, t
   return out
 }
 
-/** The rows with the wings' findings among their reasons, the results kept in the store. */
-export function applyWingChecks(rows: PhotoRow[], checks: Map<string, WingCheck>): { rows: PhotoRow[]; flagged: number } {
-  const findings = wingFindings(rows, checks, useSettingsStore.getState().suffixMode)
+/**
+ * The rows with their wings' P(dorsal), their views worked out again (the wings name a pair shot
+ * ventral side first, or a CRISPR set), and the wings' findings among their reasons (of the photos
+ * in `only`, when given); the results kept in the store.
+ */
+export function applyWingChecks(rows: PhotoRow[], checks: Map<string, WingCheck>, only?: Set<string>): { rows: PhotoRow[]; flagged: number } {
+  const { suffixMode, mainColumn, customSuffixes } = useSettingsStore.getState()
+  const sided = rows.map((r) => {
+    const p = checks.get(r.from)?.p
+    return { ...r, pDorsal: p === null || p === undefined ? '' : String(Math.round(p * 10000) / 10000) }
+  })
+  const named = calculateFinalNames(sided, mainColumn, suffixMode, customSuffixes)
+  const findings = wingFindings(named, checks, suffixMode)
   useProcessingStore.getState().setWingChecks(checks)
-  return { rows: withWingReasons(rows, findings, checks), flagged: findings.size }
+  const flagged = only ? [...findings.keys()].filter((k) => only.has(k)).length : findings.size
+  return { rows: withWingReasons(named, findings, checks, only), flagged }
 }
 
 /**
@@ -127,17 +138,9 @@ export async function checkWings(): Promise<number | null> {
   for (const [k, v] of fresh) done.set(k, v)
   const s = useProcessingStore.getState()
   s.setWingRun(null)
-  const { rows, flagged } = applyWingChecks(s.photoRows, done)
+  const { rows, flagged } = applyWingChecks(s.photoRows, done, new Set(fresh.keys()))
   s.setPhotoRows(rows)
-  const { mainColumn } = useSettingsStore.getState()
-  if (s.currentCsvName) {
-    const text = toCsvString(rows, mainColumn)
-    await saveCsvToStorage(s.currentCsvName, text)
-    if (s.dirHandle) {
-      await saveCsvToFolder(s.dirHandle, s.currentCsvName, text)
-      await saveSidecar(s.dirHandle, s.currentCsvName)
-    }
-  }
+  await saveBatch(rows)
   return flagged
 }
 

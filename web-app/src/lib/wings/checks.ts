@@ -124,9 +124,12 @@ export function wingFindings(rows: PhotoRow[], checks: Map<string, WingCheck>, s
 /**
  * The rows with each finding's code among the reasons to look at them (once). A photo left to check
  * which way up it is ('turn-unsure') no longer waits for that when its wings agree with its turn.
+ * `only`: the photos just checked (the others are left as they are).
  */
-export function withWingReasons(rows: PhotoRow[], findings: Map<string, WingFinding[]>, checks: Map<string, WingCheck>): PhotoRow[] {
+export function withWingReasons(rows: PhotoRow[], findings: Map<string, WingFinding[]>, checks: Map<string, WingCheck>, only?: Set<string>): PhotoRow[] {
   return rows.map((r) => {
+    // photos checked before keep the reasons a person already dealt with
+    if (only && !only.has(r.from)) return r
     const codes = [...new Set((findings.get(r.from) ?? []).map((f) => f.code))]
     const reasons = r.review.split(',').filter(Boolean)
     const check = checks.get(r.from)
