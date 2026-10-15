@@ -19,6 +19,8 @@ describe.skipIf(!existsSync(REF))('wing models, port vs reference', () => {
     const seg = await ort.InferenceSession.create(`${MODELS}wingseg_640.onnx`, opt)
     const cls = await ort.InferenceSession.create(`${MODELS}wing_side_cls.onnx`, opt)
     const cfg: WingConfig = JSON.parse(readFileSync(`${MODELS}wingside.json`, 'utf8'))
+    // the reference ran at the export's cut-off; the app takes fainter wings too (the classifier says which are wings)
+    cfg.segmentation.conf = 0.25
     const backend: WingBackend = {
       async segment(x, S) {
         const o = await seg.run({ images: new ort.Tensor('float32', x, [1, 3, S, S]) })
