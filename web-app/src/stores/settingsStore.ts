@@ -31,6 +31,9 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'ai-photo-processor-settings',
+      // 1: RAW files shown among the photos by default (people looked for them)
+      version: 1,
+      migrate: (state, version) => (version < 1 ? { ...(state as object), previewRaw: true } : state) as SettingsState,
     }
   )
 )

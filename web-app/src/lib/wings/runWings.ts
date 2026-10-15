@@ -1,8 +1,8 @@
 /**
- * The wing check of a batch, after the reading: the wing models in their own workers (the readers'
- * are idle by then), one photo per worker at a time, so the IDs read are in Review first and the
- * check fills in. Its findings join the reasons to look at a photo, and its results are kept with
- * the batch (beside the CSV) and told to the hosting page's assistant.
+ * The wing check: the wing models in their own workers (the readers' are idle by then), one photo per
+ * worker at a time. A reading runs it after the IDs (its findings join the reasons to look at a photo,
+ * and the wings vote on the batch's turn); Review's button runs it on photos not checked yet. The
+ * results are kept with the batch (beside the CSV) and told to the hosting page's assistant.
  */
 import { SUPPORTED_RAW_EXTENSIONS } from '../constants'
 import { saveCsvToFolder, saveCsvToStorage, toCsvString } from '../csvHandler'
@@ -11,7 +11,7 @@ import { useProcessingStore } from '@/stores/processingStore'
 import type { PhotoRow } from '@/types'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { toast } from 'sonner'
-import { wingFindings, withWingReasons } from './checks'
+import { wingFindings, withWingReasons, type WingCheck } from './checks'
 import type { WingRequest, WingResponse } from './wingWorker'
 
 const BASE = import.meta.env.BASE_URL
@@ -66,7 +66,7 @@ export const fileOf = (row: PhotoRow): File | undefined => {
 }
 let running: AbortController | null = null
 
-/** Stops a check under way (a new reading starts, or another folder opens). */
+/** Stops a check started from Review's button (another folder opens, or a new reading starts). */
 export function stopWingCheck() {
   running?.abort()
   running = null
@@ -74,54 +74,62 @@ export function stopWingCheck() {
 }
 
 /**
- * Checks the wings of the batch's photos not checked yet (all of them with `again`), then adds the
- * findings to the rows and saves. Returns the number of photos with a finding (null: stopped).
+ * The wings of `rows`' photos, by original name; `onProgress` after each photo. A photo that cannot
+ * be checked is left out. Stops early with the signal (its results so far are returned).
  */
-export async function checkWings({ again = false } = {}): Promise<number | null> {
+export async function checkPhotos(rows: PhotoRow[], onProgress: (done: number, total: number) => void, signal: AbortSignal): Promise<Map<string, WingCheck>> {
+  const out = new Map<string, WingCheck>()
+  const todo = rows.filter((r) => fileOf(r))
+  if (!todo.length) return out
+  pool ??= new WingPool((navigator.hardwareConcurrency ?? 2) >= 6 ? 2 : 1)
+  await pool.whenReady()
+  let next = 0, count = 0
+  const lane = async (worker: number) => {
+    while (next < todo.length && !signal.aborted) {
+      const row = todo[next++]
+      const file = fileOf(row)
+      const res = file ? await pool!.check(worker, file) : null
+      if (signal.aborted) return
+      if (res && 'ok' in res && res.ok) out.set(row.from, { ...res.result, applied: Number(row.rotApplied || 0) })
+      onProgress(++count, todo.length)
+    }
+  }
+  await Promise.all(Array.from({ length: pool.size }, (_, i) => lane(i)))
+  return out
+}
+
+/** The rows with the wings' findings among their reasons, the results kept in the store. */
+export function applyWingChecks(rows: PhotoRow[], checks: Map<string, WingCheck>): { rows: PhotoRow[]; flagged: number } {
+  const findings = wingFindings(rows, checks, useSettingsStore.getState().suffixMode)
+  useProcessingStore.getState().setWingChecks(checks)
+  return { rows: withWingReasons(rows, findings, checks), flagged: findings.size }
+}
+
+/**
+ * Review's button: checks the photos not checked yet (a batch read before the check existed, or
+ * one stopped), adds the findings to the rows and saves. Returns the photos flagged (null: stopped).
+ */
+export async function checkWings(): Promise<number | null> {
   stopWingCheck()
   const controller = new AbortController()
   running = controller
   const store = useProcessingStore.getState()
   // another folder opened meanwhile: its photos may have the same names
   const moved = () => useProcessingStore.getState().dirHandle !== store.dirHandle
-  const done = new Map(again ? [] : store.wingChecks)
-  const todo = store.photoRows.filter((r) => !done.has(r.from) && fileOf(r))
-  const applied = new Map(store.photoRows.map((r) => [r.from, Number(r.rotApplied || 0)]))
-  if (todo.length) {
-    store.setWingRun({ done: 0, total: todo.length })
-    pool ??= new WingPool((navigator.hardwareConcurrency ?? 2) >= 6 ? 2 : 1)
-    await pool.whenReady()
-    let next = 0, count = 0
-    const lane = async (worker: number) => {
-      while (next < todo.length && !controller.signal.aborted) {
-        const row = todo[next++]
-        const file = fileOf(row)
-        const res = file ? await pool!.check(worker, file) : null
-        if (controller.signal.aborted || moved()) return controller.abort()
-        if (res && 'ok' in res && res.ok) done.set(row.from, { ...res.result, applied: applied.get(row.from) ?? 0 })
-        const s = useProcessingStore.getState()
-        s.setWingChecks(new Map(done))
-        s.setWingRun({ done: ++count, total: todo.length })
-      }
-    }
-    await Promise.all(Array.from({ length: pool.size }, (_, i) => lane(i)))
-    if (controller.signal.aborted) {
-      if (moved()) useProcessingStore.getState().setWingRun(null)
-      return null
-    }
-  }
+  const done = new Map(store.wingChecks)
+  store.setWingRun({ done: 0, total: 0 })
+  const fresh = await checkPhotos(store.photoRows.filter((r) => !done.has(r.from)), (n, total) => {
+    if (moved()) controller.abort()
+    useProcessingStore.getState().setWingRun({ done: n, total })
+  }, controller.signal)
+  if (controller.signal.aborted) return null
   running = null
+  for (const [k, v] of fresh) done.set(k, v)
   const s = useProcessingStore.getState()
-  const { suffixMode, mainColumn } = useSettingsStore.getState()
-  s.setWingChecks(done)
   s.setWingRun(null)
-  const findings = wingFindings(s.photoRows, done, suffixMode)
-  const rows = withWingReasons(s.photoRows, findings, done)
-  if (rows.some((r, i) => r !== s.photoRows[i])) {
-    s.setPhotoRows(rows)
-    const review = rows.filter((r) => r.review).length
-    if (!s.isProcessing && s.progress.message.startsWith('Done:')) s.setProgress(100, `Done: ${rows.length - review} ready, ${review} to review`)
-  }
+  const { rows, flagged } = applyWingChecks(s.photoRows, done)
+  s.setPhotoRows(rows)
+  const { mainColumn } = useSettingsStore.getState()
   if (s.currentCsvName) {
     const text = toCsvString(rows, mainColumn)
     await saveCsvToStorage(s.currentCsvName, text)
@@ -130,15 +138,18 @@ export async function checkWings({ again = false } = {}): Promise<number | null>
       await saveSidecar(s.dirHandle, s.currentCsvName)
     }
   }
-  return findings.size
+  return flagged
 }
 
-/** The check, and a word when it is done: on its own after a reading, or from Review's button. */
-export async function runWingCheck(again = false) {
+/** What the check found, in a few words. */
+export const wingSummary = (flagged: number) =>
+  flagged ? `${flagged} photo(s) flagged by their wings (named d/v against them, a wing fewer, or turned)` : 'the wings match every name'
+
+/** Review's button, with a word when it is done. */
+export async function runWingCheck() {
   try {
-    const flagged = await checkWings({ again })
-    if (flagged === null) return
-    toast.info(flagged ? `Wing check: ${flagged} photo(s) to look at (named d/v against their wings, a wing fewer, or upside down).` : 'Wing check: every photo matches its name.')
+    const flagged = await checkWings()
+    if (flagged !== null) toast.info(`Wing check: ${wingSummary(flagged)}.`)
   } catch (e) {
     toast.error(`The wing check failed: ${e instanceof Error ? e.message : String(e)}`)
   }

@@ -31,4 +31,16 @@ describe('oneTurn', () => {
     expect(out[3].rotChosen).toBe('90')
     expect(out[4].rotChosen).toBe('0')
   })
+  it('the wings settle what the envelopes leave unsure, and win over envelopes laid down turned', () => {
+    // envelopes sideways (no say), the camera's tags random: the wings ask for 180 in the camera frame
+    const rows = [row('a', 0, '270'), row('b', 1, '90'), row('c', 2, ''), row('d', 3, '')]
+    const tags = new Map<string, number | null>([['a', 0], ['b', 180], ['c', 0], ['d', 180]])
+    const wings = new Map<string, number | null>([['a', 180], ['b', 0], ['c', 180], ['d', null]])
+    const out = oneTurn(rows, wide(rows), tags, wings)
+    expect(out.map((r) => [r.rotChosen, r.review])).toEqual([['180', ''], ['0', ''], ['180', ''], ['0', '']])
+    // three envelopes read upright, the wings of four photos upside down: the wings
+    const turned = [row('a', 0, '0'), row('b', 1, '0'), row('c', 2, '0'), row('d', 3, '')]
+    const all180 = new Map<string, number | null>(turned.map((r) => [r.from, 180]))
+    expect(oneTurn(turned, wide(turned), zero(turned), all180).map((r) => r.rotChosen)).toEqual(['180', '180', '180', '180'])
+  })
 })

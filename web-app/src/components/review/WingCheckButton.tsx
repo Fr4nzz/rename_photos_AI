@@ -9,6 +9,8 @@ export function WingCheckButton() {
   const run = useProcessingStore((s) => s.wingRun)
   const unchecked = useProcessingStore((s) => s.photoRows.filter((r) => (s.fileMap.has(r.from) || s.fileMap.has(r.currentPath)) && !s.wingChecks.has(r.from)).length)
   const clips = useSettingsStore((s) => s.suffixMode === 'Wing Clips')
+  // a reading checks the wings itself
+  const reading = useProcessingStore((s) => s.isProcessing)
   if (run) {
     return (
       <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={stopWingCheck}
@@ -18,9 +20,9 @@ export function WingCheckButton() {
       </Button>
     )
   }
-  if (!unchecked || clips) return null
+  if (!unchecked || clips || reading) return null
   return (
-    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => runWingCheck()}
+    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={runWingCheck}
       title="Check the wings of the photos: the side they show against d/v, a wing fewer in one photo of a pair, and which way up. Runs on this computer.">
       <Feather className="h-3.5 w-3.5" />
       Check wings ({unchecked})

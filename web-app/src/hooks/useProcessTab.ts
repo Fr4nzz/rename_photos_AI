@@ -2,7 +2,9 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { appendRotationLog, listFolder, writeRotations } from '@/lib/rotationWrite'
 import { toast } from 'sonner'
 import { runLocalOcr } from '@/lib/ocr/runLocal'
-import { runWingCheck, stopWingCheck } from '@/lib/wings/runWings'
+import { applyWingChecks, checkPhotos, stopWingCheck, wingSummary } from '@/lib/wings/runWings'
+import { wingTurn, type WingCheck } from '@/lib/wings/checks'
+import { oneTurn } from '@/lib/rotationPlan'
 import { calculateFinalNames } from '@/lib/nameCalculator'
 import type { PhotoRow } from '@/types'
 import { restoreSidecar, saveSidecar } from '@/lib/reviewSidecar'
@@ -424,14 +426,29 @@ export function useProcessTab() {
     processing.setPhotoRows(baseRows)
     processing.setFileMap(new Map(files.map((entry) => [entry.name, entry.file])))
     const started = performance.now()
+    // the wings are checked after the IDs are read (not on wing clips): the reading's bar has both
+    const withWings = settings.suffixMode !== 'Wing Clips'
+    const share = withWings ? 50 : 100
+    const eta = (since: number, done: number, total: number) => (done ? Math.round(((performance.now() - since) / 1000 / done) * (total - done)) : 0)
     try {
       const result = await runLocalOcr(files, baseRows, (done, total) => {
-        const secs = (performance.now() - started) / 1000
-        const eta = done ? Math.round((secs / done) * (total - done)) : 0
-        processing.setProgress(Math.floor((done / total) * 100), `Read ${done}/${total} photos · ~${eta}s left`)
+        processing.setProgress(Math.floor((done / total) * share), `Read ${done}/${total} photos · ~${eta(started, done, total)}s left`)
       }, abortController.signal)
       if (abortController.signal.aborted) return
-      let rows = calculateFinalNames(result.rows, settings.mainColumn, settings.suffixMode, settings.customSuffixes)
+      let rows = result.rows
+      let checks = new Map<string, WingCheck>()
+      if (withWings) {
+        processing.setProgress(share, 'Checking the wings…')
+        const since = performance.now()
+        checks = await checkPhotos(result.unturned, (done, total) => {
+          processing.setProgress(share + Math.floor((done / total) * share), `Checked the wings of ${done}/${total} photos · ~${eta(since, done, total)}s left`)
+        }, abortController.signal)
+        if (abortController.signal.aborted) return
+        // the batch's turn again, the wings voting too: they say where the forewings are
+        const wingCw = new Map(result.unturned.map((r) => [r.from, checks.has(r.from) ? wingTurn(checks.get(r.from)!, r) : null]))
+        rows = oneTurn(result.unturned, result.landscape, result.tagCw, wingCw)
+      }
+      rows = calculateFinalNames(rows, settings.mainColumn, settings.suffixMode, settings.customSuffixes)
       let turned = 0
       if (settings.autoRotate && !currentDirHandle) {
         toast.info(`Rotations are suggested in Review but cannot be written: ${folderAccessHelp()}`, { duration: 12000 })
@@ -451,6 +468,8 @@ export function useProcessTab() {
         const fresh = new Map(freshEntries.map((e) => [e.name, e.file]))
         processing.setFileMap(new Map(rows.flatMap((r) => (fresh.has(r.currentPath) ? [[r.from, fresh.get(r.currentPath)!]] : []))))
       }
+      let flagged = 0
+      if (withWings) ({ rows, flagged } = applyWingChecks(rows, checks))
       processing.setPhotoRows(rows)
       processing.setOcrReadings(result.readings)
       const csvName = `${folderName || currentDirHandle?.name || 'results'}_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.csv`
@@ -464,10 +483,8 @@ export function useProcessTab() {
       }
       const review = rows.filter((r) => r.review).length
       processing.setProgress(100, `Done: ${rows.length - review} ready, ${review} to review`)
-      toast.success(`Read ${rows.length} photos: ${rows.length - review} ready to rename, ${review} to review${turned ? ` · turned ${turned} upright` : ''}.`)
+      toast.success(`Read ${rows.length} photos: ${rows.length - review} ready to rename, ${review} to review${turned ? ` · turned ${turned} upright` : ''}${withWings ? ` · ${wingSummary(flagged)}` : ''}.`)
       if (result.database.source === 'bundled') toast.warning('Could not reach the specimen database; used the copy bundled with the app.')
-      // the wings after the IDs: Review is usable meanwhile, and the photos they flag join those to look at
-      if (settings.wingCheck && settings.suffixMode !== 'Wing Clips') void runWingCheck(true)
     } catch (e: unknown) {
       toast.error(`Reading failed: ${getErrorMessage(e)}`)
     } finally {

@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
-import { Cpu, Play, ScanText, Sparkles, Square, Wand2, SlidersHorizontal, Feather } from 'lucide-react'
+import { Cpu, Play, ScanText, Sparkles, Square, Wand2, SlidersHorizontal } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { listStoredCsvs } from '@/lib/csvHandler'
 import type { RunMode } from '@/types'
@@ -27,10 +27,12 @@ interface Props {
   /** folder controls shown at the start of the bar */
   children?: ReactNode
   geminiHook: ReturnType<typeof useProcessTab>
+  /** «More options» is in the review's controls, in this bar */
+  optionsElsewhere?: boolean
 }
 
-export function ProcessingControls({ onStart, onStop, hasImages, children, geminiHook }: Props) {
-  const { modelName, engine, autoRotate, wingCheck, updateSetting } = useSettingsStore()
+export function ProcessingControls({ onStart, onStop, hasImages, children, geminiHook, optionsElsewhere = false }: Props) {
+  const { modelName, engine, autoRotate, updateSetting } = useSettingsStore()
   const { apiKeys } = useApiKeysStore()
   const {
     isProcessing,
@@ -61,7 +63,7 @@ export function ProcessingControls({ onStart, onStop, hasImages, children, gemin
       <div className="flex flex-wrap items-center gap-2">
         {children}
         <div className="flex-1" />
-        {!advanced && local && (
+        {!advanced && local && !optionsElsewhere && (
           <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="More options" title="More options: the other reader, results files, copies"
             onClick={() => useProcessingStore.getState().setAdvanced(true)}>
             <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -166,33 +168,19 @@ export function ProcessingControls({ onStart, onStop, hasImages, children, gemin
               </TooltipContent>
             </Tooltip>
           )}
-          {local && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={wingCheck ? 'secondary' : 'ghost'}
-                  size="sm"
-                  role="switch"
-                  aria-checked={wingCheck}
-                  aria-label="Check wings"
-                  onClick={() => updateSetting('wingCheck', !wingCheck)}
-                  className={`gap-1.5 text-xs ${wingCheck ? '' : 'text-muted-foreground line-through'}`}
-                >
-                  <Feather className="h-3.5 w-3.5" />
-                  Check wings
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {wingCheck
-                  ? 'On: after reading, the wings of each photo are checked on this computer (while you review): the side they show against d/v, a wing fewer in one photo of a pair, and which way up. The photos they flag wait for review.'
-                  : 'Off: no wing check after reading (Review has a button to run it).'}
-              </TooltipContent>
-            </Tooltip>
-          )}
-          <Button size="sm" onClick={onStart} disabled={!canStart} className="gap-1.5">
-            {local ? <ScanText className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-            {local ? 'Run PaddleOCR' : 'Ask AI (Start)'}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button size="sm" onClick={onStart} disabled={!canStart} className="gap-1.5">
+                {local ? <ScanText className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                {local ? 'Read photos' : 'Ask AI (Start)'}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">
+              {local
+                ? 'On this computer: reads the CAMID on each envelope, checks the wings (the side they show against d/v, the same wings in both photos, which way up), and turns the batch upright with Auto-rotate.'
+                : 'Sends the photos to Gemini to read their IDs.'}
+            </TooltipContent>
+          </Tooltip>
         </>)}
       </div>
 

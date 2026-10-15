@@ -38,12 +38,14 @@ export function pendingRotation(row: Pick<PhotoRow, 'rotChosen' | 'rotApplied'>)
  * down vote between those two; one laid down sideways says nothing. With a clear majority (at least
  * TURN_MIN votes, TURN_AGREES of them alike) every photo takes it; otherwise they take the one most
  * voted (none without votes) and are flagged 'turn-unsure': which way up needs a look at the wings.
- * `landscape`: whether each photo shows landscape now (its tag applied; null: unknown); a manual
- * turn is left as it is.
+ * The wings vote too (`wingCw`: the clockwise turn from how each photo shows that puts its forewings
+ * on top, when they are sure of it), and they say what upright is: a clear majority of theirs wins,
+ * the envelopes' otherwise. `landscape`: whether each photo shows landscape now (its tag applied;
+ * null: unknown); a manual turn is left as it is.
  */
 const TURN_MIN = 3
 const TURN_AGREES = 0.8
-export function oneTurn(rows: PhotoRow[], landscape: Map<string, boolean | null>, tagCw: Map<string, number | null>): PhotoRow[] {
+export function oneTurn(rows: PhotoRow[], landscape: Map<string, boolean | null>, tagCw: Map<string, number | null>, wingCw = new Map<string, number | null>()): PhotoRow[] {
   const out = rows.map((r) => ({ ...r }))
   /** Whether the camera's own frame is landscape, from how the photo shows and its tag. */
   const frameWide = (r: PhotoRow): boolean | null => {
@@ -52,17 +54,24 @@ export function oneTurn(rows: PhotoRow[], landscape: Map<string, boolean | null>
     return wide === null || wide === undefined || t === null || t === undefined ? null : (norm(t) % 180 === 0) === wide
   }
   const fits = (sensorTurn: number, wide: boolean) => (norm(sensorTurn) % 180 === 0) === wide
-  const votes = new Map<number, number>()
-  for (const r of rows) {
-    const t = tagCw.get(r.from)
-    const wide = frameWide(r)
-    if (r.rotSource !== 'ocr' || r.rotSuggested === '' || t === null || t === undefined || wide === null) continue
-    const turn = norm(t + Number(r.rotSuggested))
-    if (fits(turn, wide)) votes.set(turn, (votes.get(turn) ?? 0) + 1)
+  /** The batch's turn in the camera's frame from each photo's own (null: it does not say). */
+  const tally = (own: (r: PhotoRow) => number | null) => {
+    const votes = new Map<number, number>()
+    for (const r of rows) {
+      const t = tagCw.get(r.from)
+      const wide = frameWide(r)
+      const cw = own(r)
+      if (cw === null || t === null || t === undefined || wide === null) continue
+      const turn = norm(t + cw)
+      if (fits(turn, wide)) votes.set(turn, (votes.get(turn) ?? 0) + 1)
+    }
+    const total = [...votes.values()].reduce((a, b) => a + b, 0)
+    const [best, most] = [...votes].sort((a, b) => b[1] - a[1])[0] ?? [0, 0]
+    return { best, total, sure: total >= TURN_MIN && most / total >= TURN_AGREES }
   }
-  const total = [...votes.values()].reduce((a, b) => a + b, 0)
-  const [best, most] = [...votes].sort((a, b) => b[1] - a[1])[0] ?? [0, 0]
-  const sure = total >= TURN_MIN && most / total >= TURN_AGREES
+  const envelopes = tally((r) => (r.rotSource === 'ocr' && r.rotSuggested !== '' ? Number(r.rotSuggested) : null))
+  const wings = tally((r) => wingCw.get(r.from) ?? null)
+  const { best, sure } = wings.sure || (!envelopes.sure && wings.total > envelopes.total) ? wings : envelopes
   for (const r of out) {
     const t = tagCw.get(r.from)
     const wide = frameWide(r)

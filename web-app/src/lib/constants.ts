@@ -71,7 +71,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   promptText: DEFAULT_PROMPT,
   rotationAngle: 180,
   useExif: true,
-  previewRaw: false,
+  previewRaw: true,
   cropSettings: { ...DEFAULT_CROP_SETTINGS },
   reviewCropEnabled: true,
   reviewItemsPerPage: 50,
@@ -83,7 +83,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   customSuffixes: 'd,v',
   engine: 'local',
   autoRotate: true,
-  wingCheck: true,
 }
 
 export const GITHUB_REPO_URL = 'https://github.com/Fr4nzz/rename_photos_AI'

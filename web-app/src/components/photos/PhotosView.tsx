@@ -68,6 +68,7 @@ export function PhotosView() {
   const isProcessing = useProcessingStore((s) => s.isProcessing)
   // With results (read, or loaded with the folder) the review is where the work is.
   const [view, setView] = useState<'photos' | 'review'>(() => (useProcessingStore.getState().photoRows.length ? 'review' : 'photos'))
+  const reviewing = view === 'review' && photoRows.length > 0
   const [focus, setFocus] = useState<{ photoId: number } | null>(null)
   const reviewCount = photoRows.filter((r) => r.review).length
 
@@ -110,6 +111,8 @@ export function PhotosView() {
   const [extensionFilter, setExtensionFilter] = useState('all')
   const [sortOption, setSortOption] = useState<ImageSortOption>('name-asc')
   const [busy, setBusy] = useState(false)
+  // the review's few controls sit in the bar above, beside the folder's
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLElement | null>(null)
   const directoryInputProps = {
     webkitdirectory: '',
   } as InputHTMLAttributes<HTMLInputElement>
@@ -339,7 +342,8 @@ export function PhotosView() {
       />
 
       <FolderAccessBanner />
-      <ProcessingControls onStart={hook.startProcessing} onStop={hook.stopProcessing} hasImages={hook.imageFiles.length > 0} geminiHook={hook}>
+      <ProcessingControls onStart={hook.startProcessing} onStop={hook.stopProcessing} hasImages={hook.imageFiles.length > 0} geminiHook={hook}
+        optionsElsewhere={reviewing}>
         <Button variant="outline" size="sm" onClick={openFolder} className="gap-1.5">
           <FolderOpen className="h-3.5 w-3.5" />
           Open folder
@@ -358,10 +362,17 @@ export function PhotosView() {
             <TooltipContent className="max-w-xs">{folderAccessHelp()}</TooltipContent>
           </Tooltip>
         )}
-        <div className="flex items-center gap-1.5">
-          <Checkbox id="select-raw" checked={previewRaw} onCheckedChange={(checked) => setIncludeRaw(!!checked)} />
-          <Label htmlFor="select-raw" className="text-xs">RAW</Label>
-        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center gap-1.5">
+              <Checkbox id="select-raw" checked={previewRaw} onCheckedChange={(checked) => setIncludeRaw(!!checked)} />
+              <Label htmlFor="select-raw" className="text-xs">Show RAW</Label>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">
+            The RAW files (.CR2, .ORF…) among the photos, to see that they are turned like their JPG. They are renamed and turned with their JPG either way; the IDs are read from the JPG.
+          </TooltipContent>
+        </Tooltip>
         {photoRows.length > 0 && (
           <div className="ml-2 flex rounded-md border p-0.5" role="radiogroup" aria-label="View">
             {([['photos', LayoutGrid, 'Photos: select and rotate', null], ['review', ClipboardCheck, 'Review CAMIDs and rename', reviewCount]] as const).map(([value, Icon, tip, count]) => (
@@ -378,10 +389,11 @@ export function PhotosView() {
             ))}
           </div>
         )}
+        {reviewing && <div ref={setToolbarSlot} className="ml-2 flex flex-wrap items-center gap-2" />}
       </ProcessingControls>
 
-      {view === 'review' && photoRows.length > 0 ? (
-        <ReviewPane focus={focus} />
+      {reviewing ? (
+        <ReviewPane focus={focus} toolbarSlot={toolbarSlot} />
       ) : (<>
         <ImageSelectionToolbar
           query={query}

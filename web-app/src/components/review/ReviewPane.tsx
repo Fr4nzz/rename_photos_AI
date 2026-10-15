@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useProcessingStore } from '@/stores/processingStore'
 import { useReviewTab } from '@/hooks/useReviewTab'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { groupSpecimens } from '@/lib/specimens'
@@ -10,7 +12,8 @@ import { HostChangesStrip } from './HostChangesStrip'
 import { ReviewActionBar } from './ReviewActionBar'
 import { IdTimeline } from './IdTimeline'
 
-export function ReviewPane({ focus }: { focus?: { photoId: number } | null }) {
+/** `toolbarSlot`: a place in the bar above for the review's few controls (the many of «More options» keep a row). */
+export function ReviewPane({ focus, toolbarSlot }: { focus?: { photoId: number } | null; toolbarSlot?: HTMLElement | null }) {
   const hook = useReviewTab()
   const { reviewLayout, suffixMode } = useSettingsStore()
   const bySpecimen = reviewLayout === 'specimens'
@@ -45,8 +48,9 @@ export function ReviewPane({ focus }: { focus?: { photoId: number } | null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus])
 
-  return (
-    <div className="flex h-full min-h-0 flex-col">
+  const advanced = useProcessingStore((st) => st.advanced)
+  const inline = !!toolbarSlot && !advanced
+  const toolbar = (
       <ReviewToolbar
         csvFiles={hook.csvFiles}
         selectedCsv={hook.selectedCsv}
@@ -61,7 +65,13 @@ export function ReviewPane({ focus }: { focus?: { photoId: number } | null }) {
         onSelectedOnlyChange={hook.setReviewSelectedOnly}
         reviewCount={hook.reviewCount}
         onConfirmShown={hook.confirmShown}
+        inline={inline}
       />
+  )
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {inline ? createPortal(toolbar, toolbarSlot!) : toolbar}
 
       <IdTimeline rows={hook.photoRows} onJump={jumpTo} />
       <HostChangesStrip rows={hook.photoRows} onJump={jumpTo} />

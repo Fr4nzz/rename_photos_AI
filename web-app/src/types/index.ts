@@ -34,8 +34,6 @@ export interface AppSettings {
   engine: 'local' | 'gemini'
   /** local reader: turn each photo so its envelope text is upright right after reading */
   autoRotate: boolean
-  /** local reader: after reading, check the wings (side against d/v, count, which way up) */
-  wingCheck: boolean
 }
 
 export interface PhotoRow {

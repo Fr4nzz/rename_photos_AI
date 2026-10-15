@@ -30,6 +30,8 @@ interface Props {
   onSelectedOnlyChange: (value: boolean) => void
   reviewCount: number
   onConfirmShown: () => void
+  /** in the bar above, beside the folder's controls (no row of its own) */
+  inline?: boolean
 }
 
 const FILTERS: { label: string; value: FilterType }[] = [
@@ -66,6 +68,7 @@ export function ReviewToolbar({
   onSelectedOnlyChange,
   reviewCount,
   onConfirmShown,
+  inline = false,
 }: Props) {
   const { reviewCropEnabled, reviewThumbSize, reviewLayout, updateSetting } = useSettingsStore()
   // the controls few people need stay behind «More options» (hidden at first inside another app)
@@ -76,7 +79,7 @@ export function ReviewToolbar({
   const hostName = useProcessingStore((s) => s.hostName)
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+    <div className={inline ? 'flex flex-wrap items-center gap-2' : 'flex flex-wrap items-center gap-2 border-b px-3 py-2'}>
       <div className="flex rounded-md border p-0.5" role="radiogroup" aria-label="Cards">
         {([['specimens', Images, 'One card per specimen: its photos side by side'], ['photos', LayoutGrid, 'One card per photo']] as const).map(([value, Icon, tip]) => (
           <Button key={value} variant={reviewLayout === value ? 'secondary' : 'ghost'} size="sm" role="radio" aria-checked={reviewLayout === value}
@@ -167,7 +170,7 @@ export function ReviewToolbar({
       </Select>
       )}
 
-      <div className="flex-1" />
+      {!inline && <div className="flex-1" />}
       <Button variant={advanced ? 'secondary' : 'ghost'} size="sm" className="h-8 gap-1.5 text-xs" aria-pressed={advanced}
         title="Results files, selected photos only, crop and thumbnail size; saving a copy or a ZIP" onClick={() => setAdvanced(!advanced)}>
         <SlidersHorizontal className="h-3.5 w-3.5" />

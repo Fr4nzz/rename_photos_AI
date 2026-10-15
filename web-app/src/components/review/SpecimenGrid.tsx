@@ -12,7 +12,8 @@ import { pendingRotation } from '@/lib/rotationPlan'
 import { REASON_LABEL } from '@/lib/ocr/runLocal'
 import { WingNotes } from './WingNotes'
 import { specimenNote, type Specimen } from '@/lib/specimens'
-import type { PhotoRow } from '@/types'
+import type { FileEntry, PhotoRow } from '@/types'
+import { SUPPORTED_RAW_EXTENSIONS } from '@/lib/constants'
 import { IdLineZoom } from './IdLineZoom'
 import { RotationBadge } from './RotationBadge'
 
@@ -33,6 +34,12 @@ interface Props {
 }
 
 const VALID = /^CAM\d{6}$/
+const stemOf = (name: string) => (name.lastIndexOf('.') > 0 ? name.slice(0, name.lastIndexOf('.')) : name).toLowerCase()
+/** The RAW file shot with a photo (same name, a RAW extension), among the folder's files. */
+function rawOf(name: string, files: FileEntry[]): File | undefined {
+  const stem = stemOf(name)
+  return files.find((e) => SUPPORTED_RAW_EXTENSIONS.has(e.name.slice(e.name.lastIndexOf('.')).toLowerCase()) && stemOf(e.name) === stem)?.file
+}
 /** Cards drawn at first; the rest wait for «Show more» (each loads its photos). */
 const FIRST = 40
 
@@ -70,6 +77,9 @@ function PhotoCell({ row, onUpdate }: { row: PhotoRow; onUpdate: (updates: Parti
   const hostName = useProcessingStore((s) => s.hostName)
   const [more, setMore] = useState(false)
   const url = useThumb(row, file)
+  // its RAW file (shown when the folder's RAW files are), turned as it is now: it should match the photo
+  const raw = useProcessingStore((s) => rawOf(row.currentPath, s.imageFiles))
+  const rawUrl = useThumb(row, raw)
   const skipped = row.skip === 'x'
   const other = hostChange?.what.filter((w) => !w.startsWith('ID ')) ?? []
 
@@ -78,6 +88,12 @@ function PhotoCell({ row, onUpdate }: { row: PhotoRow; onUpdate: (updates: Parti
       <div className="relative overflow-hidden rounded-sm border bg-muted/40 leading-none">
         {url ? <img src={url} alt={row.from} className="max-h-44 w-full object-contain" /> : <div className="h-28" />}
         {file && <RotationBadge row={row} onChange={onUpdate} />}
+        {rawUrl && (
+          <figure className="absolute bottom-1 right-1 m-0 overflow-hidden rounded-sm border-2 border-background bg-background shadow" title="Its RAW file, turned as it is now">
+            <img src={rawUrl} alt={`RAW of ${row.currentPath}`} className="h-12 w-auto" />
+            <figcaption className="absolute left-0 top-0 bg-background/80 px-0.5 text-[9px] font-semibold leading-3">RAW</figcaption>
+          </figure>
+        )}
       </div>
       <div className="flex items-baseline gap-1.5 text-[11px]" title={row.to ? `${row.currentPath} → ${row.to}` : row.currentPath}>
         <span className="rounded bg-muted px-1 font-mono font-semibold">{skipped ? 'skip' : row.suffix || '–'}</span>

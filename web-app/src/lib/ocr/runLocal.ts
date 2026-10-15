@@ -37,6 +37,10 @@ async function captureTime(file: File): Promise<number | null> {
 
 export interface LocalRunResult {
   rows: PhotoRow[]
+  /** the rows before the batch's one turn, and what it is decided from (to decide it again with the wings) */
+  unturned: PhotoRow[]
+  landscape: Map<string, boolean | null>
+  tagCw: Map<string, number | null>
   readings: Map<string, PhotoReading>
   decisions: Decision[]
   database: CamidSet
@@ -100,5 +104,5 @@ export async function runLocalOcr(
     const size = readings.get(f.name)?.size
     return [f.name, size ? size[0] >= size[1] : null] as const
   }))
-  return { rows: oneTurn(rows, wide, tagCw), readings, decisions, database }
+  return { rows: oneTurn(rows, wide, tagCw), unturned: rows, landscape: wide, tagCw, readings, decisions, database }
 }
