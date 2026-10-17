@@ -14,6 +14,7 @@ import { readOrientation } from '../orientation'
 export const REASON_LABEL: Record<string, string> = {
   'no-reading': 'No CAMID read',
   'not-in-database': 'Not in database',
+  'uncertain-read': 'Unsure read: another database ID is almost as likely',
   'out-of-sequence': 'Out of sequence',
   'repeated-id': 'Same ID on another photo',
   'unreadable-photo': 'Photo not readable',
@@ -78,6 +79,8 @@ export async function runLocalOcr(
     name: f.name, reading: readings.get(f.name), error: errors.get(f.name), capturedAt: times[i],
   }))
   const decisions = decide(inputs, database.ids)
+  // the posteriors were only for the margin: not kept with the batch
+  for (const r of readings.values()) delete r.idViews
   const byName = new Map(decisions.map((d) => [d.name, d]))
   const rows = baseRows.map((row, i) => {
     const d = byName.get(row.from)

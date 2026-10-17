@@ -2,7 +2,9 @@
  * From per-photo readings to renaming decisions (the rules evaluated on the sealed test half:
  * 94.9% renamed correctly, 0.31% wrong, 4.8% to a person).
  *
- *  1. Database rule: the most confident whole-line CAMID reading that exists in the database.
+ *  1. Database rule: the most confident whole-line CAMID reading that exists in the database,
+ *     taken only when it is at least 1 nat more probable than any other database ID within two
+ *     edits (lexicon.ts); otherwise the photo goes to review with that other ID suggested.
  *  2. Batch check: photos are taken in sessions covering nearby CAMIDs. In capture-time order, a
  *     proposal is sent to review when none of the proposals of the 3 photos on either side is
  *     within 15 of it (settings chosen on the round-2 training half).
@@ -14,8 +16,9 @@
  *     within two edits, closest to the neighbouring photos' IDs first.
  */
 import { CAMID_RE, chooseCamid, normalizeReading, type PhotoReading } from './pipeline'
+import { editDistance, lexiconMargin, MARGIN_MIN } from './lexicon'
 
-export type ReviewReason = 'no-reading' | 'not-in-database' | 'out-of-sequence' | 'repeated-id' | 'unreadable-photo'
+export type ReviewReason = 'no-reading' | 'not-in-database' | 'uncertain-read' | 'out-of-sequence' | 'repeated-id' | 'unreadable-photo'
 
 export interface PhotoInput {
   name: string
@@ -61,18 +64,6 @@ export function prefill(text: string): string {
   return 'CAM' + body
 }
 
-function editDistance(a: string, b: string): number {
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j)
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i]
-    for (let j = 1; j <= b.length; j++) {
-      cur.push(Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] || a[i - 1] === '?' ? 0 : 1)))
-    }
-    prev = cur
-  }
-  return prev[b.length]
-}
-
 const num = (id: string) => Number(id.slice(3))
 
 export function decide(photos: PhotoInput[], known: Set<string> | null): Decision[] {
@@ -80,9 +71,14 @@ export function decide(photos: PhotoInput[], known: Set<string> | null): Decisio
   const order = photos.map((p, i) => ({ p, i })).sort((a, b) =>
     (a.p.capturedAt ?? Infinity) - (b.p.capturedAt ?? Infinity) || a.p.name.localeCompare(b.p.name))
   const proposal = new Map<number, { id: string; conf: number }>()
+  // read IDs a close database neighbour could be (no margin without the database or the posteriors)
+  const unsure = new Map<number, { id: string; rival: string | null }>()
   for (const { p, i } of order) {
     const choice = p.reading ? chooseCamid(p.reading, known) : null
-    if (choice) proposal.set(i, choice)
+    if (!choice) continue
+    const lex = known && p.reading?.idViews ? lexiconMargin(p.reading.idViews, choice.id, known) : null
+    if (lex && lex.margin < MARGIN_MIN) unsure.set(i, { id: choice.id, rival: lex.rival })
+    else proposal.set(i, choice)
   }
   const seq = order.map((o) => o.i)
   const positions = new Map<string, number[]>()
@@ -100,8 +96,10 @@ export function decide(photos: PhotoInput[], known: Set<string> | null): Decisio
     const neighbours = [...seq.slice(Math.max(0, pos - NEAR), pos), ...seq.slice(pos + 1, pos + 1 + NEAR)]
       .map((j) => proposal.get(j)?.id).filter((x): x is string => !!x)
     const mine = proposal.get(i)
+    const doubt = unsure.get(i)
     const reasons: ReviewReason[] = []
     if (p.error) reasons.push('unreadable-photo')
+    else if (doubt) reasons.push('uncertain-read')
     else if (!mine) {
       const anyReading = p.reading?.candidates.length
       reasons.push(anyReading ? 'not-in-database' : 'no-reading')
@@ -112,7 +110,7 @@ export function decide(photos: PhotoInput[], known: Set<string> | null): Decisio
       if (repeated.has(mine.id)) reasons.push('repeated-id')
     }
     // suggestion for review: the most CAMID-like line, lookalikes fixed; database IDs close to it
-    let fill = mine?.id ?? ''
+    let fill = mine?.id ?? doubt?.id ?? ''
     let candidates: string[] = []
     if (!mine || reasons.length) {
       const texts = p.reading?.lines.map((l) => l.text) ?? []
@@ -143,6 +141,7 @@ export function decide(photos: PhotoInput[], known: Set<string> | null): Decisio
         candidates = candidates.length && body.length >= 9 && !body.includes('?') ? [...candidates, ...gap] : [...gap, ...candidates]
         candidates = candidates.slice(0, 5)
       }
+      if (doubt?.rival) candidates = [doubt.rival, ...candidates.filter((c) => c !== doubt.rival)].slice(0, 5)
     }
     decisions[i] = { name: p.name, camid: mine?.id ?? null, auto: !!mine && reasons.length === 0, reasons, prefill: fill, candidates, conf: mine?.conf ?? 0 }
   })

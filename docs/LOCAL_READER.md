@@ -25,6 +25,7 @@ The web app reads the CAMID on each specimen photo inside the browser. No API ke
 ## Rules before renaming (`src/lib/ocr/decide.ts`)
 
 - **Database:** the most confident reading that exists in the specimen database. The CAMID list is read live from the database's Google Sheet, cached for a day, with a bundled copy used offline.
+- **Margin** (`src/lib/ocr/lexicon.ts`): the reading is taken only when the recognizer finds it at least 1 nat more probable (CTC) than every other database ID within two edits. Otherwise the photo goes to review as an unsure read, with that other ID suggested. On the CAMID campaign's locked set (October 2026) this cut wrong renames from 8 to 2 and false renames on photos without a CAMID from 13 to 5, for about 5 more photos per 1,000 to review.
 - **Sequence:** photos are ordered by EXIF capture time. A CAMID goes to review when none of the 3 photos on either side has an ID within 15 of it, since a session covers nearby IDs.
 - **Repeated ID:** a specimen's dorsal and ventral photos are taken back to back. The same CAMID on photos that aren't adjacent in capture order, or on more than two photos, sends those photos to review.
 - **Review suggestions:**

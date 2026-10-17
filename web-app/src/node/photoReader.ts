@@ -9,8 +9,9 @@
  * upright JPEG of the photo and of its envelope), or { id, op: "cut", path, box, out, side } (a part
  * of the photo as shown, `box` [x0, y0, x1, y1] in fractions of it, written upright to `out` with its
  * long side at most `side`: answered { id, out, width, height }). stdout, one JSON line each, in order:
- * { id, camid, conf, candidates, source, turned, rotation, orientation, width, height, envelope, ms } or
- * { id, error }. `rotation`: clockwise degrees that turn the photo as shown (its orientation tag applied)
+ * { id, camid, conf, margin, rival, candidates, source, turned, rotation, orientation, width, height, envelope, ms }
+ * or { id, error }. `margin`: nats by which the recogniser prefers `camid` to `rival`, the closest other
+ * database ID (lib/ocr/lexicon.ts; below 1 a person should look; null without --known or for a joined ID). `rotation`: clockwise degrees that turn the photo as shown (its orientation tag applied)
  * upright; `orientation`: its EXIF orientation tag (1 without one); width/height as shown.
  * A line {"ready": true} comes first; the models are loaded with the first photo to read.
  */
@@ -20,6 +21,7 @@ import * as ort from 'onnxruntime-node'
 import sharp from 'sharp'
 import type { RGBAImage } from '../lib/ocr/image'
 import { chooseCamid, readPhoto, type Backend, type FullCrop, type ModelName } from '../lib/ocr/pipeline'
+import { lexiconMargin } from '../lib/ocr/lexicon'
 import { uprightRotation } from '../lib/rotationPlan'
 
 const arg = (name: string, fallback?: string): string | undefined => {
@@ -100,6 +102,7 @@ async function read(job: Job) {
   const reading = await readPhoto(backend, work, chars, full)
   const chosen = chooseCamid(reading, known)
   const camid = chosen?.id ?? reading.camid
+  const lex = known && chosen ? lexiconMargin(reading.idViews ?? [], chosen.id, known) : null
   if (job.preview)
     await sharp(job.path).rotate().resize(PREVIEW_SIDE, PREVIEW_SIDE, { fit: 'inside' }).jpeg({ quality: 78 }).toFile(job.preview)
   if (job.crop && reading.envelope) {
@@ -118,6 +121,8 @@ async function read(job: Job) {
     id: job.id,
     camid,
     conf: chosen?.conf ?? reading.conf,
+    margin: lex ? Math.round(lex.margin * 100) / 100 : null,
+    rival: lex?.rival ?? null,
     candidates: reading.candidates.slice(0, 4),
     inWorkbook: known ? !!chosen : null,
     source: reading.source,

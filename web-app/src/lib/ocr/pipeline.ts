@@ -8,6 +8,7 @@ import { crop, quadCrop, resize, rotate } from './image'
 import { decodeBoxes, envelopeCropBounds, letterbox, type Box } from './envelope'
 import { detBoxes, detInput, type Pt } from './lineDet'
 import { ctcDecode, recInput } from './rec'
+import { lexiconPosteriors, type IdView } from './lexicon'
 
 export type ModelName = 'envelope' | 'line' | 'rec'
 
@@ -24,6 +25,8 @@ export interface LineReading {
   turn?: 90 | 270
   /** made by joining a CAM prefix with the 6 digits read as a separate piece on the same row */
   joined?: boolean
+  /** this line's views that read CAM + 6 digits (moved to PhotoReading.idViews) */
+  idViews?: IdView[]
 }
 
 /**
@@ -66,6 +69,9 @@ export interface PhotoReading {
   lines: LineReading[]
   /** size of the working image (long side <= 1600) the boxes refer to */
   size: [number, number]
+  /** every line view, in either orientation, that read CAM + 6 digits, for the lexicon margin
+   * (decide.ts); dropped once the batch is decided */
+  idViews?: IdView[]
 }
 
 /**
@@ -86,18 +92,31 @@ const WORK_SIDE = 1600 // the models were trained and tested on 1600 px renditio
 
 export const normalizeReading = (text: string) => text.replace(/\s+/g, '').toUpperCase()
 
-async function readLine(backend: Backend, img: RGBAImage, chars: string[]): Promise<{ text: string; conf: number; turn?: 90 | 270 }> {
+type Read = { text: string; conf: number; turn?: 90 | 270; idViews?: IdView[] }
+
+async function readLine(backend: Backend, img: RGBAImage, chars: string[]): Promise<Read> {
   const views: [RGBAImage, 90 | 270 | undefined][] = img.height > 1.5 * img.width
     ? [[rotate(img, 90), 90], [rotate(img, 270), 270]] : [[img, undefined]]
-  let best: { text: string; conf: number; turn?: 90 | 270 } = { text: '', conf: -1 }
+  let best: Read = { text: '', conf: -1 }
+  const idViews: IdView[] = []
   for (const [view, turn] of views) {
     const input = recInput(view)
     const out = await backend.run('rec', input.data, input.dims)
     const [, steps, classes] = out.dims
     const r = ctcDecode(out.data, steps, classes, chars)
+    // both turns of a tall line count for the margin, not only the one kept
+    const id = normalizeReading(r.text)
+    if (CAMID_RE.test(id)) idViews.push({ id, steps, probs: lexiconPosteriors(out.data, steps, classes, chars) })
     if (r.conf > best.conf) best = turn ? { ...r, turn } : r
   }
-  return best
+  return idViews.length ? { ...best, idViews } : best
+}
+
+/** The CAMID views of these lines, taken off them (the lines stay small for the review). */
+function takeIdViews(lines: LineReading[]): IdView[] {
+  const out: IdView[] = []
+  for (const l of lines) if (l.idViews) { out.push(...l.idViews); delete l.idViews }
+  return out
 }
 
 async function readRegion(backend: Backend, img: RGBAImage, chars: string[], limit: number, maxSide: number, skipTall: boolean): Promise<LineReading[]> {
@@ -153,8 +172,13 @@ async function readEnvelopeBothWays(
   }
   const best = async (imgs: RGBAImage[]) => {
     let top = await readLine(backend, imgs[0], chars)
-    for (const im of imgs.slice(1)) { const r = await readLine(backend, im, chars); if (r.conf > top.conf) top = r }
-    return top
+    const idViews = [...(top.idViews ?? [])]
+    for (const im of imgs.slice(1)) {
+      const r = await readLine(backend, im, chars)
+      idViews.push(...(r.idViews ?? []))
+      if (r.conf > top.conf) top = r
+    }
+    return { ...top, idViews }
   }
   for (const box of detBoxes(out.data, pw, ph, det.shape)) {
     const lineImgs = views(box)
@@ -210,6 +234,7 @@ export async function readPhoto(backend: Backend, photo: RGBAImage, chars: strin
       const hi = fullCrop ? await fullCrop(bounds).catch(() => null) : null
       ;[upright, flipped] = await readEnvelopeBothWays(backend, envelope, chars, hi)
     }
+    const idViews = takeIdViews([...upright, ...flipped])
     // sealed test: +1 correct, no new wrong readings
     upright.push(...joinPieces(upright))
     flipped.push(...joinPieces(flipped))
@@ -226,17 +251,19 @@ export async function readPhoto(backend: Backend, photo: RGBAImage, chars: strin
         ? l.box.map(([x, y]) => [img.width - (bounds[0] + ew - x), img.height - (bounds[1] + eh - y)] as Pt)
         : l.box.map(([x, y]) => [x + bounds[0], y + bounds[1]] as Pt)
     }
-    return { ...bestCamid(lines), source: 'envelope', envelope: bounds, turned: useFlipped ? 180 : 0, lines, size }
+    return { ...bestCamid(lines), source: 'envelope', envelope: bounds, turned: useFlipped ? 180 : 0, lines, size, idViews }
   }
 
   // No envelope found (e.g. a newer photo setup): read the whole photo, upright and turned over
   let best: PhotoReading = { camid: null, conf: 0, candidates: [], source: 'none', envelope: null, turned: 0, lines: [], size }
+  const idViews: IdView[] = []
   for (const turned of [0, 180] as const) {
     const view = turned ? rotate(img, 180) : img
     const lines = await readRegion(backend, view, chars, 736, 1600, true)
+    idViews.push(...takeIdViews(lines))
     const b = bestCamid(lines)
     if (b.camid && (!best.camid || b.conf > best.conf)) best = { ...b, source: 'fallback', envelope: null, turned, lines, size }
     else if (!best.camid && lines.length > best.lines.length) best = { ...best, lines }
   }
-  return best
+  return { ...best, idViews }
 }
