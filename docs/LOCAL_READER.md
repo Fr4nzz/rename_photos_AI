@@ -29,7 +29,7 @@ The web app reads the CAMID on each specimen photo inside the browser. No API ke
 - Each photo is decoded once; the same worker reads its CAMID and checks its wings.
 - When the browser offers the computer's graphics card (WebGPU), the models run on it if that is faster. The first time on a computer, and again after a browser or card change, each model is timed on the card (a few seconds, while "Read photos" starts); the choice is kept in the browser. A weak card can stay unused, and a model the card cannot run moves to the processor.
 - On the speed campaign's 250 test photos the card gives the same decisions as the processor; the models' numbers differ from the 5th decimal on.
-- Otherwise the models run on the processor (WebAssembly).
+- Otherwise the models run on the processor (WebAssembly), one worker per logical processor as memory allows: 2 when the browser reports less than 8 GB, at most 4, or 6 on processors with 12 threads. More single-thread workers read faster than fewer with several threads each, so the app needs no cross-origin isolation.
 
 ## Rules before renaming (`src/lib/ocr/decide.ts`)
 

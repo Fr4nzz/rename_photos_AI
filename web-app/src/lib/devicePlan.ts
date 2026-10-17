@@ -25,9 +25,16 @@ const OTHER_WORK = 2.8
 /** runs of each model per photo (a reading stops at its first sure line: ~5 recogniser runs) */
 const RUNS: Record<ModelKey, number> = { envelope: 1, line: 1.1, rec: 4.7, wingseg: 1, wingcls: 1 }
 
-/** Workers on the processor alone: as many as the reader and the wing check had together. */
-export function cpuPlan(threads = navigator.hardwareConcurrency || 2): PoolPlan {
-  return { workers: threads >= 6 ? 4 : 2, perWorker: 2, runtime: { devices: {}, threads: 1 } }
+/**
+ * Workers on the processor alone: one per logical processor (on two cores with SMT, four workers read
+ * 10 % faster than two), as many as the memory allows: a worker holds ~250 MB, one running the large
+ * line detections ~1 GB. Six at most, and only on processors with 12 threads (which come with 16 GB):
+ * the browser does not tell more than 8 GB.
+ */
+export function cpuPlan(threads = navigator.hardwareConcurrency || 2, memoryGB?: number): PoolPlan {
+  memoryGB ??= (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4
+  const cap = memoryGB >= 8 ? (threads >= 12 ? 6 : 4) : 2
+  return { workers: Math.max(2, Math.min(threads, cap)), perWorker: 2, runtime: { devices: {}, threads: 1 } }
 }
 
 /** With the graphics card: two workers keep it busy (one decodes and prepares while the other runs). */
@@ -40,8 +47,8 @@ function gpuPlan(devices: Partial<Record<ModelKey, Device>>): PoolPlan {
  * work; with the card, the card runs its models one photo after another while the workers do the rest.
  * The card runs every model it can unless another split is clearly (10 %) faster: the estimate is rough.
  */
-export function planFromTimes(times: ProbeTimes, threads = navigator.hardwareConcurrency || 2): PoolPlan {
-  const cpu = cpuPlan(threads)
+export function planFromTimes(times: ProbeTimes, threads = navigator.hardwareConcurrency || 2, memoryGB?: number): PoolPlan {
+  const cpu = cpuPlan(threads, memoryGB)
   const envelope = times.cpu.envelope
   if (envelope === undefined) return cpu
   const cpuMs = (m: ModelKey) => RUNS[m] * (times.cpu[m] ?? envelope * CPU_RATIO[m])
