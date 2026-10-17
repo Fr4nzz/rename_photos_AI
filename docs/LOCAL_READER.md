@@ -24,6 +24,13 @@ The web app reads the CAMID on each specimen photo inside the browser. No API ke
    - Lines are read upright first, in the detector's order. The first one that reads a CAMID with confidence 0.99 or more ends the reading; the lines are read turned 180° only when none did (no decision changed on the speed campaign's locked set of 2,014 photos, 64% fewer recognizer runs).
 4. **No envelope found:** the whole photo is read, upright and turned 180°.
 
+## Where it runs (`src/lib/photoWorker.ts`, `src/lib/devicePlan.ts`)
+
+- Each photo is decoded once; the same worker reads its CAMID and checks its wings.
+- When the browser offers the computer's graphics card (WebGPU), the models run on it if that is faster. The first time on a computer, and again after a browser or card change, each model is timed on the card (a few seconds, while "Read photos" starts); the choice is kept in the browser. A weak card can stay unused, and a model the card cannot run moves to the processor.
+- On the speed campaign's 250 test photos the card gives the same decisions as the processor; the models' numbers differ from the 5th decimal on.
+- Otherwise the models run on the processor (WebAssembly).
+
 ## Rules before renaming (`src/lib/ocr/decide.ts`)
 
 - **Database:** the most confident reading that exists in the specimen database. The CAMID list is read live from the database's Google Sheet, cached for a day, with a bundled copy used offline.

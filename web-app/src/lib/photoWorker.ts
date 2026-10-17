@@ -5,7 +5,8 @@
  * both in workers of their own. The photo is decoded as it shows (JPEG/PNG via createImageBitmap with
  * its EXIF orientation; RAW via its largest embedded JPEG and the RAW's orientation tag; HEIC with
  * libheif) and shrunk to 1600 px; the reader gets that shrunk photo re-saved as a JPEG (see
- * asRendition), the wings get it as it is. Each model loads on first use (runtime.ts).
+ * asRendition), the wings get it as it is. Each model loads on first use, on the device the pool
+ * chose for it (see runtime.ts).
  */
 import { readOrientation } from './orientation'
 import { extractLargestJpeg } from './rawPreview'
@@ -13,7 +14,7 @@ import { decodeHeic, HEIC_EXTENSIONS } from './heic'
 import { rotate, type RGBAImage } from './ocr/image'
 import { readPhoto, type Backend, type FullCrop, type PhotoReading } from './ocr/pipeline'
 import { analysePhoto, type WingBackend, type WingConfig, type WingResult } from './wings/model'
-import { openRuntime, type Runtime, type RuntimePlan } from './runtime'
+import { openRuntime, probeDevices, type ProbeTimes, type Runtime, type RuntimePlan } from './runtime'
 
 export interface PhotoRequest { id: number; file: File; raw: boolean; read: boolean; wings: boolean }
 export type PhotoResponse =
@@ -25,6 +26,9 @@ export type PhotoResponse =
  */
 export type PhotoInit = { init: string; plan: RuntimePlan; bigLines?: MessagePort; serves?: MessagePort[] }
 export type PhotoReady = { id: -1; ready: true } | { id: -1; ready: false; error: string }
+/** times the models on this computer's devices (devicePlan.ts) */
+export type PhotoProbe = { probe: string }
+export type ProbeResult = { id: -2; times: ProbeTimes } | { id: -2; error: string }
 
 let runtime: Runtime | null = null
 let base = ''
@@ -66,7 +70,7 @@ function serve(port: MessagePort) {
 
 const readerBackend: Backend = {
   async run(model, data, dims) {
-    if (model === 'line' && bigLines && dims[2] * dims[3] > BIG_LINE_INPUT) return runBigLine(data, dims)
+    if (model === 'line' && bigLines && dims[2] * dims[3] > BIG_LINE_INPUT && runtime!.deviceOf('line') === 'cpu') return runBigLine(data, dims)
     return runtime!.run(model, data, dims)
   },
   // a model file cached from before a change of its input size still gets the input it was made for
@@ -193,8 +197,16 @@ async function init(msg: PhotoInit) {
   runtime = await openRuntime(msg.plan, base)
 }
 
-self.onmessage = async (event: MessageEvent<PhotoRequest | PhotoInit>) => {
+self.onmessage = async (event: MessageEvent<PhotoRequest | PhotoInit | PhotoProbe>) => {
   const msg = event.data
+  if ('probe' in msg) {
+    try {
+      self.postMessage({ id: -2, times: await probeDevices(msg.probe) } satisfies ProbeResult)
+    } catch (e) {
+      self.postMessage({ id: -2, error: String(e) } satisfies ProbeResult)
+    }
+    return
+  }
   if ('init' in msg) {
     ready = init(msg)
     try {

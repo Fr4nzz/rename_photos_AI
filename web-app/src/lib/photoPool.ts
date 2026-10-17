@@ -1,10 +1,12 @@
 /**
  * Main-thread side of the photo workers (photoWorker.ts): a photo goes to the least busy worker, at
- * most two at a time each (one is decoded while the other is read).
+ * most two at a time each (one is decoded while the other is read). How many workers, and the device
+ * of each model, are chosen for this computer (devicePlan.ts).
  */
 import { SUPPORTED_RAW_EXTENSIONS } from './constants'
 import type { PhotoInit, PhotoReady, PhotoRequest, PhotoResponse } from './photoWorker'
 import type { RuntimePlan } from './runtime'
+import { choosePlan } from './devicePlan'
 
 export interface PoolPlan {
   workers: number
@@ -95,19 +97,17 @@ export class PhotoPool {
 
 let pool: Promise<PhotoPool> | null = null
 
-/** As many workers as the reader and the wing check had together (two each, or one on few cores). */
-export function defaultPlan(): PoolPlan {
-  return { workers: (navigator.hardwareConcurrency ?? 2) >= 6 ? 4 : 2, perWorker: 2, runtime: { threads: 1 } }
-}
-
-/** The shared pool, started on first use; a different plan (benchmarks) starts a new one. */
+/**
+ * The shared pool, started on first use with this computer's plan (devicePlan.ts); a different plan
+ * (benchmarks) starts a new one.
+ */
 export async function getPhotoPool(plan?: PoolPlan): Promise<PhotoPool> {
   if (pool && plan && JSON.stringify(plan) !== JSON.stringify((await pool).plan)) {
     ;(await pool).terminate()
     pool = null
   }
   pool ??= (async () => {
-    const p = new PhotoPool(plan ?? defaultPlan())
+    const p = new PhotoPool(plan ?? await choosePlan())
     await p.ready
     return p
   })()
