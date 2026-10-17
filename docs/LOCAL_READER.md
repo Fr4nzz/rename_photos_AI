@@ -13,6 +13,7 @@ The web app reads the CAMID on each specimen photo inside the browser. No API ke
 
 1. **Envelope detector** (`public/models/envelope_det.onnx`, 11 MB).
    - A YOLO segmentation model fine-tuned on SAM3 "paper label" masks, covering both the older photo setup and the newer one with a colour card.
+   - Only its boxes are used, so the file is exported without the mask output (same boxes, about a quarter faster).
    - The photo is first shrunk so its long side is at most 1,600 px, the size the models were trained on.
    - The largest envelope is cropped with an 8% margin.
 2. **Text-line detector** (`line_det.onnx`, 5 MB): PaddleOCR PP-OCRv5 mobile detection. It finds every text line on the envelope.
