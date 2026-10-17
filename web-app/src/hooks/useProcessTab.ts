@@ -347,24 +347,26 @@ export function useProcessTab() {
     processing.setPhotoRows(baseRows)
     processing.setFileMap(new Map(files.map((entry) => [entry.name, entry.file])))
     const started = performance.now()
-    // the wings are checked after the IDs are read (not on wing clips): the reading's bar has both
+    // the IDs and the wings at once (they need nothing of each other; not on wing clips): the bar has both
     const withWings = settings.suffixMode !== 'Wing Clips'
-    const share = withWings ? 50 : 100
-    const eta = (since: number, done: number, total: number) => (done ? Math.round(((performance.now() - since) / 1000 / done) * (total - done)) : 0)
+    const done = { read: 0, wings: 0 }
+    const total = files.length * (withWings ? 2 : 1)
+    const tell = () => {
+      const n = done.read + done.wings
+      const left = n ? Math.round(((performance.now() - started) / 1000 / n) * (total - n)) : 0
+      processing.setProgress(Math.floor((n / total) * 100),
+        `Read ${done.read}/${files.length} photos${withWings ? ` · wings of ${done.wings}/${files.length}` : ''} · ~${left}s left`)
+    }
     try {
-      const result = await runLocalOcr(files, baseRows, (done, total) => {
-        processing.setProgress(Math.floor((done / total) * share), `Read ${done}/${total} photos · ~${eta(started, done, total)}s left`)
-      }, abortController.signal)
+      const [result, checks] = await Promise.all([
+        runLocalOcr(files, baseRows, (n) => { done.read = n; tell() }, abortController.signal),
+        withWings
+          ? checkPhotos(baseRows, (n) => { done.wings = n; tell() }, abortController.signal)
+          : Promise.resolve(new Map<string, WingCheck>()),
+      ])
       if (abortController.signal.aborted) return
       let rows = result.rows
-      let checks = new Map<string, WingCheck>()
       if (withWings) {
-        processing.setProgress(share, 'Checking the wings…')
-        const since = performance.now()
-        checks = await checkPhotos(result.unturned, (done, total) => {
-          processing.setProgress(share + Math.floor((done / total) * share), `Checked the wings of ${done}/${total} photos · ~${eta(since, done, total)}s left`)
-        }, abortController.signal)
-        if (abortController.signal.aborted) return
         // the batch's turn again, the wings voting too: they say where the forewings are
         const wingCw = new Map(result.unturned.map((r) => [r.from, checks.has(r.from) ? wingTurn(checks.get(r.from)!, r) : null]))
         rows = oneTurnByCamera(result.unturned, result.landscape, result.tagCw, result.camera, wingCw)
