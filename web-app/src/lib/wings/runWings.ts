@@ -1,63 +1,17 @@
 /**
- * The wing check: the wing models in their own workers (the readers' are idle by then), one photo per
- * worker at a time. A reading runs it after the IDs (its findings join the reasons to look at a photo,
- * and the wings vote on the batch's turn); Review's button runs it on photos not checked yet. The
- * results are kept with the batch (beside the CSV) and told to the hosting page's assistant.
+ * The wing check: the wing models in the shared photo workers (photoPool.ts). A reading checks the
+ * wings from the same decoding of each photo (readPhotos; its findings join the reasons to look at a
+ * photo, and the wings vote on the batch's turn); Review's button runs it on photos not checked yet.
+ * The results are kept with the batch (beside the CSV) and told to the hosting page's assistant.
  */
-import { SUPPORTED_RAW_EXTENSIONS } from '../constants'
 import { saveBatch } from '../saveBatch'
 import { calculateFinalNames } from '../nameCalculator'
+import { getPhotoPool } from '../photoPool'
 import { useProcessingStore } from '@/stores/processingStore'
 import type { PhotoRow } from '@/types'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { toast } from 'sonner'
 import { wingFindings, withWingReasons, type WingCheck } from './checks'
-import type { WingRequest, WingResponse } from './wingWorker'
-
-const BASE = import.meta.env.BASE_URL
-
-class WingPool {
-  private workers: Worker[] = []
-  private ready: Promise<void>[] = []
-  private pending = new Map<number, (r: WingResponse) => void>()
-  private nextId = 1
-
-  constructor(size: number) {
-    for (let i = 0; i < size; i++) {
-      const w = new Worker(new URL('./wingWorker.ts', import.meta.url), { type: 'module' })
-      this.ready.push(new Promise((resolve, reject) => {
-        const onInit = (e: MessageEvent<WingResponse>) => {
-          if (e.data.id !== -1) return
-          w.removeEventListener('message', onInit)
-          if ('ready' in e.data && e.data.ready) resolve()
-          else reject(new Error('error' in e.data ? e.data.error : 'the wing check failed to start'))
-        }
-        w.addEventListener('message', onInit)
-      }))
-      w.addEventListener('message', (e: MessageEvent<WingResponse>) => {
-        if (e.data.id === -1) return
-        this.pending.get(e.data.id)?.(e.data)
-        this.pending.delete(e.data.id)
-      })
-      w.postMessage({ init: new URL(BASE, location.href).href })
-      this.workers.push(w)
-    }
-  }
-
-  get size() { return this.workers.length }
-  async whenReady() { await Promise.all(this.ready) }
-
-  check(worker: number, file: File): Promise<WingResponse> {
-    const id = this.nextId++
-    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
-    return new Promise((resolve) => {
-      this.pending.set(id, resolve)
-      this.workers[worker].postMessage({ id, file, raw: SUPPORTED_RAW_EXTENSIONS.has(ext) } satisfies WingRequest)
-    })
-  }
-}
-
-let pool: WingPool | null = null
 
 /** A row's photo: by the name it had when read, or the one it has now (renamed since). */
 export const fileOf = (row: PhotoRow): File | undefined => {
@@ -81,20 +35,19 @@ export async function checkPhotos(rows: PhotoRow[], onProgress: (done: number, t
   const out = new Map<string, WingCheck>()
   const todo = rows.filter((r) => fileOf(r))
   if (!todo.length) return out
-  pool ??= new WingPool((navigator.hardwareConcurrency ?? 2) >= 6 ? 2 : 1)
-  await pool.whenReady()
+  const pool = await getPhotoPool()
   let next = 0, count = 0
-  const lane = async (worker: number) => {
+  const lane = async () => {
     while (next < todo.length && !signal.aborted) {
       const row = todo[next++]
       const file = fileOf(row)
-      const res = file ? await pool!.check(worker, file) : null
+      const res = file ? await pool.photo(file, { read: false, wings: true }) : null
       if (signal.aborted) return
-      if (res && 'ok' in res && res.ok) out.set(row.from, { ...res.result, applied: Number(row.rotApplied || 0) })
+      if (res?.ok && res.wings) out.set(row.from, { ...res.wings, applied: Number(row.rotApplied || 0) })
       onProgress(++count, todo.length)
     }
   }
-  await Promise.all(Array.from({ length: pool.size }, (_, i) => lane(i)))
+  await Promise.all(Array.from({ length: pool.lanes }, lane))
   return out
 }
 

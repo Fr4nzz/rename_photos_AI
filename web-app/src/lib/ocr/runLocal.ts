@@ -8,6 +8,7 @@ import { loadCamidSet, type CamidSet } from './database'
 import { decide, type Decision, type PhotoInput } from './decide'
 import { readPhotos } from './engine'
 import type { PhotoReading } from './pipeline'
+import type { WingResult } from '../wings/model'
 import { oneTurnByCamera, uprightRotation } from '../rotationPlan'
 import { readOrientation } from '../orientation'
 
@@ -55,6 +56,8 @@ export async function runLocalOcr(
   baseRows: PhotoRow[],
   onProgress: (done: number, total: number, partial: Map<string, PhotoReading>) => void,
   signal: AbortSignal,
+  /** the wings of each photo checked from the same decoding (see readPhotos) */
+  onWings?: (name: string, wings: WingResult | null) => void,
 ): Promise<LocalRunResult> {
   const databasePromise = loadCamidSet()
   const shotsPromise = Promise.all(files.map((f) => shotOf(f.file)))
@@ -71,7 +74,7 @@ export async function runLocalOcr(
     else errors.set(r.name, r.error ?? 'unreadable')
     done++
     onProgress(done, files.length, readings)
-  }, signal)
+  }, signal, onWings)
   const [database, shots, tags] = await Promise.all([databasePromise, shotsPromise, tagsPromise])
   const times = shots.map((x) => x.at)
 

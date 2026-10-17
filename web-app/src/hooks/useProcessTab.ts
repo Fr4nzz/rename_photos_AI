@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { appendRotationLog, listFolder, writeRotations } from '@/lib/rotationWrite'
 import { toast } from 'sonner'
 import { runLocalOcr } from '@/lib/ocr/runLocal'
-import { applyWingChecks, checkPhotos, stopWingCheck, wingSummary } from '@/lib/wings/runWings'
+import { applyWingChecks, stopWingCheck, wingSummary } from '@/lib/wings/runWings'
 import { wingTurn, type WingCheck } from '@/lib/wings/checks'
 import { oneTurnByCamera } from '@/lib/rotationPlan'
 import { calculateFinalNames } from '@/lib/nameCalculator'
@@ -358,12 +358,14 @@ export function useProcessTab() {
         `Read ${done.read}/${files.length} photos${withWings ? ` · wings of ${done.wings}/${files.length}` : ''} · ~${left}s left`)
     }
     try {
-      const [result, checks] = await Promise.all([
-        runLocalOcr(files, baseRows, (n) => { done.read = n; tell() }, abortController.signal),
-        withWings
-          ? checkPhotos(baseRows, (n) => { done.wings = n; tell() }, abortController.signal)
-          : Promise.resolve(new Map<string, WingCheck>()),
-      ])
+      // the wings checked from each photo's decoding for the reading (applied: the rows are fresh)
+      const checks = new Map<string, WingCheck>()
+      const result = await runLocalOcr(files, baseRows, (n) => { done.read = n; tell() }, abortController.signal,
+        withWings ? (name, wings) => {
+          if (wings) checks.set(name, { ...wings, applied: 0 })
+          done.wings++
+          tell()
+        } : undefined)
       if (abortController.signal.aborted) return
       let rows = result.rows
       if (withWings) {

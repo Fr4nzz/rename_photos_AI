@@ -9,6 +9,8 @@ export default defineConfig(({ command }) => ({
   plugins: [react(), tailwindcss()],
   // onnxruntime-web loads its .wasm next to its own module; pre-bundling moves it and breaks that
   optimizeDeps: { exclude: ['onnxruntime-web'] },
+  // the photo workers load onnxruntime's WebGPU or WebAssembly build when they start (a dynamic import)
+  worker: { format: 'es' },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

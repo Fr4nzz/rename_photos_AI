@@ -42,7 +42,7 @@ The reader lives in `src/lib/ocr/`:
 |---|---|
 | `pipeline.ts` | Envelope → lines → CAMID |
 | `decide.ts` | Database, sequence and repeated-ID rules, plus review suggestions |
-| `ocrWorker.ts` / `engine.ts` | Web workers running onnxruntime-web |
+| `photoWorker.ts` / `photoPool.ts` / `runtime.ts` | Web workers running onnxruntime-web (CAMID reader and wing check from one decoding) |
 | `database.ts` | Live CAMID list from the specimen Google Sheet |
 
 The models are in `public/models/`. See [../docs/LOCAL_READER.md](../docs/LOCAL_READER.md).
