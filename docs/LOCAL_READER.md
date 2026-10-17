@@ -21,6 +21,7 @@ The web app reads the CAMID on each specimen photo inside the browser. No API ke
    - PP-OCRv5 mobile recognition, fine-tuned on about 7,000 CAMID lines from Sanger/Ikiam envelopes, including crossed-out IDs.
    - It reads each line. Sideways lines are read turned both ways, and the more confident reading is kept.
    - A line is a CAMID reading only when the whole line is `CAM` + 6 digits.
+   - Lines are read upright first, in the detector's order. The first one that reads a CAMID with confidence 0.99 or more ends the reading; the lines are read turned 180° only when none did (no decision changed on the speed campaign's locked set of 2,014 photos, 64% fewer recognizer runs).
 4. **No envelope found:** the whole photo is read, upright and turned 180°.
 
 ## Rules before renaming (`src/lib/ocr/decide.ts`)

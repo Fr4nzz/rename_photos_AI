@@ -90,6 +90,12 @@ export const HIRES_PASSES = { count: 0 }
 export const CAMID_RE = /^CAM[0-9]{6}$/
 /** below this confidence the envelope is read again at full resolution (sealed test: 7% of photos) */
 const AUTO_SURE = 0.95
+/**
+ * An upright line that reads CAM + 6 digits this sure ends the envelope's reading: the lines below it and
+ * the turned-over views are not read (app speed campaign, 17 Oct 2026: on its locked set of 2,014 photos
+ * no decision changed, with or without the margin rule, and the recogniser ran 64 % less).
+ */
+const STOP_SURE = 0.99
 const WORK_SIDE = 1600 // the models were trained and tested on 1600 px renditions
 
 export const normalizeReading = (text: string) => text.replace(/\s+/g, '').toUpperCase()
@@ -138,7 +144,8 @@ async function readRegion(backend: Backend, img: RGBAImage, chars: string[], lim
  * Read every text line of an envelope upright and turned 180 degrees (the line detector runs once;
  * each line crop is re-read turned over). Returns [upright, flipped]; flipped boxes are in the
  * coordinates of the envelope turned 180 degrees. Tall (sideways) lines are already read both
- * ways and are left out of the flipped list.
+ * ways and are left out of the flipped list. On the working image the lines are read upright first,
+ * in the detector's order, up to the first sure ID (STOP_SURE); turned over only when none was.
  */
 async function readEnvelopeBothWays(
   backend: Backend, env: RGBAImage, chars: string[], hi: { image: RGBAImage; scale: number } | null,
@@ -182,16 +189,22 @@ async function readEnvelopeBothWays(
     }
     return { ...top, idViews }
   }
-  for (const box of detBoxes(out.data, pw, ph, det.shape)) {
-    const lineImgs = views(box)
-    const lineImg = lineImgs[0]
-    upright.push({ box, ...(await best(lineImgs)) })
-    if (lineImg.height <= 1.5 * lineImg.width) {
-      const r = await best(lineImgs.map((im) => rotate(im, 180)))
-      // the same quadrilateral in the envelope turned 180: (x, y) -> (w - x, h - y), corners re-ordered
-      const turnedBox = [2, 3, 0, 1].map((k) => [env.width - box[k][0], env.height - box[k][1]] as Pt)
-      flipped.push({ box: turnedBox, ...r })
-    }
+  const boxes = detBoxes(out.data, pw, ph, det.shape)
+  const crops: RGBAImage[][] = []
+  for (const box of boxes) {
+    crops.push(views(box))
+    const line = { box, ...(await best(crops[crops.length - 1])) }
+    upright.push(line)
+    // the line keeps the posteriors of its views (both turns of a tall line) for the margin
+    if (!hi && CAMID_RE.test(normalizeReading(line.text)) && line.conf >= STOP_SURE) return [upright, flipped]
+  }
+  for (const [i, box] of boxes.entries()) {
+    const lineImgs = crops[i]
+    if (lineImgs[0].height > 1.5 * lineImgs[0].width) continue
+    const r = await best(lineImgs.map((im) => rotate(im, 180)))
+    // the same quadrilateral in the envelope turned 180: (x, y) -> (w - x, h - y), corners re-ordered
+    const turnedBox = [2, 3, 0, 1].map((k) => [env.width - box[k][0], env.height - box[k][1]] as Pt)
+    flipped.push({ box: turnedBox, ...r })
   }
   return [upright, flipped]
 }
