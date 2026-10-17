@@ -1,8 +1,14 @@
-/** Envelope detector (YOLO segmentation, ONNX export at 1024 px): letterbox input and box decoding. */
+/**
+ * Envelope detector (YOLO segmentation weights, ONNX export of the boxes only at 512 px): letterbox input
+ * and box decoding. 512 rather than 1024 (app speed campaign, 17 Oct 2026): on its locked set, with the
+ * margin rule, as many right and wrong renames (1,725 and 2 of 1,783 photos with an ID), 4 more museum
+ * photos without a CAMID given one (9 of 231), in a quarter of the time (267 ms instead of 1,116 in wasm).
+ */
 import type { RGBAImage } from './image'
 import { resize } from './image'
 
-const SIZE = 1024
+/** the letterbox side when the model does not tell its own (see Backend.inputSide) */
+const SIZE = 512
 
 export interface Letterbox {
   data: Float32Array
@@ -12,23 +18,23 @@ export interface Letterbox {
   padY: number
 }
 
-/** Ultralytics letterbox: fit inside 1024x1024 keeping the aspect ratio, pad with grey 114, RGB 0..1. */
-export function letterbox(img: RGBAImage): Letterbox {
-  const scale = Math.min(SIZE / img.width, SIZE / img.height)
+/** Ultralytics letterbox: fit inside size x size keeping the aspect ratio, pad with grey 114, RGB 0..1. */
+export function letterbox(img: RGBAImage, size = SIZE): Letterbox {
+  const scale = Math.min(size / img.width, size / img.height)
   const nw = Math.round(img.width * scale), nh = Math.round(img.height * scale)
-  const padX = Math.round((SIZE - nw) / 2 - 0.1), padY = Math.round((SIZE - nh) / 2 - 0.1)
+  const padX = Math.round((size - nw) / 2 - 0.1), padY = Math.round((size - nh) / 2 - 0.1)
   const r = resize(img, nw, nh)
-  const plane = SIZE * SIZE
+  const plane = size * size
   const data = new Float32Array(3 * plane).fill(114 / 255)
   for (let y = 0; y < nh; y++) {
     for (let x = 0; x < nw; x++) {
-      const s = (y * nw + x) * 4, t = (y + padY) * SIZE + x + padX
+      const s = (y * nw + x) * 4, t = (y + padY) * size + x + padX
       data[t] = r.data[s] / 255
       data[plane + t] = r.data[s + 1] / 255
       data[2 * plane + t] = r.data[s + 2] / 255
     }
   }
-  return { data, dims: [1, 3, SIZE, SIZE], scale, padX, padY }
+  return { data, dims: [1, 3, size, size], scale, padX, padY }
 }
 
 export type Box = [number, number, number, number] // x1, y1, x2, y2 in the original image

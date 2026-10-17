@@ -40,6 +40,12 @@ const backend: Backend = {
     const t = out[s.outputNames[0]]
     return { data: t.data as Float32Array, dims: t.dims as number[] }
   },
+  // a model file cached from before a change of its input size still gets the input it was made for
+  async inputSide(model) {
+    const m = sessions![model].inputMetadata[0]
+    const side = m?.isTensor ? m.shape[3] : undefined
+    return typeof side === 'number' ? side : undefined
+  },
 }
 
 const WORK_SIDE = 1600

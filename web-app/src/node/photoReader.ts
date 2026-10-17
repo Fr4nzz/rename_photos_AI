@@ -55,6 +55,11 @@ const backend: Backend = {
     const t = out[s.outputNames[0]]
     return { data: t.data as Float32Array, dims: t.dims as number[] }
   },
+  async inputSide(model) {
+    const m = (await sessions())[model].inputMetadata[0]
+    const side = m?.isTensor ? m.shape[3] : undefined
+    return typeof side === 'number' ? side : undefined
+  },
 }
 
 const rgba = async (image: sharp.Sharp): Promise<RGBAImage> => {

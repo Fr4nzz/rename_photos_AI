@@ -15,6 +15,8 @@ export type ModelName = 'envelope' | 'line' | 'rec'
 export interface Backend {
   /** Run a model on one input tensor and return its first output. */
   run(model: ModelName, data: Float32Array, dims: number[]): Promise<{ data: Float32Array; dims: number[] }>
+  /** The side of a model's square input when the file fixes it (the envelope detector's letterbox). */
+  inputSide?(model: ModelName): Promise<number | undefined>
 }
 
 export interface LineReading {
@@ -211,7 +213,7 @@ export async function readPhoto(backend: Backend, photo: RGBAImage, chars: strin
   const img = scale < 1 ? resize(photo, Math.round(photo.width * scale), Math.round(photo.height * scale)) : photo
   const size: [number, number] = [img.width, img.height]
 
-  const lb = letterbox(img)
+  const lb = letterbox(img, await backend.inputSide?.('envelope'))
   const det = await backend.run('envelope', lb.data, lb.dims)
   const boxes = decodeBoxes(det.data, det.dims[2], lb, img)
   if (boxes.length) {
