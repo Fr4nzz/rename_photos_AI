@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Cpu, Play, ScanText, Sparkles, Square, Wand2, SlidersHorizontal } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { listStoredCsvs } from '@/lib/csvHandler'
+import { cpuPlan } from '@/lib/devicePlan'
 import type { RunMode } from '@/types'
 import type { ReactNode } from 'react'
 import type { useProcessTab } from '@/hooks/useProcessTab'
@@ -32,7 +33,7 @@ interface Props {
 }
 
 export function ProcessingControls({ onStart, onStop, hasImages, children, geminiHook, optionsElsewhere = false }: Props) {
-  const { modelName, engine, autoRotate, updateSetting } = useSettingsStore()
+  const { modelName, engine, autoRotate, photoWorkers, updateSetting } = useSettingsStore()
   const { apiKeys } = useApiKeysStore()
   const {
     isProcessing,
@@ -57,6 +58,8 @@ export function ProcessingControls({ onStart, onStop, hasImages, children, gemin
   // the choice of reader sits behind the review's «More options» (hidden at first inside another app)
   const advanced = useProcessingStore((s) => s.advanced)
   const canStart = hasImages && !isProcessing && (local || (apiKeys.length > 0 && !!modelName))
+  const threads = navigator.hardwareConcurrency || 2
+  const autoWorkers = cpuPlan(threads).workers
 
   return (
     <div className="space-y-2 border-b bg-card px-3 py-2">
@@ -92,6 +95,28 @@ export function ProcessingControls({ onStart, onStop, hasImages, children, gemin
             </Tooltip>
           ))}
         </div>
+        )}
+        {advanced && local && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <Select value={String(photoWorkers)} onValueChange={(v) => updateSetting('photoWorkers', Number(v))} disabled={isProcessing}>
+                  <SelectTrigger className="h-8 w-[9.5rem] text-xs" aria-label="Photos at once">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0" className="text-xs">{`At once: auto (${autoWorkers})`}</SelectItem>
+                    {Array.from({ length: threads }, (_, i) => i + 1).map((n) => (
+                      <SelectItem key={n} value={String(n)} className="text-xs">{`At once: ${n}`}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">
+              {`Photos read at the same time on this computer. Auto: ${autoWorkers} here (2 with less than 8 GB of memory). More is faster on processors with many threads (this one has ${threads}), but each takes about 0.5 GB of memory, up to 1 GB on large photos: pick fewer if other programs need the memory or the page reloads on its own. With the graphics card, 2 are enough.`}
+            </TooltipContent>
+          </Tooltip>
         )}
         {!local && (<>
         <GeminiDialog hook={geminiHook} />

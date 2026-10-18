@@ -1,6 +1,6 @@
 {
  "segmentation": {
-  "file": "wingseg_640.onnx",
+  "file": "wingseg_v5n_640.onnx",
   "inputSize": 640,
   "conf": 0.1,
   "nmsIou": 0.6,

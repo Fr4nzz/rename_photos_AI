@@ -26,11 +26,20 @@ describe('device plan', () => {
     expect(planFromTimes({ gpu: {}, cpu: ryzen }, 4, 8)).toEqual(cpuPlan(4, 8))
   })
 
-  it('one worker per logical processor, as the memory allows', () => {
-    expect(cpuPlan(12, 8).workers).toBe(6)
-    expect(cpuPlan(8, 8).workers).toBe(4)
+  it('four workers, two with less memory, at most one per logical processor', () => {
+    expect(cpuPlan(12, 8).workers).toBe(4)
     expect(cpuPlan(4, 8).workers).toBe(4)
     expect(cpuPlan(4, 4).workers).toBe(2)
-    expect(cpuPlan(2, 2).workers).toBe(2)
+    expect(cpuPlan(2, 8).workers).toBe(2)
+    expect(cpuPlan(1, 8).workers).toBe(1)
+  })
+
+  it('the workers chosen in the settings', () => {
+    expect(cpuPlan(12, 8, 6).workers).toBe(6)
+    expect(cpuPlan(12, 4, 6).workers).toBe(6)
+    expect(cpuPlan(4, 8, 6).workers).toBe(4)
+    expect(cpuPlan(12, 8, 1).workers).toBe(1)
+    expect(planFromTimes({ gpu: card, cpu: ryzen }, 4, 8, 6).workers).toBe(2)
+    expect(planFromTimes({ gpu: card, cpu: ryzen }, 4, 8, 1).workers).toBe(1)
   })
 })

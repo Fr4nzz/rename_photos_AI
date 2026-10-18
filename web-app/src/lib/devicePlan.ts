@@ -11,35 +11,35 @@ import type { PhotoProbe, ProbeResult } from './photoWorker'
 import { MODEL_KEYS, type Device, type ModelKey, type ProbeTimes } from './runtime'
 
 const KEY = 'rename-photos-device-plan'
-/** bump to time again on every computer (new models, a new rule) */
-const VERSION = 1
+/** bump to time again on every computer (new models, a new rule); 2: the nano wing model (18 Oct) */
+const VERSION = 2
 
 /**
  * Processor time of each model against the envelope detector's (onnxruntime-web 1.30, WebAssembly,
- * one thread, 17 Oct 2026: 154, 79, 50, 1,105 and 62 ms); convolution networks keep their ratios
- * from one processor to another. The rest of a photo's work (decoding, shrinking, the crops) is
- * about 2.8 envelope detections.
+ * one thread, 17 Oct 2026: 154, 79, 50, 1,105 and 62 ms; the nano wing model, 18 Oct, 0.30 of the
+ * earlier one's: ~330); convolution networks keep their ratios from one processor to another. The
+ * rest of a photo's work (decoding, shrinking, the crops) is about 2.8 envelope detections.
  */
-const CPU_RATIO: Record<ModelKey, number> = { envelope: 1, line: 0.51, rec: 0.32, wingseg: 7.2, wingcls: 0.4 }
+const CPU_RATIO: Record<ModelKey, number> = { envelope: 1, line: 0.51, rec: 0.32, wingseg: 2.1, wingcls: 0.4 }
 const OTHER_WORK = 2.8
 /** runs of each model per photo (a reading stops at its first sure line: ~5 recogniser runs) */
 const RUNS: Record<ModelKey, number> = { envelope: 1, line: 1.1, rec: 4.7, wingseg: 1, wingcls: 1 }
 
 /**
- * Workers on the processor alone: one per logical processor (on two cores with SMT, four workers read
- * 10 % faster than two), as many as the memory allows: a worker holds ~250 MB, one running the large
- * line detections ~1 GB. Six at most, and only on processors with 12 threads (which come with 16 GB):
- * the browser does not tell more than 8 GB.
+ * Workers on the processor alone: `chosen` in the settings (0: four, two when the browser tells less
+ * than 8 GB), at most one per logical processor. More are faster on processors with many threads
+ * (12 threads: six read ~15-20 % faster than four), but a worker holds ~250-500 MB, one running the large
+ * line detections ~1 GB, and the browser does not tell how much memory other programs need.
  */
-export function cpuPlan(threads = navigator.hardwareConcurrency || 2, memoryGB?: number): PoolPlan {
+export function cpuPlan(threads = navigator.hardwareConcurrency || 2, memoryGB?: number, chosen = 0): PoolPlan {
   memoryGB ??= (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4
-  const cap = memoryGB >= 8 ? (threads >= 12 ? 6 : 4) : 2
-  return { workers: Math.max(2, Math.min(threads, cap)), perWorker: 2, runtime: { devices: {}, threads: 1 } }
+  const workers = chosen > 0 ? Math.min(chosen, threads) : Math.min(threads, memoryGB >= 8 ? 4 : 2)
+  return { workers: Math.max(1, workers), perWorker: 2, runtime: { devices: {}, threads: 1 } }
 }
 
 /** With the graphics card: two workers keep it busy (one decodes and prepares while the other runs). */
-function gpuPlan(devices: Partial<Record<ModelKey, Device>>): PoolPlan {
-  return { workers: 2, perWorker: 2, runtime: { devices, threads: 1 } }
+function gpuPlan(devices: Partial<Record<ModelKey, Device>>, chosen = 0): PoolPlan {
+  return { workers: chosen === 1 ? 1 : 2, perWorker: 2, runtime: { devices, threads: 1 } }
 }
 
 /**
@@ -47,8 +47,9 @@ function gpuPlan(devices: Partial<Record<ModelKey, Device>>): PoolPlan {
  * work; with the card, the card runs its models one photo after another while the workers do the rest.
  * The card runs every model it can unless another split is clearly (10 %) faster: the estimate is rough.
  */
-export function planFromTimes(times: ProbeTimes, threads = navigator.hardwareConcurrency || 2, memoryGB?: number): PoolPlan {
-  const cpu = cpuPlan(threads, memoryGB)
+export function planFromTimes(times: ProbeTimes, threads = navigator.hardwareConcurrency || 2, memoryGB?: number, chosen = 0): PoolPlan {
+  const cpu = cpuPlan(threads, memoryGB, chosen)
+  const gpuWorkers = gpuPlan({}, chosen).workers
   const envelope = times.cpu.envelope
   if (envelope === undefined) return cpu
   const cpuMs = (m: ModelKey) => RUNS[m] * (times.cpu[m] ?? envelope * CPU_RATIO[m])
@@ -59,15 +60,15 @@ export function planFromTimes(times: ProbeTimes, threads = navigator.hardwareCon
     return Math.max(card, rest / Math.min(workers, Math.max(1, threads / 2)))
   }
   const usable = MODEL_KEYS.filter((m) => times.gpu[m] !== undefined)
-  const all = { ms: perPhoto(usable, gpuPlan({}).workers), onGpu: usable }
+  const all = { ms: perPhoto(usable, gpuWorkers), onGpu: usable }
   let best = { ms: perPhoto([], cpu.workers), onGpu: [] as ModelKey[] }
   for (let mask = 1; mask < 1 << usable.length; mask++) {
     const onGpu = usable.filter((_, i) => mask & (1 << i))
-    const ms = perPhoto(onGpu, gpuPlan({}).workers)
+    const ms = perPhoto(onGpu, gpuWorkers)
     if (ms < best.ms) best = { ms, onGpu }
   }
   if (usable.length && best.ms >= 0.9 * all.ms) best = all
-  return best.onGpu.length ? gpuPlan(Object.fromEntries(best.onGpu.map((m) => [m, 'gpu' as const]))) : cpu
+  return best.onGpu.length ? gpuPlan(Object.fromEntries(best.onGpu.map((m) => [m, 'gpu' as const])), chosen) : cpu
 }
 
 async function adapterInfo(): Promise<string | null> {
@@ -93,15 +94,18 @@ function probe(): Promise<ProbeTimes> {
   }).finally(() => worker.terminate())
 }
 
-/** This computer's plan: kept from before, timed now (a few seconds, once), or the processor's. */
-export async function choosePlan(): Promise<PoolPlan> {
+/**
+ * This computer's plan: kept from before, timed now (a few seconds, once), or the processor's;
+ * `chosen`: the workers in the settings (0: as many as suit this computer).
+ */
+export async function choosePlan(chosen = 0): Promise<PoolPlan> {
   const threads = navigator.hardwareConcurrency || 2
   const gpu = await adapterInfo().catch(() => null)
-  if (!gpu) return cpuPlan(threads)
+  if (!gpu) return cpuPlan(threads, undefined, chosen)
   const signature = JSON.stringify([VERSION, navigator.userAgent, gpu, threads])
   try {
     const kept = JSON.parse(localStorage.getItem(KEY) ?? 'null')
-    if (kept?.signature === signature) return planFromTimes(kept.times, threads)
+    if (kept?.signature === signature) return planFromTimes(kept.times, threads, undefined, chosen)
   } catch {
     // no storage (private window) or an old entry: timed again
   }
@@ -112,9 +116,9 @@ export async function choosePlan(): Promise<PoolPlan> {
     } catch {
       // not kept: timed again next time
     }
-    return planFromTimes(times, threads)
+    return planFromTimes(times, threads, undefined, chosen)
   } catch (e) {
     console.warn('timing the graphics card failed; the processor reads the photos', e)
-    return cpuPlan(threads)
+    return cpuPlan(threads, undefined, chosen)
   }
 }

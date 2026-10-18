@@ -36,6 +36,8 @@ export interface AppSettings {
   engine: 'local' | 'gemini'
   /** local reader: turn each photo so its envelope text is upright right after reading */
   autoRotate: boolean
+  /** local reader: photos read at the same time, one per worker (0: as many as suit the computer) */
+  photoWorkers: number
 }
 
 export interface PhotoRow {

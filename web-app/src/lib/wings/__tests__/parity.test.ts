@@ -16,9 +16,9 @@ const MODELS = new URL('../../../../public/models/', import.meta.url).pathname
 describe.skipIf(!existsSync(REF))('wing models, port vs reference', () => {
   it('gives the reference verdicts', async () => {
     const opt = { intraOpNumThreads: 4 }
-    const seg = await ort.InferenceSession.create(`${MODELS}wingseg_640.onnx`, opt)
-    const cls = await ort.InferenceSession.create(`${MODELS}wing_side_cls.onnx`, opt)
     const cfg: WingConfig = JSON.parse(readFileSync(`${MODELS}wingside.json`, 'utf8'))
+    const seg = await ort.InferenceSession.create(`${MODELS}${cfg.segmentation.file}`, opt)
+    const cls = await ort.InferenceSession.create(`${MODELS}${cfg.classifier.file}`, opt)
     // the reference ran at the export's cut-off; the app takes fainter wings too (the classifier says which are wings)
     cfg.segmentation.conf = 0.25
     const backend: WingBackend = {

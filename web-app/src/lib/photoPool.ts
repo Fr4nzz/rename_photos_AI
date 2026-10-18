@@ -7,6 +7,7 @@ import { SUPPORTED_RAW_EXTENSIONS } from './constants'
 import type { PhotoInit, PhotoReady, PhotoRequest, PhotoResponse } from './photoWorker'
 import type { RuntimePlan } from './runtime'
 import { choosePlan } from './devicePlan'
+import { useSettingsStore } from '@/stores/settingsStore'
 
 export interface PoolPlan {
   workers: number
@@ -87,6 +88,9 @@ export class PhotoPool {
     }
   }
 
+  /** no photo in a worker */
+  get idle() { return this.workers.every((w) => w.busy === 0) }
+
   private free() {
     const least = this.workers.reduce((a, b) => (b.busy < a.busy ? b : a))
     return least.busy < this.plan.perWorker ? least : null
@@ -96,22 +100,33 @@ export class PhotoPool {
 }
 
 let pool: Promise<PhotoPool> | null = null
+/** the settings' workers the pool was started with */
+let poolChosen = 0
 
 /**
- * The shared pool, started on first use with this computer's plan (devicePlan.ts); a different plan
- * (benchmarks) starts a new one.
+ * The shared pool, started on first use with this computer's plan (devicePlan.ts) and the settings'
+ * workers; started again when they changed (once its photos are done) or for a different plan
+ * (benchmarks).
  */
 export async function getPhotoPool(plan?: PoolPlan): Promise<PhotoPool> {
-  if (pool && plan && JSON.stringify(plan) !== JSON.stringify((await pool).plan)) {
-    ;(await pool).terminate()
-    pool = null
+  const chosen = useSettingsStore.getState().photoWorkers
+  if (pool) {
+    const p = await pool.catch(() => null)
+    const stale = plan ? JSON.stringify(plan) !== JSON.stringify(p?.plan) : chosen !== poolChosen
+    if (p && stale && p.idle) {
+      p.terminate()
+      pool = null
+    }
   }
-  pool ??= (async () => {
-    const p = new PhotoPool(plan ?? await choosePlan())
-    await p.ready
-    return p
-  })()
-  // a pool that failed to start is started again next time
-  pool.catch(() => { pool = null })
+  if (!pool) {
+    poolChosen = chosen
+    pool = (async () => {
+      const p = new PhotoPool(plan ?? await choosePlan(chosen))
+      await p.ready
+      return p
+    })()
+    // a pool that failed to start is started again next time
+    pool.catch(() => { pool = null })
+  }
   return pool
 }
