@@ -19,15 +19,15 @@ export interface WingFinding { code: WingCode; text: string }
 /** a joint pair probability below this calls a wing group's two photos swapped */
 const SWAP_Q = 0.05
 /** the wings' turn is trusted with this many wings, this sure */
-const TURN_WINGS = 3
-const TURN_SURE = 0.9
+export const TURN_WINGS = 3
+export const TURN_SURE = 0.9
 
 const norm = (a: number) => ((a % 360) + 360) % 360
 const sigmoid = (z: number) => 1 / (1 + Math.exp(-z))
 const logit = (p: number) => Math.log((p + 1e-12) / (1 - p + 1e-12))
 const decided = (s: Side) => s === 'dorsal' || s === 'ventral'
-const LETTER: Record<string, 'dorsal' | 'ventral'> = { d: 'dorsal', v: 'ventral' }
-const PLACE: Record<string, string> = {
+export const LETTER: Record<string, 'dorsal' | 'ventral'> = { d: 'dorsal', v: 'ventral' }
+export const PLACE: Record<string, string> = {
   forewing_left: 'left forewing', forewing_right: 'right forewing', hindwing_left: 'left hindwing', hindwing_right: 'right hindwing',
 }
 

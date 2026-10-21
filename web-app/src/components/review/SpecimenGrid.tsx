@@ -12,6 +12,7 @@ import { cutView, envelopeBox, wingsBox, type Box } from '@/lib/photoCrops'
 import { pendingRotation } from '@/lib/rotationPlan'
 import { REASON_LABEL } from '@/lib/ocr/runLocal'
 import { WingNotes } from './WingNotes'
+import { ReadingsLine } from './ReadingsLine'
 import { specimenNote, type Specimen } from '@/lib/specimens'
 import type { FileEntry, PhotoRow } from '@/types'
 import { SUPPORTED_RAW_EXTENSIONS } from '@/lib/constants'
@@ -126,6 +127,7 @@ function PhotoCell({ row, onUpdate }: { row: PhotoRow; onUpdate: (updates: Parti
         <span className="truncate text-muted-foreground">{row.currentPath}</span>
         {row.status === 'Renamed' && <Check className="h-3 w-3 flex-shrink-0 text-emerald-600" aria-label="Renamed" />}
       </div>
+      <ReadingsLine row={row} />
       {row.review && !skipped && (
         <div className="space-y-1 rounded-md bg-amber-500/10 p-1 text-[11px] text-amber-700 dark:text-amber-400">
           <div className="flex items-center gap-1">

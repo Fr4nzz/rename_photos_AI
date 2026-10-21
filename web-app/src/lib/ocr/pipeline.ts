@@ -89,7 +89,7 @@ export const HIRES_PASSES = { count: 0 }
 
 export const CAMID_RE = /^CAM[0-9]{6}$/
 /** below this confidence the envelope is read again at full resolution (sealed test: 7% of photos) */
-const AUTO_SURE = 0.95
+export const AUTO_SURE = 0.95
 /**
  * An upright line that reads CAM + 6 digits this sure ends the envelope's reading: the lines below it and
  * the turned-over views are not read (app speed campaign, 17 Oct 2026: on its locked set of 2,014 photos

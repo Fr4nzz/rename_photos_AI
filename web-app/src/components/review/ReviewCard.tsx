@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { REASON_LABEL } from '@/lib/ocr/runLocal'
 import { IdLineZoom } from './IdLineZoom'
 import { WingNotes } from './WingNotes'
+import { ReadingsLine } from './ReadingsLine'
 import { PhotoViewer } from './PhotoViewer'
 
 interface Props {
@@ -127,6 +128,7 @@ export function ReviewCard({ row, onUpdate, isDuplicate }: Props) {
         {/* Fields */}
         <div className="min-w-0 flex-1 space-y-1.5">
           {file && <IdLineZoom name={row.from} file={file} camid={row.mainValue.trim()} applied={Number(row.rotApplied || 0)} />}
+          <ReadingsLine row={row} />
           {row.review && (
             <div className="space-y-1 rounded-md bg-amber-500/10 p-1.5">
               <div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
