@@ -23,6 +23,12 @@ The web app reads the CAMID on each specimen photo inside the browser. No API ke
    - A line is a CAMID reading only when the whole line is `CAM` + 6 digits.
    - Lines are read upright first, in the detector's order. The first one that reads a CAMID with confidence 0.99 or more ends the reading; the lines are read turned 180° only when none did (no decision changed on the speed campaign's locked set of 2,014 photos, 64% fewer recognizer runs).
 4. **No envelope found:** the whole photo is read, upright and turned 180°.
+5. **The envelope's whole text** (when asked for: `readPhoto(..., { text: true })`, the server reader's `--text`; `src/lib/ocr/envelopeText.ts`).
+   - Every line of the envelope is read in one turn per envelope (0, 90, 180 or 270°), not line by line.
+   - Lines are grouped by shape: wide, tall, and short ones (a lone ♂/♀, a number) that follow the group with more text. Each group's two turns are compared by the mean log-probability per character over all its lines.
+   - A sure CAM ID line's turn settles its group; wide lines are read turned over only when they read poorly upright.
+   - The CAM ID reading and its decisions are unchanged; the text reuses the crops it already read (about +55 ms a photo on one processor thread).
+   - On 348 archive envelopes (dev sample, 24 Oct 2026): sex read as in the database 68 % → 78 % (wrong 15 % → 4 %), dates 88 % → 91 %, read with the full-text model.
 
 ## Where it runs (`src/lib/photoWorker.ts`, `src/lib/devicePlan.ts`)
 
@@ -58,6 +64,7 @@ The main test set has 651 photos from collections the models never saw in traini
 
 The models improve with each new collection, especially new handwriting. Photos that have already been renamed become training data automatically: the photo is filed under its CAMID, and the envelope confirms it.
 
+0. **Cut line crops as the app reads them.** `npm run envelope-lines -- --out <dir> <photos or list.txt>` (in `web-app/`) writes each envelope's turn, its lines' readings (`lines.jsonl`) and each line's crop as read (PNG). `--rec <onnx> --chars <json>` reads with another recogniser; `--known <camids.json>` applies the database rule to the CAM ID.
 1. **Label crops automatically.** Collect line crops from renamed photos. Where the recognizer already reads the CAMID, the label is automatic. For the hard lines, the known CAMID is checked against the recognizer's character probabilities (CTC). A line holding only a crossed-out ID is labelled `#`, so the recognizer learns to skip it.
 2. **Fine-tune.** Train from the current recognizer on a GPU. On the Sanger cluster this is about 20 minutes on an A100. The Paddle build used does not run on H100 GPUs.
 3. **Export and check.** Export to ONNX with `paddle2onnx`, replace `public/models/camid_rec.onnx`, and run the parity test and unit tests.

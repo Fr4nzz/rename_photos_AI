@@ -3,7 +3,7 @@
  * already on the server's disk. The Ithomiini app runs it to read the photos someone uploaded to Drive
  * without renaming them (its server/drive-photos.mjs downloads them one by one and deletes them after).
  *
- *   node photo-reader.mjs --models <dir> [--known <camids.json>] [--threads 2]
+ *   node photo-reader.mjs --models <dir> [--known <camids.json>] [--threads 2] [--text]
  *
  * stdin, one JSON line per photo: { id, path, preview?, crop? } (preview, crop: where to write a small
  * upright JPEG of the photo and of its envelope), or { id, op: "cut", path, box, out, side } (a part
@@ -13,6 +13,8 @@
  * or { id, error }. `margin`: nats by which the recogniser prefers `camid` to `rival`, the closest other
  * database ID (lib/ocr/lexicon.ts; below 1 a person should look; null without --known or for a joined ID). `rotation`: clockwise degrees that turn the photo as shown (its orientation tag applied)
  * upright; `orientation`: its EXIF orientation tag (1 without one); width/height as shown.
+ * With --text, each reading also has `text`: the envelope's every line read in its one turn (lib/ocr/envelopeText.ts),
+ * { turn, crossTurn?, score, lines: [{ text, conf, turn, box }] } (box in the photo as shown, pixels).
  * A line {"ready": true} comes first; the models are loaded with the first photo to read.
  */
 import { readFileSync } from 'node:fs'
@@ -31,6 +33,7 @@ const arg = (name: string, fallback?: string): string | undefined => {
 const models = arg('models')
 if (!models) throw new Error('--models <dir> is required')
 const threads = Number(arg('threads', '2'))
+const withText = process.argv.includes('--text')
 const known = arg('known') ? new Set<string>(JSON.parse(readFileSync(arg('known')!, 'utf8'))) : null
 const chars: string[] = JSON.parse(readFileSync(`${models}/camid_rec_chars.json`, 'utf8'))
 /** Long side of the working image (as the browser's worker). */
@@ -104,7 +107,7 @@ async function read(job: Job) {
     const h = Math.min(height - top, Math.max(1, Math.round((y1 - y0) * k)))
     return { image: await rgba(sharp(job.path).rotate().extract({ left, top, width: w, height: h })), scale: k }
   }
-  const reading = await readPhoto(backend, work, chars, full)
+  const reading = await readPhoto(backend, work, chars, full, { text: withText })
   const chosen = chooseCamid(reading, known)
   const camid = chosen?.id ?? reading.camid
   const lex = known && chosen ? lexiconMargin(reading.idViews ?? [], chosen.id, known) : null
@@ -137,6 +140,17 @@ async function read(job: Job) {
     width,
     height,
     envelope: reading.envelope ? reading.envelope.map((v) => Math.round((v * width) / reading.size[0])) : null,
+    ...(reading.text ? {
+      text: {
+        turn: reading.text.turn,
+        ...(reading.text.crossTurn !== undefined ? { crossTurn: reading.text.crossTurn } : {}),
+        score: Math.round(reading.text.score * 1000) / 1000,
+        lines: reading.text.lines.map((l) => ({
+          text: l.text, conf: Math.round(l.conf * 1000) / 1000, turn: l.turn,
+          box: l.box.map(([x, y]) => [Math.round((x * width) / reading.size[0]), Math.round((y * width) / reading.size[0])]),
+        })),
+      },
+    } : {}),
     ms: Date.now() - started,
   }
 }
