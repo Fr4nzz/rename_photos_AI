@@ -20,9 +20,12 @@ export function recInput(img: RGBAImage): { data: Float32Array; dims: [1, 3, 48,
   return { data, dims: [1, 3, 48, width] }
 }
 
-/** Greedy CTC decoding: the text and the mean probability of its characters (Paddle's score). */
-export function ctcDecode(probs: Float32Array, steps: number, classes: number, chars: string[]): { text: string; conf: number } {
-  let text = '', sum = 0, n = 0, prev = -1
+/**
+ * Greedy CTC decoding: the text, the mean probability of its characters (Paddle's score) and the sum
+ * of their log-probabilities (`logp`, for comparing whole envelopes read in different turns).
+ */
+export function ctcDecode(probs: Float32Array, steps: number, classes: number, chars: string[]): { text: string; conf: number; logp: number } {
+  let text = '', sum = 0, logp = 0, n = 0, prev = -1
   for (let t = 0; t < steps; t++) {
     let best = 0, bestP = -1
     const row = t * classes
@@ -30,8 +33,8 @@ export function ctcDecode(probs: Float32Array, steps: number, classes: number, c
       const p = probs[row + k]
       if (p > bestP) { bestP = p; best = k }
     }
-    if (best !== 0 && best !== prev) { text += chars[best] ?? ''; sum += bestP; n++ }
+    if (best !== 0 && best !== prev) { text += chars[best] ?? ''; sum += bestP; logp += Math.log(Math.max(bestP, 1e-9)); n++ }
     prev = best
   }
-  return { text, conf: n ? sum / n : 0 }
+  return { text, conf: n ? sum / n : 0, logp }
 }

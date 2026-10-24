@@ -9,6 +9,7 @@ import { decodeBoxes, envelopeCropBounds, letterbox, type Box } from './envelope
 import { detBoxes, detInput, type Pt } from './lineDet'
 import { ctcDecode, recInput } from './rec'
 import { lexiconPosteriors, type IdView } from './lexicon'
+import { chooseTurn, lineCrop, meanLogp, readingOrder, type EnvelopeText, type LineRead, type TextLine, type Turn } from './envelopeText'
 
 export type ModelName = 'envelope' | 'line' | 'rec'
 
@@ -74,6 +75,28 @@ export interface PhotoReading {
   /** every line view, in either orientation, that read CAM + 6 digits, for the lexicon margin
    * (decide.ts); dropped once the batch is decided */
   idViews?: IdView[]
+  /** the envelope's whole text, read in one turn (only when asked for: ReadOptions.text) */
+  text?: EnvelopeText
+}
+
+export interface ReadOptions {
+  /** also read every line of the envelope in its one turn (PhotoReading.text) */
+  text?: boolean
+  /** the turn the envelope is expected in, counter-clockwise (default 0: the photo as shown is upright) */
+  prior?: Turn
+  /** keep each text line's crop as it was read (TextLine.image), for cutting training crops */
+  keepCrops?: boolean
+  /** evaluation: read every text line in all four turns (TextLine.reads) */
+  allTurns?: boolean
+}
+
+/** The working-image lines of an envelope and what was read of them, shared by the CAM ID and text readings. */
+interface LineCache {
+  boxes: Pt[][]
+  /** line i's crop from the working-image envelope, not turned */
+  crop: (i: number) => RGBAImage
+  /** `${line}:${turn}` -> reading */
+  reads: Map<string, LineRead>
 }
 
 /**
@@ -102,19 +125,27 @@ export const normalizeReading = (text: string) => text.replace(/\s+/g, '').toUpp
 
 type Read = { text: string; conf: number; turn?: 90 | 270; idViews?: IdView[] }
 
-async function readLine(backend: Backend, img: RGBAImage, chars: string[]): Promise<Read> {
+/** Recognise one crop as it is. */
+async function recognise(backend: Backend, img: RGBAImage, chars: string[]) {
+  const input = recInput(img)
+  const out = await backend.run('rec', input.data, input.dims)
+  const [, steps, classes] = out.dims
+  return { ...ctcDecode(out.data, steps, classes, chars), out: out.data, steps, classes }
+}
+
+/** `seen`: each view read, with its turn relative to `img` (for the envelope's text). */
+async function readLine(backend: Backend, img: RGBAImage, chars: string[], seen?: (turn: Turn, r: LineRead) => void): Promise<Read> {
   const views: [RGBAImage, 90 | 270 | undefined][] = img.height > 1.5 * img.width
     ? [[rotate(img, 90), 90], [rotate(img, 270), 270]] : [[img, undefined]]
   let best: Read = { text: '', conf: -1 }
   const idViews: IdView[] = []
   for (const [view, turn] of views) {
-    const input = recInput(view)
-    const out = await backend.run('rec', input.data, input.dims)
-    const [, steps, classes] = out.dims
-    const r = ctcDecode(out.data, steps, classes, chars)
+    const { text, conf, logp, out, steps, classes } = await recognise(backend, view, chars)
+    seen?.(turn ?? 0, { text, conf, logp })
+    const r = { text, conf }
     // both turns of a tall line count for the margin, not only the one kept
     const id = normalizeReading(r.text)
-    if (CAMID_RE.test(id)) idViews.push({ id, steps, probs: lexiconPosteriors(out.data, steps, classes, chars) })
+    if (CAMID_RE.test(id)) idViews.push({ id, steps, probs: lexiconPosteriors(out, steps, classes, chars) })
     if (r.conf > best.conf) best = turn ? { ...r, turn } : r
   }
   return idViews.length ? { ...best, idViews } : best
@@ -149,7 +180,7 @@ async function readRegion(backend: Backend, img: RGBAImage, chars: string[], lim
  */
 async function readEnvelopeBothWays(
   backend: Backend, env: RGBAImage, chars: string[], hi: { image: RGBAImage; scale: number } | null,
-  mode: typeof LINE_MODE.value = LINE_MODE.value,
+  mode: typeof LINE_MODE.value = LINE_MODE.value, cache?: LineCache,
 ): Promise<[LineReading[], LineReading[]]> {
   const upright: LineReading[] = [], flipped: LineReading[] = []
   if (hi && (mode === 'hidet' || mode === 'union')) {
@@ -171,16 +202,21 @@ async function readEnvelopeBothWays(
   const det = detInput(env, 64, 4000)
   const out = await backend.run('line', det.data, det.dims)
   const [ph, pw] = out.dims.slice(-2)
+  const boxes = detBoxes(out.data, pw, ph, det.shape)
+  // working-image crops, cut when first needed; kept with their readings for the envelope's text
+  const work: RGBAImage[] = []
+  const workCrop = (i: number) => (work[i] ??= quadCrop(env, boxes[i]))
+  if (cache) { cache.boxes = boxes; cache.crop = workCrop }
   // lines are found on the working image (as trained) and, with the original at hand, read from
   // its full-resolution pixels: small print (e.g. under a barcode) keeps its detail
-  const views = (box: Pt[]) => {
-    const work = quadCrop(env, box)
-    if (!hi || mode === 'working' || mode === 'union') return [work]
-    const full = quadCrop(hi.image, box.map(([x, y]) => [x * hi.scale, y * hi.scale] as Pt))
-    return mode === 'both' ? [work, full] : [full]
+  const views = (i: number) => {
+    if (!hi || mode === 'working' || mode === 'union') return [workCrop(i)]
+    const full = quadCrop(hi.image, boxes[i].map(([x, y]) => [x * hi.scale, y * hi.scale] as Pt))
+    return mode === 'both' ? [workCrop(i), full] : [full]
   }
-  const best = async (imgs: RGBAImage[]) => {
-    let top = await readLine(backend, imgs[0], chars)
+  // `keep`: given when the line's working-image crop is read alone; its views go to the cache
+  const best = async (imgs: RGBAImage[], keep?: (t: Turn, r: LineRead) => void) => {
+    let top = await readLine(backend, imgs[0], chars, keep)
     const idViews = [...(top.idViews ?? [])]
     for (const im of imgs.slice(1)) {
       const r = await readLine(backend, im, chars)
@@ -189,19 +225,20 @@ async function readEnvelopeBothWays(
     }
     return { ...top, idViews }
   }
-  const boxes = detBoxes(out.data, pw, ph, det.shape)
-  const crops: RGBAImage[][] = []
-  for (const box of boxes) {
-    crops.push(views(box))
-    const line = { box, ...(await best(crops[crops.length - 1])) }
+  const keeper = (i: number, imgs: RGBAImage[], base: Turn) => cache && imgs.length === 1 && imgs[0] === work[i]
+    ? (t: Turn, r: LineRead) => { cache.reads.set(`${i}:${(t + base) % 360}`, r) } : undefined
+  const viewsOf: RGBAImage[][] = []
+  for (const [i, box] of boxes.entries()) {
+    viewsOf.push(views(i))
+    const line = { box, ...(await best(viewsOf[i], keeper(i, viewsOf[i], 0))) }
     upright.push(line)
     // the line keeps the posteriors of its views (both turns of a tall line) for the margin
     if (!hi && CAMID_RE.test(normalizeReading(line.text)) && line.conf >= STOP_SURE) return [upright, flipped]
   }
   for (const [i, box] of boxes.entries()) {
-    const lineImgs = crops[i]
+    const lineImgs = viewsOf[i]
     if (lineImgs[0].height > 1.5 * lineImgs[0].width) continue
-    const r = await best(lineImgs.map((im) => rotate(im, 180)))
+    const r = await best(lineImgs.map((im) => rotate(im, 180)), keeper(i, lineImgs, 180))
     // the same quadrilateral in the envelope turned 180: (x, y) -> (w - x, h - y), corners re-ordered
     const turnedBox = [2, 3, 0, 1].map((k) => [env.width - box[k][0], env.height - box[k][1]] as Pt)
     flipped.push({ box: turnedBox, ...r })
@@ -221,7 +258,72 @@ export function chooseCamid(reading: PhotoReading, known: Set<string> | null): {
   return pool[0] ?? null
 }
 
-export async function readPhoto(backend: Backend, photo: RGBAImage, chars: string[], fullCrop?: FullCrop): Promise<PhotoReading> {
+/** The envelope's lines found on the working image, nothing read yet. */
+async function workingLines(backend: Backend, env: RGBAImage): Promise<LineCache> {
+  const det = detInput(env, 64, 4000)
+  const out = await backend.run('line', det.data, det.dims)
+  const [ph, pw] = out.dims.slice(-2)
+  const boxes = detBoxes(out.data, pw, ph, det.shape)
+  const crops: RGBAImage[] = []
+  return { boxes, crop: (i) => (crops[i] ??= quadCrop(env, boxes[i])), reads: new Map() }
+}
+
+/**
+ * Every line of the envelope, read in the envelope's one turn (envelopeText.ts). Reuses what the CAM ID
+ * reading read on the same crops; `camid`: that reading's best whole-line CAM ID, whose turn is a prior
+ * when the reader was sure of it.
+ */
+async function readText(
+  backend: Backend, env: RGBAImage, chars: string[], cache: LineCache, bounds: [number, number, number, number],
+  camid: { camid: string | null; conf: number }, opts: ReadOptions,
+): Promise<EnvelopeText> {
+  let extraReads = 0
+  const read = async (i: number, turn: Turn): Promise<LineRead> => {
+    const key = `${i}:${turn}`
+    let r = cache.reads.get(key)
+    if (!r) {
+      const { text, conf, logp } = await recognise(backend, lineCrop(env, cache.boxes[i], turn), chars)
+      cache.reads.set(key, (r = { text, conf, logp }))
+      extraReads++
+    }
+    return r
+  }
+  const n = cache.boxes.length
+  const dims = Array.from({ length: n }, (_, i) => cache.crop(i))
+  let camidLine: { line: number; turn: Turn } | null = null
+  if (camid.camid && camid.conf >= AUTO_SURE) {
+    let top = -1
+    for (const [key, r] of cache.reads) {
+      if (normalizeReading(r.text) !== camid.camid || r.conf < AUTO_SURE || r.conf <= top) continue
+      const [line, turn] = key.split(':').map(Number)
+      camidLine = { line, turn: turn as Turn }
+      top = r.conf
+    }
+  }
+  const choice = await chooseTurn({
+    sizes: dims.map((c) => [c.width, c.height] as [number, number]),
+    read, camid: camidLine, prior: opts.prior,
+  })
+  const lines: TextLine[] = []
+  for (const i of readingOrder(cache.boxes, choice.turn, env.width, env.height)) {
+    const turn = choice.lineTurns[i]
+    const r = await read(i, turn)
+    const line: TextLine = { box: cache.boxes[i].map(([x, y]) => [x + bounds[0], y + bounds[1]] as Pt), ...r, turn }
+    if (opts.keepCrops) line.image = lineCrop(env, cache.boxes[i], turn)
+    if (opts.allTurns) {
+      line.reads = {}
+      for (const t of [0, 90, 180, 270] as const) line.reads[t] = await read(i, t)
+    }
+    lines.push(line)
+  }
+  const main = lines.filter((l) => l.turn === choice.turn)
+  return {
+    turn: choice.turn, ...(choice.crossTurn !== undefined ? { crossTurn: choice.crossTurn } : {}),
+    score: main.length ? meanLogp(main) : 0, lines, scores: choice.scores, extraReads,
+  }
+}
+
+export async function readPhoto(backend: Backend, photo: RGBAImage, chars: string[], fullCrop?: FullCrop, opts: ReadOptions = {}): Promise<PhotoReading> {
   const scale = Math.min(1, WORK_SIDE / Math.max(photo.width, photo.height))
   const img = scale < 1 ? resize(photo, Math.round(photo.width * scale), Math.round(photo.height * scale)) : photo
   const size: [number, number] = [img.width, img.height]
@@ -234,9 +336,10 @@ export async function readPhoto(backend: Backend, photo: RGBAImage, chars: strin
     const bounds = envelopeCropBounds(largest.box as Box, img)
     const envelope = crop(img, ...bounds)
     let upright: LineReading[], flipped: LineReading[]
+    let cache: LineCache | undefined = opts.text ? { boxes: [], crop: () => envelope, reads: new Map() } : undefined
     if (LINE_MODE.value === 'auto') {
       // normal reading first; the full-resolution pass only when it found no confident CAMID
-      ;[upright, flipped] = await readEnvelopeBothWays(backend, envelope, chars, null, 'working')
+      ;[upright, flipped] = await readEnvelopeBothWays(backend, envelope, chars, null, 'working', cache)
       const sure = Math.max(bestCamid(upright).conf, bestCamid(flipped).conf) >= AUTO_SURE
       const hi = !sure && fullCrop ? await fullCrop(bounds).catch(() => null) : null
       if (hi) {
@@ -248,7 +351,11 @@ export async function readPhoto(backend: Backend, photo: RGBAImage, chars: strin
     } else {
       const hi = fullCrop ? await fullCrop(bounds).catch(() => null) : null
       ;[upright, flipped] = await readEnvelopeBothWays(backend, envelope, chars, hi)
+      // the text is read on the working image's lines whatever the evaluation mode
+      if (cache) cache = await workingLines(backend, envelope)
     }
+    // before the CAM ID decision below changes the lines' boxes
+    const text = cache ? await readText(backend, envelope, chars, cache, bounds, bestCamid([...upright, ...flipped]), opts) : undefined
     const idViews = takeIdViews([...upright, ...flipped])
     // sealed test: +1 correct, no new wrong readings
     upright.push(...joinPieces(upright))
@@ -266,7 +373,7 @@ export async function readPhoto(backend: Backend, photo: RGBAImage, chars: strin
         ? l.box.map(([x, y]) => [img.width - (bounds[0] + ew - x), img.height - (bounds[1] + eh - y)] as Pt)
         : l.box.map(([x, y]) => [x + bounds[0], y + bounds[1]] as Pt)
     }
-    return { ...bestCamid(lines), source: 'envelope', envelope: bounds, turned: useFlipped ? 180 : 0, lines, size, idViews }
+    return { ...bestCamid(lines), source: 'envelope', envelope: bounds, turned: useFlipped ? 180 : 0, lines, size, idViews, ...(text ? { text } : {}) }
   }
 
   // No envelope found (e.g. a newer photo setup): read the whole photo, upright and turned over
