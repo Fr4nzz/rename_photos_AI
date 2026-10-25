@@ -367,9 +367,10 @@ export function useProcessTab() {
           tell()
         } : undefined)
       if (abortController.signal.aborted) return
-      let rows = result.rows
+      // the turns with the wings: they say where the forewings are. Without them (wing clips) none is
+      // suggested: an envelope alone cannot tell a photo turned from an envelope laid another way
+      let rows: PhotoRow[] = result.unturned.map((r) => ({ ...r, rotSuggested: '', rotChosen: '', rotSource: '' }))
       if (withWings) {
-        // the turns again with the wings: they say where the forewings are
         const wingCw = new Map(result.unturned.map((r) => [r.from, checks.has(r.from) ? wingTurn(checks.get(r.from)!, r) : null]))
         rows = planTurnsByCamera(result.unturned, result.landscape, result.tagCw, result.camera, wingCw)
       }

@@ -35,7 +35,7 @@ Everything happens in one view:
 
 1. **Open folder**, then filter and select the photos in the grid. The ↺ ↻ 180° buttons rotate the selected photos by hand (lossless, RAW files too); the last button undoes rotations.
 2. Click **Run PaddleOCR**. Photos are read in the background, at about 1 s per photo on a laptop.
-   - With **Auto-rotate** on (the default), each photo and its RAW files are then turned so the envelope text is upright. Only the orientation tag changes; Undo or Restore reverts it.
+   - With **Auto-rotate** on (the default), each photo and its RAW files are then turned so the forewings are on top: by the photo's own wings or envelope when they are sure, else as the other photos of its camera (flagged when unsure). Wing Clips photos are not turned. Only the orientation tag changes; Undo or Restore reverts it.
    - Photos whose ID could not be read, or is not in the database, take the rotation of the read photos shot just before and after them in the same session. This is compared in the camera's own frame, because on a copy stand the camera's gyro-based orientation tag is unreliable.
    - Each RAW file gets exactly the orientation tag of its JPEG, so the pair always matches.
    - A session photographed with one setup has one rotation: when nearly all the read photos of a session (photos taken less than 30 minutes apart) agree, every photo of it takes that rotation. The ones whose envelope pointed another way (an envelope laid down turned, however many in a row) are flagged **Rotation differs from the photos around it**; turn one with ↺/↻ if its envelope was right.

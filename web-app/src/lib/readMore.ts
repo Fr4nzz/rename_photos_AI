@@ -10,6 +10,8 @@ import { runLocalOcr } from './ocr/runLocal'
 import { calculateFinalNames } from './nameCalculator'
 import { appendRotationLog, listFolder, writeRotations } from './rotationWrite'
 import { applyWingChecks, checkPhotos } from './wings/runWings'
+import { wingTurn } from './wings/checks'
+import { planTurnsByCamera } from './rotationPlan'
 import { saveBatch } from './saveBatch'
 import { getErrorMessage } from './errors'
 
@@ -28,11 +30,15 @@ export async function readMore(entries: FileEntry[]): Promise<void> {
     }))
     s.setFileMap(new Map([...useProcessingStore.getState().fileMap, ...entries.map((e) => [e.name, e.file] as const)]))
     const result = await runLocalOcr(entries, base, (done, total) => s.setProgress(Math.floor((done / total) * 50), `Read ${done}/${total} added photos`), controller.signal)
-    let added = result.rows
     const withWings = settings.suffixMode !== 'Wing Clips'
     const checks = withWings
-      ? await checkPhotos(added, (done, total) => s.setProgress(50 + Math.floor((done / total) * 50), `Checked the wings of ${done}/${total} added photos`), controller.signal)
+      ? await checkPhotos(result.unturned, (done, total) => s.setProgress(50 + Math.floor((done / total) * 50), `Checked the wings of ${done}/${total} added photos`), controller.signal)
       : new Map()
+    // their turns with the wings, as a first reading; none without them (wing clips)
+    let added: PhotoRow[] = withWings
+      ? planTurnsByCamera(result.unturned, result.landscape, result.tagCw, result.camera,
+        new Map(result.unturned.map((r) => [r.from, checks.has(r.from) ? wingTurn(checks.get(r.from)!, r) : null])))
+      : result.unturned.map((r) => ({ ...r, rotSuggested: '', rotChosen: '', rotSource: '' }))
     const dir = useProcessingStore.getState().dirHandle
     if (settings.autoRotate && dir) {
       const written = await writeRotations(dir, added, await listFolder(dir), true)

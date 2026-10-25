@@ -188,7 +188,7 @@ export function ProcessingControls({ onStart, onStop, hasImages, children, gemin
               </TooltipTrigger>
               <TooltipContent>
                 {autoRotate
-                  ? 'On: after reading, each photo (and its RAW) is turned so the envelope text is upright. Lossless; Undo or Restore reverts it.'
+                  ? 'On: after reading, each photo (and its RAW) is turned so its forewings are on top, by its wings or envelope when sure, else as its camera\'s other photos. Not on wing clips. Lossless; Undo or Restore reverts it.'
                   : 'Off: rotations are only suggested in Review and written when you rename.'}
               </TooltipContent>
             </Tooltip>
