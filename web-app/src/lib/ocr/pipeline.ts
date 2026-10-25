@@ -33,9 +33,11 @@ export interface LineReading {
 }
 
 /**
- * A crossed-out or widely spaced ID line is often detected as pieces ("CAM7" + "077332"). When a
- * piece of exactly 6 digits has, on the same row and just to its left, a piece starting with CAM,
- * offer CAM + those digits as a reading (the database and sequence checks still apply).
+ * A crossed-out or widely spaced ID line is often detected as pieces ("CAM7" + "077332", "CAM078" + "715").
+ * When a piece of digits has, on the same row and just to its left, a piece starting with CAM, offer
+ * CAM + 6 digits as a reading (the database and sequence checks still apply): a piece of exactly 6 digits
+ * follows any CAM piece (its digits are taken as crossed out); a shorter piece only completes a piece that
+ * is exactly CAM + the missing number of digits.
  */
 export function joinPieces(lines: LineReading[]): LineReading[] {
   const flat = lines.filter((l) => !l.turn)
@@ -46,25 +48,54 @@ export function joinPieces(lines: LineReading[]): LineReading[] {
   const out: LineReading[] = []
   for (const d of flat) {
     const digits = normalizeReading(d.text)
-    if (!/^[0-9]{6}$/.test(digits)) continue
+    if (!/^[0-9]{1,6}$/.test(digits)) continue
     const g = geo(d), h = g.y1 - g.y0, cy = (g.y0 + g.y1) / 2
     for (const c of flat) {
-      if (c === d || !/^CAM/.test(normalizeReading(c.text)) || CAMID_RE.test(normalizeReading(c.text))) continue
+      const head = normalizeReading(c.text)
+      if (c === d || !/^CAM/.test(head) || CAMID_RE.test(head)) continue
+      const id = digits.length === 6 ? `CAM${digits}` : head.length + digits.length === 9 && /^CAM[0-9]*$/.test(head) ? head + digits : null
+      if (!id) continue
       const k = geo(c), kcy = (k.y0 + k.y1) / 2
       if (Math.abs(kcy - cy) > 0.6 * h || k.x1 > g.x0 + 0.3 * h || g.x0 - k.x1 > 4 * h) continue
       out.push({ box: [[k.x0, Math.min(k.y0, g.y0)], [g.x1, Math.min(k.y0, g.y0)], [g.x1, Math.max(k.y1, g.y1)], [k.x0, Math.max(k.y1, g.y1)]],
-        text: `CAM${digits}`, conf: Math.min(c.conf, d.conf), joined: true })
+        text: id, conf: Math.min(c.conf, d.conf), joined: true })
     }
   }
   return out
+}
+
+/**
+ * How a CAM ID was found in a line: the whole line; a token ending a longer line (CAM + 6 digits followed
+ * by nothing but a sex sign or punctuation: "CAM075192♀", "Ela-meme-1-CAM079134"); or with its first letter
+ * cut off or blotted, or its first two at the edge of a photo of the envelope's top strip ("AM074594",
+"CM077250", "M077392"; at the start of the line or after a separator).
+ */
+export type IdFind = 'line' | 'token' | 'cut'
+
+/** Without the database, an ID read with letters of CAM missing is taken only this sure. */
+export const CUT_SURE = 0.99
+
+const TAIL = '[♀♂.,;:)\\]|/_-]*'
+const TOKEN_RE = new RegExp(`CAM([0-9]{6})${TAIL}$`)
+const CUT_RE = new RegExp(`(?:^|[^A-Z0-9])(?:AM|CM|M)([0-9]{6})${TAIL}$`)
+
+/** The CAM ID in a line's text, or null. Strict: exactly 6 digits, nothing but signs after them. */
+export function findCamid(text: string): { id: string; how: IdFind } | null {
+  const t = normalizeReading(text)
+  if (CAMID_RE.test(t)) return { id: t, how: 'line' }
+  let m = TOKEN_RE.exec(t)
+  if (m) return { id: `CAM${m[1]}`, how: 'token' }
+  m = CUT_RE.exec(t)
+  if (m) return { id: `CAM${m[1]}`, how: 'cut' }
+  return null
 }
 
 export interface PhotoReading {
   /** best whole-line CAMID reading (CAM + 6 digits), or null (see chooseCamid for the database rule) */
   camid: string | null
   conf: number
-  /** every whole-line CAMID reading on the photo, most confident first */
-  candidates: { id: string; conf: number }[]
+  /** every CAMID reading on the photo: whole lines first, then IDs inside longer lines (`how`), each most confident first */
+  candidates: IdCandidate[]
   source: 'envelope' | 'fallback' | 'none'
   envelope: [number, number, number, number] | null
   /** 0 or 180: orientation at which the fallback found the ID */
@@ -246,16 +277,38 @@ async function readEnvelopeBothWays(
   return [upright, flipped]
 }
 
-function bestCamid(lines: LineReading[]): { camid: string | null; conf: number; candidates: { id: string; conf: number }[] } {
-  const found = lines.map((l) => ({ id: normalizeReading(l.text), conf: l.conf })).filter((f) => CAMID_RE.test(f.id))
-  found.sort((a, b) => b.conf - a.conf)
-  return { camid: found[0]?.id ?? null, conf: found[0]?.conf ?? 0, candidates: found }
+export interface IdCandidate { id: string; conf: number; how?: IdFind }
+
+const takeable = (known: Set<string> | null) => (c: IdCandidate) =>
+  known ? known.has(c.id) : c.how !== 'cut' || c.conf >= CUT_SURE
+
+/**
+ * The CAM ID readings of these lines: whole lines (and joined pieces), most confident first; with
+ * `inLines`, then the IDs found inside longer lines or with letters of CAM missing (findCamid). `camid` is the first
+ * that can be taken without the database. The turn of the envelope is chosen on whole lines only.
+ */
+function bestCamid(lines: LineReading[], inLines = false): { camid: string | null; conf: number; candidates: IdCandidate[] } {
+  const whole: IdCandidate[] = [], inside: IdCandidate[] = []
+  for (const l of lines) {
+    const f = findCamid(l.text)
+    if (f?.how === 'line') whole.push({ id: f.id, conf: l.conf })
+    else if (f && inLines) inside.push({ id: f.id, conf: l.conf, how: f.how })
+  }
+  whole.sort((a, b) => b.conf - a.conf)
+  inside.sort((a, b) => b.conf - a.conf)
+  const candidates = [...whole, ...inside]
+  const first = candidates.find(takeable(null))
+  return { camid: first?.id ?? null, conf: first?.conf ?? 0, candidates }
 }
 
-/** Database rule: the most confident CAMID reading that exists in the database, or null. */
+/**
+ * Database rule: the first CAMID reading (whole lines first, then IDs inside lines, each most confident
+ * first) that exists in the database, or null. Without the database, an ID read with letters of CAM
+ * missing is taken only when read CUT_SURE or more.
+ */
 export function chooseCamid(reading: PhotoReading, known: Set<string> | null): { id: string; conf: number } | null {
-  const pool = known ? reading.candidates.filter((c) => known.has(c.id)) : reading.candidates
-  return pool[0] ?? null
+  const c = reading.candidates.find(takeable(known))
+  return c ? { id: c.id, conf: c.conf } : null
 }
 
 /** The envelope's lines found on the working image, nothing read yet. */
@@ -373,7 +426,7 @@ export async function readPhoto(backend: Backend, photo: RGBAImage, chars: strin
         ? l.box.map(([x, y]) => [img.width - (bounds[0] + ew - x), img.height - (bounds[1] + eh - y)] as Pt)
         : l.box.map(([x, y]) => [x + bounds[0], y + bounds[1]] as Pt)
     }
-    return { ...bestCamid(lines), source: 'envelope', envelope: bounds, turned: useFlipped ? 180 : 0, lines, size, idViews, ...(text ? { text } : {}) }
+    return { ...bestCamid(lines, true), source: 'envelope', envelope: bounds, turned: useFlipped ? 180 : 0, lines, size, idViews, ...(text ? { text } : {}) }
   }
 
   // No envelope found (e.g. a newer photo setup): read the whole photo, upright and turned over
@@ -383,7 +436,7 @@ export async function readPhoto(backend: Backend, photo: RGBAImage, chars: strin
     const view = turned ? rotate(img, 180) : img
     const lines = await readRegion(backend, view, chars, 736, 1600, true)
     idViews.push(...takeIdViews(lines))
-    const b = bestCamid(lines)
+    const b = bestCamid(lines, true)
     if (b.camid && (!best.camid || b.conf > best.conf)) best = { ...b, source: 'fallback', envelope: null, turned, lines, size }
     else if (!best.camid && lines.length > best.lines.length) best = { ...best, lines }
   }
