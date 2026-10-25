@@ -22,10 +22,10 @@ describe.skipIf(process.env.CURATE !== '1')('curation scan', () => {
     const s: Record<ModelName, ort.InferenceSession> = {
       envelope: await ort.InferenceSession.create(`${MODELS}envelope_det.onnx`, opt),
       line: await ort.InferenceSession.create(`${MODELS}line_det.onnx`, opt),
-      rec: await ort.InferenceSession.create(`${MODELS}camid_rec.onnx`, opt),
+      rec: await ort.InferenceSession.create(`${MODELS}envelope_reader_rec.onnx`, opt),
     }
     const backend: Backend = { async run(m, data, dims) { const x = s[m]; const o = await x.run({ [x.inputNames[0]]: new ort.Tensor('float32', data, dims) }); const t = o[x.outputNames[0]]; return { data: t.data as Float32Array, dims: t.dims as number[] } } }
-    const chars: string[] = JSON.parse(readFileSync(`${MODELS}camid_rec_chars.json`, 'utf8'))
+    const chars: string[] = JSON.parse(readFileSync(`${MODELS}envelope_reader_rec_chars.json`, 'utf8'))
     const known = new Set<string>(JSON.parse(readFileSync(`${MODELS}../db/camids.json`, 'utf8')))
     const done = new Set<string>(readdirSync(DIR).filter((f) => /^readings.*\.jsonl$/.test(f))
       .flatMap((f) => readFileSync(`${DIR}/${f}`, 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l).file] } catch { return [] } })))

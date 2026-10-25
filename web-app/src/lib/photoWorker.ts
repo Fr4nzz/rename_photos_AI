@@ -220,7 +220,7 @@ self.onmessage = async (event: MessageEvent<PhotoRequest | PhotoInit | PhotoProb
   try {
     await ready
     const t0 = performance.now()
-    chars ??= fetch(`${base}models/camid_rec_chars.json`).then((r) => r.json() as Promise<string[]>)
+    chars ??= fetch(`${base}models/envelope_reader_rec_chars.json`).then((r) => r.json() as Promise<string[]>)
     wingCfg ??= fetch(`${base}models/wingside.json`).then((r) => r.json() as Promise<WingConfig>)
     const decoded = await decode(msg.file, msg.raw, msg.read, msg.wings)
     const out: PhotoResponse & { ok: true } = { id: msg.id, ok: true, ms: 0 }

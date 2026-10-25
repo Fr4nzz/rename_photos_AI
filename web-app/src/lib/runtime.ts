@@ -35,7 +35,7 @@ type Session = Awaited<ReturnType<Ort['InferenceSession']['create']>>
 /** The model files; the wing models' names come from wingside.json. */
 async function modelFiles(base: string): Promise<Record<ModelKey, string>> {
   const cfg = await (await fetch(`${base}models/wingside.json`)).json()
-  return { envelope: 'envelope_det.onnx', line: 'line_det.onnx', rec: 'camid_rec.onnx', wingseg: cfg.segmentation.file, wingcls: cfg.classifier.file }
+  return { envelope: 'envelope_det.onnx', line: 'line_det.onnx', rec: 'envelope_reader_rec.onnx', wingseg: cfg.segmentation.file, wingcls: cfg.classifier.file }
 }
 
 export async function openRuntime(plan: RuntimePlan, base: string): Promise<Runtime> {

@@ -35,7 +35,7 @@ if (!models) throw new Error('--models <dir> is required')
 const threads = Number(arg('threads', '2'))
 const withText = process.argv.includes('--text')
 const known = arg('known') ? new Set<string>(JSON.parse(readFileSync(arg('known')!, 'utf8'))) : null
-const chars: string[] = JSON.parse(readFileSync(`${models}/camid_rec_chars.json`, 'utf8'))
+const chars: string[] = JSON.parse(readFileSync(`${models}/envelope_reader_rec_chars.json`, 'utf8'))
 /** Long side of the working image (as the browser's worker). */
 const WORK_SIDE = 1600
 const PREVIEW_SIDE = 1024
@@ -49,7 +49,7 @@ const sessions = () =>
   (loaded ??= (async () => ({
     envelope: await ort.InferenceSession.create(`${models}/envelope_det.onnx`, options),
     line: await ort.InferenceSession.create(`${models}/line_det.onnx`, options),
-    rec: await ort.InferenceSession.create(`${models}/camid_rec.onnx`, options),
+    rec: await ort.InferenceSession.create(`${models}/envelope_reader_rec.onnx`, options),
   }))())
 const backend: Backend = {
   async run(model, data, dims) {

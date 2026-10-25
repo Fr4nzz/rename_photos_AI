@@ -44,8 +44,8 @@ if (!out || !inputs.length) {
   process.exit(2)
 }
 const models = str('models') ?? resolve(dirname(new URL(import.meta.url).pathname), '../../public/models')
-const recPath = str('rec') ?? `${models}/camid_rec.onnx`
-const chars: string[] = JSON.parse(readFileSync(str('chars') ?? `${models}/camid_rec_chars.json`, 'utf8'))
+const recPath = str('rec') ?? `${models}/envelope_reader_rec.onnx`
+const chars: string[] = JSON.parse(readFileSync(str('chars') ?? `${models}/envelope_reader_rec_chars.json`, 'utf8'))
 const known = str('known') ? new Set<string>(JSON.parse(readFileSync(str('known')!, 'utf8'))) : null
 const threads = Number(str('threads') ?? 2)
 const crops = !opts['no-crops']

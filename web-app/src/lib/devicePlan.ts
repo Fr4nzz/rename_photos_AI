@@ -11,8 +11,8 @@ import type { PhotoProbe, ProbeResult } from './photoWorker'
 import { MODEL_KEYS, type Device, type ModelKey, type ProbeTimes } from './runtime'
 
 const KEY = 'rename-photos-device-plan'
-/** bump to time again on every computer (new models, a new rule); 2: the nano wing model (18 Oct) */
-const VERSION = 2
+/** bump to time again on every computer (new models, a new rule); 2: the nano wing model (18 Oct); 3: the envelope reader (25 Oct) */
+const VERSION = 3
 
 /**
  * Processor time of each model against the envelope detector's (onnxruntime-web 1.30, WebAssembly,

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useProcessingStore } from '@/stores/processingStore'
 import { loadImagePreview, rotateCanvas } from '@/lib/imageProcessing'
 import { camidLikeness } from '@/lib/ocr/decide'
-import { normalizeReading } from '@/lib/ocr/pipeline'
+import { findCamid } from '@/lib/ocr/pipeline'
 
 /** Enlarged crop of the line the reader took the CAMID from (or the most CAMID-like line). */
 export function IdLineZoom({ name, file, camid, applied = 0 }: { name: string; file: File; camid: string; applied?: number }) {
@@ -11,7 +11,7 @@ export function IdLineZoom({ name, file, camid, applied = 0 }: { name: string; f
 
   useEffect(() => {
     if (!reading || reading.lines.length === 0) return
-    const line = reading.lines.find((l) => normalizeReading(l.text) === camid)
+    const line = reading.lines.find((l) => findCamid(l.text)?.id === camid)
       ?? [...reading.lines].sort((a, b) => camidLikeness(b.text) - camidLikeness(a.text))[0]
     let cancelled = false
     let made: string | null = null

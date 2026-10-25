@@ -17,10 +17,11 @@ The web app reads the CAMID on each specimen photo inside the browser. No API ke
    - The photo is first shrunk so its long side is at most 1,600 px, the size the models were trained on.
    - The largest envelope is cropped with an 8% margin.
 2. **Text-line detector** (`line_det.onnx`, 5 MB): PaddleOCR PP-OCRv5 mobile detection. It finds every text line on the envelope.
-3. **CAMID recognizer** (`camid_rec.onnx`, 8 MB).
-   - PP-OCRv5 mobile recognition, fine-tuned on about 7,000 CAMID lines from Sanger/Ikiam envelopes, including crossed-out IDs.
+3. **Envelope reader** (`envelope_reader_rec.onnx`, 8 MB, with its alphabet `envelope_reader_rec_chars.json`, 440 entries).
+   - PP-OCRv5 mobile recognition (the same network and speed as the earlier CAMID-only recognizer), fine-tuned on about 7,000 CAMID lines, including crossed-out IDs, and on about 4,600 other envelope lines (species, sex signs ♂/♀, places, dates). It replaced `camid_rec.onnx` on 25 Oct 2026 (Rename Photos dev photos and a fresh test set of 597 archive photos: as many renamed right, fewer wrong renames over all non-locked photos).
+   - The alphabet must be loaded with the model: with the older 438-entry list, ♂, ♀ and spaces would be lost.
    - It reads each line. Sideways lines are read turned both ways, and the more confident reading is kept.
-   - A line is a CAMID reading only when the whole line is `CAM` + 6 digits.
+   - A CAMID reading is a whole line of `CAM` + 6 digits; failing that, an ID ending a longer line ("CAM075192♀"), or one with letters of CAM cut off ("AM…", "CM…", "M…" + 6 digits, taken only when the database knows it). Whole lines come first.
    - Lines are read upright first, in the detector's order. The first one that reads a CAMID with confidence 0.99 or more ends the reading; the lines are read turned 180° only when none did (no decision changed on the speed campaign's locked set of 2,014 photos, 64% fewer recognizer runs).
 4. **No envelope found:** the whole photo is read, upright and turned 180°.
 5. **The envelope's whole text** (when asked for: `readPhoto(..., { text: true })`, the server reader's `--text`; `src/lib/ocr/envelopeText.ts`).
@@ -66,7 +67,7 @@ The models improve with each new collection, especially new handwriting. Photos 
 
 0. **Cut line crops as the app reads them.** `npm run envelope-lines -- --out <dir> <photos or list.txt>` (in `web-app/`) writes each envelope's turn, its lines' readings (`lines.jsonl`) and each line's crop as read (PNG). `--rec <onnx> --chars <json>` reads with another recogniser; `--known <camids.json>` applies the database rule to the CAM ID.
 1. **Label crops automatically.** Collect line crops from renamed photos. Where the recognizer already reads the CAMID, the label is automatic. For the hard lines, the known CAMID is checked against the recognizer's character probabilities (CTC). A line holding only a crossed-out ID is labelled `#`, so the recognizer learns to skip it.
-2. **Fine-tune.** Train from the current recognizer on a GPU. On the Sanger cluster this is about 20 minutes on an A100. The Paddle build used does not run on H100 GPUs.
-3. **Export and check.** Export to ONNX with `paddle2onnx`, replace `public/models/camid_rec.onnx`, and run the parity test and unit tests.
+2. **Fine-tune.** Train from the current recognizer on a GPU (scripts in `ocr-next/envelope-reader/train/`). On the Sanger cluster this is about 20 minutes on an A100. The Paddle build used does not run on H100 GPUs.
+3. **Export and check.** Export to ONNX with `paddle2onnx`, replace `public/models/envelope_reader_rec.onnx` and its `_chars.json`, bump `VERSION` in `src/lib/devicePlan.ts`, and run the unit tests (the parity test's reference decisions are the earlier CAMID recognizer's Python pipeline, so expect a few differences).
 
 The training and evaluation scripts are kept with the OCR project outside this repository (`sanger-envelope-sam3-20260924/ocr-next/`: `camid-train/`, `camid-bigtest/`, `fresh-test/`, `envelope-det-v2/`).

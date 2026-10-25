@@ -38,7 +38,7 @@ describe.skipIf(!RUN)('parity with the Python pipeline', () => {
     const sessions: Record<ModelName, ort.InferenceSession> = {
       envelope: await ort.InferenceSession.create(`${MODELS}envelope_det.onnx`),
       line: await ort.InferenceSession.create(`${MODELS}line_det.onnx`),
-      rec: await ort.InferenceSession.create(`${MODELS}camid_rec.onnx`),
+      rec: await ort.InferenceSession.create(`${MODELS}envelope_reader_rec.onnx`),
     }
     const backend: Backend = {
       async run(model, data, dims) {
@@ -49,7 +49,7 @@ describe.skipIf(!RUN)('parity with the Python pipeline', () => {
       },
     }
     LINE_MODE.value = (process.env.LINEMODE ?? 'hires') as typeof LINE_MODE.value
-    const chars: string[] = JSON.parse(readFileSync(`${MODELS}camid_rec_chars.json`, 'utf8'))
+    const chars: string[] = JSON.parse(readFileSync(`${MODELS}envelope_reader_rec_chars.json`, 'utf8'))
     const known = new Set<string>(JSON.parse(readFileSync(`${MODELS}../db/camids.json`, 'utf8')))
     const split: Record<string, string> = JSON.parse(readFileSync(`${FRESH}/round2-split.json`, 'utf8'))
     const checks: Record<string, { envelope_camid?: string; no_visible_id?: boolean }> =
