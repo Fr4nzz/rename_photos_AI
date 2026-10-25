@@ -57,11 +57,11 @@ export interface PhotoRow {
   review: string
   /** local OCR: suggested CAMIDs, best first, space-separated */
   suggest: string
-  /** clockwise rotation that makes the photo upright, from the CAMID reading ('' = unknown) */
+  /** clockwise rotation that makes the photo upright, from its own reading (wings or envelope) or its camera's other photos ('' = unknown) */
   rotSuggested: string
   /** clockwise rotation to use for this photo ('' = none) */
   rotChosen: string
-  /** where rotChosen came from: the reader, a manual change, or learned from manual changes */
+  /** where rotChosen came from: the photo's own reading, a manual change, the camera's other photos, or learned from manual changes */
   rotSource: '' | 'ocr' | 'manual' | 'learned' | 'neighbours'
   /** clockwise rotation already written to the file(s) by this app ('' = none) */
   rotApplied: string

@@ -3,11 +3,11 @@ import type { PhotoRow } from '@/types'
 import { pendingRotation } from '@/lib/rotationPlan'
 
 const SOURCE = {
-  ocr: { Icon: ScanText, text: 'suggested from the envelope text' },
+  ocr: { Icon: ScanText, text: "from this photo's own reading: its wings, or its envelope" },
   manual: { Icon: Hand, text: 'set by you (click to go back to the suggestion)' },
   learned: { Icon: Wand2, text: 'learned from corrections (earlier version)' },
-  neighbours: { Icon: ArrowLeftRight, text: 'taken from the other photos of its session' },
-  '': { Icon: null, text: 'no suggestion (no CAMID read)' },
+  neighbours: { Icon: ArrowLeftRight, text: "nothing sure on this photo: the usual turn of its camera's other photos" },
+  '': { Icon: null, text: 'no suggestion (nothing read)' },
 } as const
 
 /**

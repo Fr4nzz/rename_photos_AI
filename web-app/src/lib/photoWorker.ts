@@ -226,7 +226,8 @@ self.onmessage = async (event: MessageEvent<PhotoRequest | PhotoInit | PhotoProb
     const out: PhotoResponse & { ok: true } = { id: msg.id, ok: true, ms: 0 }
     if (decoded.reading) {
       try {
-        out.reading = await readPhoto(readerBackend, decoded.reading, await chars, decoded.full)
+        // the envelope's other lines too when its CAM ID line gives no sure turn (rotationPlan envelopeTurn)
+        out.reading = await readPhoto(readerBackend, decoded.reading, await chars, decoded.full, { text: 'unsure' })
       } catch (e) {
         out.readError = e instanceof Error ? e.message : String(e)
       }

@@ -3,16 +3,23 @@
  * already on the server's disk. The Ithomiini app runs it to read the photos someone uploaded to Drive
  * without renaming them (its server/drive-photos.mjs downloads them one by one and deletes them after).
  *
- *   node photo-reader.mjs --models <dir> [--known <camids.json>] [--threads 2] [--text]
+ *   node photo-reader.mjs --models <dir> [--known <camids.json>] [--threads 2] [--text] [--wings]
  *
  * stdin, one JSON line per photo: { id, path, preview?, crop? } (preview, crop: where to write a small
  * upright JPEG of the photo and of its envelope), or { id, op: "cut", path, box, out, side } (a part
  * of the photo as shown, `box` [x0, y0, x1, y1] in fractions of it, written upright to `out` with its
  * long side at most `side`: answered { id, out, width, height }). stdout, one JSON line each, in order:
- * { id, camid, conf, margin, rival, candidates, source, turned, rotation, orientation, width, height, envelope, ms }
+ * { id, camid, conf, margin, rival, candidates, source, turned, rotation, envelopeRotation, orientation, width, height, envelope, ms }
  * or { id, error }. `margin`: nats by which the recogniser prefers `camid` to `rival`, the closest other
  * database ID (lib/ocr/lexicon.ts; below 1 a person should look; null without --known or for a joined ID). `rotation`: clockwise degrees that turn the photo as shown (its orientation tag applied)
- * upright; `orientation`: its EXIF orientation tag (1 without one); width/height as shown.
+ * upright, from its CAM ID line however sure; `envelopeRotation`: the same from the envelope when the reading is
+ * sure of it, in any direction (its CAM ID line read sure, else its whole text: lib/rotationPlan.ts envelopeTurn;
+ * the envelope's other lines are read for it only when the CAM ID line is not sure), else null;
+ * `orientation`: its EXIF orientation tag (1 without one); width/height as shown.
+ * With --wings (the wing models beside the others: wingside.json and its two files), each reading also has
+ * `wings`: { count, turnK, pTurn } (lib/wings/model.ts analysePhoto on the photo as shown at 1600 px) and
+ * `wingRotation`: the clockwise turn that puts the forewings on top when the wings are sure of it (at least
+ * TURN_WINGS wings, TURN_SURE sure: lib/wings/checks.ts), else null.
  * With --text, each reading also has `text`: the envelope's every line read in its one turn (lib/ocr/envelopeText.ts),
  * { turn, crossTurn?, score, lines: [{ text, conf, turn, box }] } (box in the photo as shown, pixels).
  * A line {"ready": true} comes first; the models are loaded with the first photo to read.
@@ -24,7 +31,9 @@ import sharp from 'sharp'
 import type { RGBAImage } from '../lib/ocr/image'
 import { chooseCamid, readPhoto, type Backend, type FullCrop, type ModelName } from '../lib/ocr/pipeline'
 import { lexiconMargin } from '../lib/ocr/lexicon'
-import { uprightRotation } from '../lib/rotationPlan'
+import { envelopeTurn, uprightRotation } from '../lib/rotationPlan'
+import { analysePhoto, type WingBackend, type WingConfig } from '../lib/wings/model'
+import { TURN_SURE, TURN_WINGS } from '../lib/wings/checks'
 
 const arg = (name: string, fallback?: string): string | undefined => {
   const i = process.argv.indexOf(`--${name}`)
@@ -34,6 +43,7 @@ const models = arg('models')
 if (!models) throw new Error('--models <dir> is required')
 const threads = Number(arg('threads', '2'))
 const withText = process.argv.includes('--text')
+const withWings = process.argv.includes('--wings')
 const known = arg('known') ? new Set<string>(JSON.parse(readFileSync(arg('known')!, 'utf8'))) : null
 const chars: string[] = JSON.parse(readFileSync(`${models}/envelope_reader_rec_chars.json`, 'utf8'))
 /** Long side of the working image (as the browser's worker). */
@@ -64,6 +74,26 @@ const backend: Backend = {
     return typeof side === 'number' ? side : undefined
   },
 }
+
+let wingsLoaded: Promise<{ cfg: WingConfig; backend: WingBackend }> | null = null
+const wingModels = () =>
+  (wingsLoaded ??= (async () => {
+    const cfg: WingConfig = JSON.parse(readFileSync(`${models}/wingside.json`, 'utf8'))
+    const seg = await ort.InferenceSession.create(`${models}/${cfg.segmentation.file}`, options)
+    const cls = await ort.InferenceSession.create(`${models}/${cfg.classifier.file}`, options)
+    const backend: WingBackend = {
+      async segment(x, S) {
+        const o = await seg.run({ [seg.inputNames[0]]: new ort.Tensor('float32', x, [1, 3, S, S]) })
+        const [det, proto] = seg.outputNames.map((n) => o[n])
+        return { det: det.data as Float32Array, detDims: det.dims as number[], proto: proto.data as Float32Array, protoDims: proto.dims as number[] }
+      },
+      async classify(x, n, size) {
+        const o = await cls.run({ [cls.inputNames[0]]: new ort.Tensor('float32', x, [n, 3, size, size]) })
+        return o[cls.outputNames[0]].data as Float32Array
+      },
+    }
+    return { cfg, backend }
+  })())
 
 const rgba = async (image: sharp.Sharp): Promise<RGBAImage> => {
   const { data, info } = await image.ensureAlpha().raw().toBuffer({ resolveWithObject: true })
@@ -107,9 +137,10 @@ async function read(job: Job) {
     const h = Math.min(height - top, Math.max(1, Math.round((y1 - y0) * k)))
     return { image: await rgba(sharp(job.path).rotate().extract({ left, top, width: w, height: h })), scale: k }
   }
-  const reading = await readPhoto(backend, work, chars, full, { text: withText })
+  const reading = await readPhoto(backend, work, chars, full, { text: withText || 'unsure' })
   const chosen = chooseCamid(reading, known)
   const camid = chosen?.id ?? reading.camid
+  const wings = withWings ? await wingModels().then(({ cfg, backend: b }) => analysePhoto(b, cfg, work)) : null
   const lex = known && chosen ? lexiconMargin(reading.idViews ?? [], chosen.id, known) : null
   if (job.preview)
     await sharp(job.path).rotate().resize(PREVIEW_SIDE, PREVIEW_SIDE, { fit: 'inside' }).jpeg({ quality: 78 }).toFile(job.preview)
@@ -136,11 +167,17 @@ async function read(job: Job) {
     source: reading.source,
     turned: reading.turned,
     rotation: uprightRotation(reading, camid),
+    // the envelope's turn only from an ID the database has (when it is given)
+    envelopeRotation: envelopeTurn(reading, known ? chosen?.id ?? null : camid),
+    ...(wings ? {
+      wings: { count: wings.wings.length, turnK: wings.turnK, pTurn: Math.round(wings.pTurn * 1000) / 1000 },
+      wingRotation: wings.wings.length >= TURN_WINGS && wings.pTurn >= TURN_SURE ? (90 * wings.turnK) % 360 : null,
+    } : {}),
     orientation,
     width,
     height,
     envelope: reading.envelope ? reading.envelope.map((v) => Math.round((v * width) / reading.size[0])) : null,
-    ...(reading.text ? {
+    ...(withText && reading.text ? {
       text: {
         turn: reading.text.turn,
         ...(reading.text.crossTurn !== undefined ? { crossTurn: reading.text.crossTurn } : {}),

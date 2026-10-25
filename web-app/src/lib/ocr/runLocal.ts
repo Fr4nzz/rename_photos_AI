@@ -9,7 +9,7 @@ import { decide, type Decision, type PhotoInput } from './decide'
 import { readPhotos } from './engine'
 import type { PhotoReading } from './pipeline'
 import type { WingResult } from '../wings/model'
-import { oneTurnByCamera, uprightRotation } from '../rotationPlan'
+import { envelopeTurn, planTurnsByCamera } from '../rotationPlan'
 import { readOrientation } from '../orientation'
 
 export const REASON_LABEL: Record<string, string> = {
@@ -21,6 +21,8 @@ export const REASON_LABEL: Record<string, string> = {
   'unreadable-photo': 'Photo not readable',
   'rotation-outlier': 'Rotation differs from the photos around it',
   'turn-unsure': 'Which way up? Check the wings: forewings on top',
+  'turn-disagree': 'Envelope and wings point different ways: turned as the wings say',
+  'turn-camera': "Turned by its envelope alone, unlike its camera's other photos: check the wings, forewings on top",
   assistant: 'Left for you by the assistant',
   'wing-side': 'Wings: d/v?',
   'wing-count': 'Wings: count differs',
@@ -40,11 +42,11 @@ async function shotOf(file: File): Promise<{ at: number | null; camera: string }
 
 export interface LocalRunResult {
   rows: PhotoRow[]
-  /** the rows before the batch's one turn, and what it is decided from (to decide it again with the wings) */
+  /** the rows before their turns are planned, and what the camera's usual turn needs (to plan them again with the wings) */
   unturned: PhotoRow[]
   landscape: Map<string, boolean | null>
   tagCw: Map<string, number | null>
-  /** the camera of each photo (one turn per camera) */
+  /** the camera of each photo (a usual turn per camera) */
   camera: Map<string, string>
   readings: Map<string, PhotoReading>
   decisions: Decision[]
@@ -99,8 +101,9 @@ export async function runLocalOcr(
       suggest: [d.prefill, ...d.candidates].filter((s, k, a) => s.length === 9 && a.indexOf(s) === k).join(' '),
       captureDate: times[i] ? new Date(times[i]!).toISOString() : row.captureDate,
       ...(() => {
-        // an ID that is not in the database may be a misread of an upside-down line: no suggestion
-        const rot = d.reasons.includes('not-in-database') ? null : uprightRotation(reading, d.camid ?? reading?.camid ?? null)
+        // the envelope's own turn when sure; an ID that is not in the database may be a misread of an
+        // upside-down line: its line says nothing (the envelope's other lines still may)
+        const rot = envelopeTurn(reading, d.reasons.includes('not-in-database') ? null : d.camid ?? reading?.camid ?? null)
         return rot === null
           ? { rotSuggested: '', rotChosen: '', rotSource: '' as const }
           : { rotSuggested: String(rot), rotChosen: String(rot), rotSource: 'ocr' as const }
@@ -108,12 +111,12 @@ export async function runLocalOcr(
       batchNumber: 0,
     }
   })
-  // One turn for the batch, in the camera's own frame, keeping the photos landscape
+  // Each photo's own turn; the camera's usual one for those without (the wings are added later)
   const tagCw = new Map(files.map((f, i) => [f.name, tags[i]]))
   const wide = new Map(files.map((f) => {
     const size = readings.get(f.name)?.size
     return [f.name, size ? size[0] >= size[1] : null] as const
   }))
   const camera = new Map(files.map((f, i) => [f.name, shots[i].camera]))
-  return { rows: oneTurnByCamera(rows, wide, tagCw, camera), unturned: rows, landscape: wide, tagCw, camera, readings, decisions, database }
+  return { rows: planTurnsByCamera(rows, wide, tagCw, camera), unturned: rows, landscape: wide, tagCw, camera, readings, decisions, database }
 }

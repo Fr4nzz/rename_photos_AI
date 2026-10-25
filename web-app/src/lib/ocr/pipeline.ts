@@ -111,8 +111,9 @@ export interface PhotoReading {
 }
 
 export interface ReadOptions {
-  /** also read every line of the envelope in its one turn (PhotoReading.text) */
-  text?: boolean
+  /** also read every line of the envelope in its one turn (PhotoReading.text); 'unsure': only when no
+   * whole line read a CAM ID AUTO_SURE (the envelope's turn is then needed from its other lines) */
+  text?: boolean | 'unsure'
   /** the turn the envelope is expected in, counter-clockwise (default 0: the photo as shown is upright) */
   prior?: Turn
   /** keep each text line's crop as it was read (TextLine.image), for cutting training crops */
@@ -394,6 +395,7 @@ export async function readPhoto(backend: Backend, photo: RGBAImage, chars: strin
       // normal reading first; the full-resolution pass only when it found no confident CAMID
       ;[upright, flipped] = await readEnvelopeBothWays(backend, envelope, chars, null, 'working', cache)
       const sure = Math.max(bestCamid(upright).conf, bestCamid(flipped).conf) >= AUTO_SURE
+      if (sure && opts.text === 'unsure') cache = undefined
       const hi = !sure && fullCrop ? await fullCrop(bounds).catch(() => null) : null
       if (hi) {
         HIRES_PASSES.count++
