@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PhotoRow } from '@/types'
-import { applyEdits, snapshotRows, undoEdits, type HostChange } from '../protocol'
+import { applyEdits, snapshotRows, undoEdits, viewSide, type HostChange } from '../protocol'
 import { calculateFinalNames } from '../../nameCalculator'
 import type { WingCheck } from '../../wings/checks'
 
@@ -95,5 +95,15 @@ describe("the host's corrections", () => {
     const one = applyEdits(before, [{ file: 'IMG_4.JPG', id: 'CAM077003' }], names)
     const two = applyEdits(one.rows, [{ file: 'IMG_4.JPG', id: 'CAM077002' }, { file: 'IMG_3.JPG', skip: true }], names)
     expect(undoEdits(two.rows, [...one.changes, ...two.changes], names)).toEqual(before)
+  })
+})
+
+describe('the size of a whole photo the host asks for', () => {
+  it('is 1100 px unless asked, and at most the 1600 px of Drive\'s copies', () => {
+    expect(viewSide(undefined)).toBe(1100)
+    expect(viewSide('x')).toBe(1100)
+    expect(viewSide(1600)).toBe(1600)
+    expect(viewSide(4000)).toBe(1600)
+    expect(viewSide(100)).toBe(300)
   })
 })

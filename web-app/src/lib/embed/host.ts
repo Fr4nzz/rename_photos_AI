@@ -9,8 +9,10 @@
  *                   { source: 'rename-host', type: 'command', id, name, args }
  * Commands (each answered by a `result` with the same id: { ok, data } or { ok: false, error }):
  *   state                         the batch now (HostState)
- *   view  { files, part, sheet }  photos as small JPEGs: part 'photo' (whole) or 'envelope' (the envelope,
- *                                 upright); `sheet`: up to six a picture, each with its name and ID under it
+ *   view  { files, part, sheet, side }  photos as small JPEGs: part 'photo' (whole) or 'envelope' (the envelope,
+ *                                 upright); `sheet`: up to six a picture, each with its name and ID under it;
+ *                                 `side`: a whole photo's longest side, 1100 px unless asked (at most 1600: the
+ *                                 size of Drive's copies, as the host's sex check reads them)
  *   edit  { edits, by }           corrections (HostEdit[]); `by` names who made them, shown on the cards
  *   undo  {}                      every correction of the host taken back
  */
@@ -19,7 +21,7 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { canvasToBlob, loadImagePreview, rotateCanvas } from '../imageProcessing'
 import { pendingRotation } from '../rotationPlan'
 import { setHostCamids, hostDatabase } from '../ocr/database'
-import { PROTOCOL_VERSION, applyEdits, folderBytes, snapshotRows, undoEdits, type HostEdit, type HostState } from './protocol'
+import { PROTOCOL_VERSION, applyEdits, folderBytes, snapshotRows, undoEdits, viewSide, type HostEdit, type HostState } from './protocol'
 import { wingFindings } from '../wings/checks'
 import type { PhotoRow } from '@/types'
 
@@ -69,10 +71,10 @@ function fit(source: HTMLCanvasElement, maxSide: number): HTMLCanvasElement {
 }
 
 /** A photo as its card shows it (turned by the rotation still to be written), or its envelope upright. */
-async function render(row: PhotoRow, file: File, part: 'photo' | 'envelope'): Promise<HTMLCanvasElement> {
+async function render(row: PhotoRow, file: File, part: 'photo' | 'envelope', side = 1100): Promise<HTMLCanvasElement> {
   const preview = await loadImagePreview(file, 1600)
   const reading = useProcessingStore.getState().ocrReadings.get(row.from)
-  if (part === 'photo' || !reading?.envelope) return fit(rotateCanvas(preview, pendingRotation(row)), 1100)
+  if (part === 'photo' || !reading?.envelope) return fit(rotateCanvas(preview, pendingRotation(row)), side)
   // the envelope's box refers to the photo as it was read: rotations written since are undone first
   const applied = Number(row.rotApplied || 0) % 360
   const read = applied ? rotateCanvas(preview, 360 - applied) : preview
@@ -81,7 +83,7 @@ async function render(row: PhotoRow, file: File, part: 'photo' | 'envelope'): Pr
   const pad = 0.04 * Math.max(x2 - x1, y2 - y1)
   const x = Math.max(0, (x1 - pad) * s), y = Math.max(0, (y1 - pad) * s)
   const w = Math.min(read.width, (x2 + pad) * s) - x, h = Math.min(read.height, (y2 + pad) * s) - y
-  if (w <= 4 || h <= 4) return fit(rotateCanvas(preview, pendingRotation(row)), 1100)
+  if (w <= 4 || h <= 4) return fit(rotateCanvas(preview, pendingRotation(row)), side)
   const crop = document.createElement('canvas')
   crop.width = Math.round(w)
   crop.height = Math.round(h)
@@ -117,11 +119,12 @@ function sheet(cells: { canvas: HTMLCanvasElement; text: string }[]): HTMLCanvas
   return out
 }
 
-interface ViewArgs { files?: string[]; part?: 'photo' | 'envelope'; sheet?: boolean }
+interface ViewArgs { files?: string[]; part?: 'photo' | 'envelope'; sheet?: boolean; side?: number }
 
 async function view(args: ViewArgs) {
   const { photoRows, fileMap } = useProcessingStore.getState()
   const part = args.part === 'photo' ? 'photo' : 'envelope'
+  const side = viewSide(args.side)
   const wanted = (args.files ?? []).slice(0, MAX_VIEW).map((f) => String(f).trim().toLowerCase())
   const missing: string[] = []
   const found: { row: PhotoRow; file: File }[] = []
@@ -139,7 +142,7 @@ async function view(args: ViewArgs) {
       images.push({ files: group.map((g) => g.row.from), blob: await canvasToBlob(sheet(cells), 'image/jpeg', 0.85) })
     }
   } else {
-    for (const { row, file } of found) images.push({ files: [row.from], blob: await canvasToBlob(await render(row, file, part), 'image/jpeg', 0.85) })
+    for (const { row, file } of found) images.push({ files: [row.from], blob: await canvasToBlob(await render(row, file, part, side), 'image/jpeg', 0.85) })
   }
   return { images, missing }
 }

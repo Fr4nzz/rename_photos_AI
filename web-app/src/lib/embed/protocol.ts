@@ -54,6 +54,12 @@ export interface HostRow {
 }
 
 /** The total size of a folder's files, photos and RAW files alike (what an upload of it takes). */
+/** A whole photo's longest side for `view`: 1100 px unless asked, between 300 and 1600. */
+export function viewSide(side: unknown): number {
+  const n = Math.round(Number(side))
+  return Number.isFinite(n) && n > 0 ? Math.min(1600, Math.max(300, n)) : 1100
+}
+
 export async function folderBytes(dir: FileSystemDirectoryHandle): Promise<number> {
   let bytes = 0
   for await (const entry of (dir as unknown as { values(): AsyncIterable<FileSystemHandle> }).values()) {
