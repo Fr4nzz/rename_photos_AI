@@ -114,3 +114,7 @@ This project uses:
 - PaddleOCR PP-OCRv5 models (Apache-2.0), fine-tuned for the text-line detector and CAMID recognizer.
 - A fine-tuned Ultralytics YOLO segmentation model (AGPL-3.0) for envelope segmentation.
 - libheif via libheif-js (LGPL-3.0) to decode HEIC photos.
+
+## License and citation
+
+This tool is released under the MIT licence (see [LICENSE](LICENSE)). If you use this tool, please cite the repository (see [CITATION.cff](CITATION.cff)); a paper describing the tools is in preparation.

@@ -65,3 +65,7 @@ web-app/backend/bin/exiftool*
 # Documentation
 !docs/
 !docs/*.md
+
+# Licence and citation files
+!LICENSE
+!CITATION.cff

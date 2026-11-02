@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "AI Photo Processor"
+authors:
+  - family-names: "Chandi"
+    given-names: "Franz"
+license: MIT
+repository-code: "https://github.com/Fr4nzz/rename_photos_AI"
+date-released: "2026-11-02"
